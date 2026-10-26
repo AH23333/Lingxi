@@ -16,6 +16,7 @@
 #include <atomic>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #if __has_include("../../deps/llama/include/llama.h")
@@ -73,8 +74,11 @@ std::wstring Utf8ToWide(const char* p, int len)
 struct LlamaApi
 {
     HMODULE hDll = nullptr;
+    HMODULE hGgml = nullptr;
+    std::wstring dir; // llama 运行时目录
 
     void (*backend_init)() = nullptr;
+    void (*backend_load_all)() = nullptr;   // 来自 ggml.dll（新版本必须显式加载后端）
     llama_model_params (*model_default_params)() = nullptr;
     llama_model* (*model_load_from_file)(const char*, llama_model_params) = nullptr;
     llama_context_params (*context_default_params)() = nullptr;
@@ -94,13 +98,28 @@ struct LlamaApi
 
     bool Load()
     {
-        std::wstring dir = ExeDir() + L"\\llama";
+        LX_LOG(L"llm", L"Load: 开始绑定 llama.dll");
+        dir = ExeDir() + L"\\llama";
         std::wstring dll = dir + L"\\llama.dll";
         // LOAD_WITH_ALTERED_SEARCH_PATH：让 ggml.dll 等依赖先在 llama.dll 同目录找
         hDll = LoadLibraryExW(dll.c_str(), NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
         if (!hDll)
         {
             LX_LOG(L"llm", L"LoadLibrary llama.dll 失败 err=%u", GetLastError());
+            return false;
+        }
+        LX_LOG(L"llm", L"Load: llama.dll OK");
+        hGgml = LoadLibraryExW((dir + L"\\ggml.dll").c_str(), NULL, LOAD_WITH_ALTERED_SEARCH_PATH);
+        if (!hGgml)
+        {
+            LX_LOG(L"llm", L"LoadLibrary ggml.dll 失败 err=%u", GetLastError());
+            return false;
+        }
+        LX_LOG(L"llm", L"Load: ggml.dll OK");
+        backend_load_all = (void (*)())GetProcAddress(hGgml, "ggml_backend_load_all");
+        if (!backend_load_all)
+        {
+            LX_LOG(L"llm", L"符号缺失: ggml_backend_load_all");
             return false;
         }
         struct Binding { const char* name; void** pfn; bool required; };
@@ -159,11 +178,23 @@ public:
 private:
     void LazyInit()
     {
+        LX_LOG(L"llm", L"LazyInit 开始");
         if (!_api.Load())
         {
             _failed = true;
             return;
         }
+        _api.backend_init();
+
+        // ggml 的后端扫描基于当前工作目录：临时切到 llama 目录，
+        // 让 load_all 找到 ggml-cpu-*.dll（特性分发后端），扫完立即恢复
+        wchar_t oldCwd[MAX_PATH] = L"";
+        DWORD got = GetCurrentDirectoryW(MAX_PATH, oldCwd);
+        SetCurrentDirectoryW(_api.dir.c_str());
+        _api.backend_load_all();
+        if (got) SetCurrentDirectoryW(oldCwd);
+        LX_LOG(L"llm", L"后端加载完成");
+
         // 模型：<exeDir>\models\ 下第一个 .gguf
         std::wstring modelDir = ExeDir() + L"\\models";
         std::wstring pattern = modelDir + L"\\*.gguf";
@@ -331,8 +362,16 @@ IPredictor* CreateLlmPredictor()
 
 #endif // LINGXI_HAS_LLAMA
 
-// ---- 降级链：LLM（若可用）→ 词表 ----
+// ---- 降级链（上下文感知）----
+//   光标处于英文单词中间（前缀 ≥2 字符）→ 词表补全优先（replaceLen 语义正确）
+//   词边界 / 中文上下文 → LLM 续写优先；全部无结果 → 无候选
 namespace {
+
+bool IsEnWordChar(wchar_t ch)
+{
+    return (ch >= L'a' && ch <= L'z') || (ch >= L'A' && ch <= L'Z') ||
+           (ch >= L'0' && ch <= L'9') || ch == L'_';
+}
 
 class ChainPredictor : public IPredictor
 {
@@ -345,6 +384,16 @@ public:
 
     Prediction Predict(const std::wstring& context) override
     {
+        size_t i = context.size();
+        while (i > 0 && IsEnWordChar(context[i - 1])) i--;
+        bool midWord = (context.size() - i) >= 2;
+
+        if (midWord && _chain.size() > 1)
+        {
+            // _chain[0]=LLM，_chain[1]=词表：词中用词表补全
+            Prediction pred = _chain[1]->Predict(context);
+            if (!pred.cands.empty()) return pred;
+        }
         for (auto* p : _chain)
         {
             Prediction pred = p->Predict(context);
@@ -362,10 +411,17 @@ private:
 IPredictor* CreatePredictorChain()
 {
     std::vector<IPredictor*> chain;
-    if (IPredictor* llm = CreateLlmPredictor())
-        chain.push_back(llm);
+#if defined(LINGXI_HAS_LLAMA)
+    IPredictor* llm = new LlmPredictor();
+    chain.push_back(llm);
+#endif
     chain.push_back(CreateDefaultPredictor());
     LX_LOG(L"llm", L"预测链装配: %d 级", (int)chain.size());
+
+#if defined(LINGXI_HAS_LLAMA)
+    // 模型加载提前到启动期（后台预热），避免首次按键背上 1-3 秒加载
+    std::thread([](IPredictor* p) { p->Predict(L""); }, llm).detach();
+#endif
     return new ChainPredictor(std::move(chain));
 }
 

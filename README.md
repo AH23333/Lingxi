@@ -50,6 +50,35 @@ bin\Debug\e2e.exe        :: 全部 PASS 则 exit=0（会自动拉起 LingxiUI.ex
 注意：`ActivateLanguageProfile(zh-CN)` 在程序化激活下返回 E_INVALIDARG（系统
 ctfmon 冲突），测试中对中文续写做了降级处理；zh-CN 的真实切换留给 Win+Space 手工验证。
 
+环境噪声（用户实键、ctfmon 抢键盘前台）可能污染个别断言：e2e 外层会把整个场景
+重试最多 3 次（每次尝试前清空 `%TEMP%\lingxi-ime.log` 并 taskkill LingxiUI.exe），
+场景内部在打字前做前置净化（焦点缓冲区非空则全选删除）、关键断言前做前缀校验
+fail-fast。3 次全败 exit=1。
+
+### 引擎单元测试
+
+`tools/engine_test/engine_test.cpp` 是预测引擎的纯进程内单元测试：直接编译链接
+`ui/engine/ngram.cpp`，不经 TSF/IPC/候选窗/LingxiUI，直接对 `CreateDefaultPredictor()`
+断言。该工程是独立测试工程（**不进 sln**），输出在私有目录 `bin\enginetest\`、
+中间文件在 `tmp\engine_test\`，与主构建互不锁文件，可并发编译。
+
+```cmd
+msbuild tools\engine_test\engine_test.vcxproj /p:Configuration=Debug /p:Platform=x64
+bin\enginetest\engine_test.exe   :: 全部 PASS 则 exit=0
+```
+
+ngram 按 `<exe目录>\data` 定位词表；首次运行会把 `bin\Debug\data\*.txt` 自动拷贝到
+`bin\enginetest\data`，无需手工准备。
+
+断言列表：
+
+1. `Predict(L"mor")`：候选非空且 `replaceLen == 3`（英文前缀替换语义）；
+2. `Predict(L"good inte")`：首候选以 `inte` 开头（不区分大小写，词频最高补全）；
+3. `Predict(L"今天天气不错")`：给出非空中文接续候选（高频词表）；
+4. `Predict(L"")`：空上下文不产生候选；
+5. 延迟：`"hello wor"` / `"今天"` / `"international"` 各跑 50 次，平均 < 5ms
+   （`GetTickCount64` 统计，报告平均/最大毫秒；最大值受计时粒度约 15.6ms 限制仅作参考）。
+
 ## 架构
 
 ```
@@ -76,8 +105,8 @@ ImeCore.dll（TSF 文本服务，宿主应用进程内）        LingxiUI.exe（
 - [x] M0 脚手架（目录/构建/GUID）
 - [x] M1 TSF 骨架（注册/激活/按键直通/全链路日志）
 - [x] M2 候选窗 + 上屏（插入/前缀替换、鼠标与键盘选词、多应用多实例管道）
-- [ ] M3 预测引擎 v1：英文词表补全 + bigram 下一词 + 中文词频表
-- [ ] M4 llama.cpp + Qwen 0.5B 级量化模型（KV cache 复用、防抖、降级链）
+- [x] M3 预测引擎 v1：英文词表补全 + bigram 下一词 + 中文词频表
+- [ ] M4 llama.cpp + Qwen 0.5B 级量化模型（KV cache 复用、防抖、降级链）——**进行中**
 - [ ] M5 拼音转换（组合窗口 + 开源词库 + AI 重排）
 - [ ] M6 打磨（设置界面、隐身热键、卸载清理、签名）
 

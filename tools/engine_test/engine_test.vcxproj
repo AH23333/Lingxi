@@ -36,8 +36,10 @@
   </PropertyGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.props" />
   <PropertyGroup>
-    <!-- 单独 msbuild 本工程时 SolutionDir 未定义，回退到仓库根（保持与 sln 构建一致） -->
-    <SolutionDir Condition="'$(SolutionDir)' == '' Or '$(SolutionDir)' == '*Undefined*'">$(MSBuildThisFileDirectory)..\..\</SolutionDir>
+    <!-- 单独 msbuild 本工程时，Microsoft.Cpp.Default.props 会把 SolutionDir 默认成
+         $(ProjectDir)（tools\engine_test\），这里指回仓库根，保证输出到 <repo>\bin\enginetest。
+         若经 sln 构建，SolutionDir 是全局属性，项目内赋值不生效（保持 sln 语义）。 -->
+    <SolutionDir Condition="'$(SolutionDir)' == '' Or '$(SolutionDir)' == '*Undefined*' Or '$(SolutionDir)' == '$(ProjectDir)'">$(MSBuildThisFileDirectory)..\..\</SolutionDir>
     <OutDir>$(SolutionDir)bin\enginetest\</OutDir>
     <IntDir>$(SolutionDir)tmp\engine_test\</IntDir>
     <TargetName>engine_test</TargetName>
