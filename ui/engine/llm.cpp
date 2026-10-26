@@ -93,6 +93,7 @@ struct LlamaApi
     bool (*vocab_is_eog)(const llama_vocab*, llama_token) = nullptr;
     void (*free_ctx)(llama_context*) = nullptr;
     void (*free_model)(llama_model*) = nullptr;
+    void (*log_set)(ggml_log_callback, void*) = nullptr;
 
     bool ok = false;
 
@@ -139,6 +140,7 @@ struct LlamaApi
             { "llama_vocab_is_eog",          (void**)&vocab_is_eog,        true },
             { "llama_free",                  (void**)&free_ctx,            true },
             { "llama_model_free",            (void**)&free_model,          true },
+            { "llama_log_set",               (void**)&log_set,             false },
         };
         for (auto& b : binds)
         {
@@ -151,6 +153,13 @@ struct LlamaApi
         }
         ok = true;
         return true;
+    }
+
+    // 静音 llama 内部日志（否则 model loader 刷屏 stdout）
+    static void QuietLog(ggml_log_level, const char*, void*) {}
+    void SilenceLogs()
+    {
+        if (log_set) log_set(QuietLog, nullptr);
     }
 };
 
@@ -184,6 +193,7 @@ private:
             _failed = true;
             return;
         }
+        _api.SilenceLogs();
         _api.backend_init();
 
         // ggml 的后端扫描基于当前工作目录：临时切到 llama 目录，
@@ -420,7 +430,7 @@ IPredictor* CreatePredictorChain()
 
 #if defined(LINGXI_HAS_LLAMA)
     // 模型加载提前到启动期（后台预热），避免首次按键背上 1-3 秒加载
-    std::thread([](IPredictor* p) { p->Predict(L""); }, llm).detach();
+    std::thread([llm]() { llm->Predict(L""); }).detach();
 #endif
     return new ChainPredictor(std::move(chain));
 }

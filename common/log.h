@@ -10,6 +10,30 @@
 
 namespace lingxi {
 
+// 日志状态：C++11 magic static 保证跨线程安全的惰性初始化。
+// （旧实现用裸 bool 标志 + CS，主线程与预热线程并发首调时竞态丢日志）
+struct LogState
+{
+    CRITICAL_SECTION cs;
+    bool enabled = false;
+    bool csInit = false;
+
+    LogState()
+    {
+        wchar_t flag[8] = L"";
+        enabled = GetEnvironmentVariableW(L"LINGXI_LOG", flag, 8) > 0 && flag[0] == L'1';
+        if (enabled)
+        {
+            InitializeCriticalSection(&cs);
+            csInit = true;
+        }
+    }
+    ~LogState()
+    {
+        if (csInit) DeleteCriticalSection(&cs);
+    }
+};
+
 inline void LogLine(const wchar_t* tag, const wchar_t* fmt, ...)
 {
     wchar_t buf[512];
@@ -22,23 +46,10 @@ inline void LogLine(const wchar_t* tag, const wchar_t* fmt, ...)
     _snwprintf_s(line, _TRUNCATE, L"[Lingxi][%s] %s\n", tag, buf);
     OutputDebugStringW(line);
 
-    static bool s_checked = false;
-    static bool s_fileEnabled = false;
-    static CRITICAL_SECTION s_cs;
-    if (!s_checked)
+    static LogState state; // 线程安全惰性初始化
+    if (state.enabled)
     {
-        // 无竞争风险的惰性初始化：最坏情况是两个线程各自初始化一次。
-        s_checked = true;
-        wchar_t flag[8] = L"";
-        if (GetEnvironmentVariableW(L"LINGXI_LOG", flag, 8) > 0 && flag[0] == L'1')
-        {
-            InitializeCriticalSection(&s_cs);
-            s_fileEnabled = true;
-        }
-    }
-    if (s_fileEnabled)
-    {
-        EnterCriticalSection(&s_cs);
+        EnterCriticalSection(&state.cs);
         wchar_t temp[MAX_PATH];
         wchar_t path[MAX_PATH];
         if (GetTempPathW(MAX_PATH, temp) > 0)
@@ -53,7 +64,7 @@ inline void LogLine(const wchar_t* tag, const wchar_t* fmt, ...)
                 CloseHandle(h);
             }
         }
-        LeaveCriticalSection(&s_cs);
+        LeaveCriticalSection(&state.cs);
     }
 }
 
