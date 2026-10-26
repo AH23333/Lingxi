@@ -25,6 +25,7 @@ static int g_fail = 0;
 static void Report(bool ok, const char* name, const wchar_t* detail = L"")
 {
     wprintf(L"[%s] %hs %s\n", ok ? L"PASS" : L"FAIL", name, detail);
+    fflush(stdout); // 崩溃时不丢已打印的进度（重定向下默认全缓冲）
     if (ok) g_pass++; else g_fail++;
 }
 
@@ -410,6 +411,25 @@ static void ReassertFocus()
     PumpMessages();
 }
 
+// 模式探测：TestKeyDown('q') eaten=1 → 拼音模式；eaten=0 → 直通模式。
+// 探测不改变状态（KeyDown 才会）；模式不对就重新断言对应 profile。
+static bool WaitForMode(ITfKeystrokeMgr* pKm, bool wantPinyin, int tries = 15)
+{
+    for (int i = 0; i < tries; i++)
+    {
+        PumpMessages();
+        BOOL eaten = FALSE;
+        if (SUCCEEDED(pKm->TestKeyDown((WPARAM)L'q', 0x00100001, &eaten)))
+        {
+            if ((eaten != FALSE) == wantPinyin) return true;
+        }
+        if (wantPinyin) ActivateProfileRetry(0x0804, GUID_LingxiProfile_zhCN, 1);
+        else            ActivateProfileRetry(0x0409, GUID_LingxiProfile_enUS, 1);
+        Sleep(200);
+    }
+    return false;
+}
+
 static bool InsertViaTsf(ITfContext* pCtx, const std::wstring& text)
 {
     auto* pSession = new HEditSession(pCtx, text);
@@ -558,6 +578,11 @@ static bool RunScenario()
 
         // ---- 测试 1：打字直通 ----
         ReassertFocus();
+        if (!WaitForMode(pKm, false)) // 确保直通模式（ctfmon 可能抢回 zh-CN 灵犀）
+        {
+            Report(false, "direct mode settle");
+            break;
+        }
         bool passThrough = true;
         for (wchar_t ch : std::wstring(L"mor"))
         {
@@ -670,6 +695,8 @@ static bool RunScenario()
         if (!ActivateProfileRetry(0x0804, GUID_LingxiProfile_zhCN, 3))
             wprintf(L"[WARN] ActivateLanguageProfile zh-CN failed, continue with current profile\n");
         ReassertFocus();
+        if (!WaitForMode(pKm, true)) // 确保拼音模式（字母应进组合）
+            wprintf(L"[WARN] pinyin mode not settled, pinyin test may fail\n");
         Sleep(800); // TIP 重激活 + 管道重连
 
         if (InsertViaTsf(pCtx, L"今天天气不错"))
@@ -690,6 +717,59 @@ static bool RunScenario()
         {
             Report(false, "Chinese context inserted");
             break; // fail-fast
+        }
+
+        // ---- 测试 6：M5 拼音模式（LINGXI_PINYIN=1 时启用；默认关闭待崩溃排查）----
+        {
+            wchar_t pf[8] = L"";
+            bool pinyinEnabled = GetEnvironmentVariableW(L"LINGXI_PINYIN", pf, 8) > 0 && pf[0] == L'1';
+            if (!pinyinEnabled)
+            {
+                wprintf(L"[SKIP] pinyin test (set LINGXI_PINYIN=1 to enable)\n");
+                fflush(stdout);
+            }
+            else
+            {
+            // 拼音模式键序：TestKeyDown eaten → KeyDown eaten（字母进组合）
+            auto typePinyin = [&](const wchar_t* letters) -> bool
+            {
+                for (const wchar_t* p = letters; *p; ++p)
+                {
+                    BOOL eaten = FALSE;
+                    if (FAILED(pKm->TestKeyDown((WPARAM)*p, 0x00260001, &eaten)) || !eaten) return false;
+                    eaten = FALSE;
+                    if (FAILED(pKm->KeyDown((WPARAM)*p, 0x00260001, &eaten)) || !eaten) return false;
+                    PumpMessages();
+                    Sleep(40);
+                }
+                return true;
+            };
+
+            bool ok = typePinyin(L"jintian"); // 组合串
+            PumpMessages();
+            Sleep(500); // 拼音引擎返回候选
+            PumpMessages();
+
+            std::wstring t = ReadFocusedText(pTm);
+            Report(ok && t.size() >= 7 && t.compare(t.size() - 7, 7, L"jintian") == 0,
+                   "pinyin composition inline text", t.c_str());
+
+            // 空格上屏首选（应为"今天"或含"今"的词链）
+            BOOL eaten = FALSE;
+            ok = ok && (pKm->TestKeyDown(VK_SPACE, 0x00390001, &eaten) == S_OK && eaten);
+            if (ok)
+            {
+                eaten = FALSE;
+                pKm->KeyDown(VK_SPACE, 0x00390001, &eaten);
+            }
+            PumpMessages();
+            Sleep(400);
+            PumpMessages();
+            t = ReadFocusedText(pTm);
+            bool hit = ok && eaten && t.find(L"今") != std::wstring::npos;
+            Report(hit, "pinyin space-commit hanzi", t.c_str());
+            // 拼音段不 fail-fast（zh-CN 激活有系统竞态，失败信息足够诊断）
+            }
         }
     } while (false);
 

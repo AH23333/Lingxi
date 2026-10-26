@@ -60,6 +60,7 @@
     <ClCompile Include="pipeserver.cpp" />
     <ClCompile Include="engine\ngram.cpp" />
     <ClCompile Include="engine\llm.cpp" />
+    <ClCompile Include="engine\pinyin.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="window.h" />

@@ -58,8 +58,47 @@ static bool IsLetterKey(WPARAM wParam)
 
 // ==================== 模式检测 ====================
 
+// SEH 包裹：OnActivated 可能与 CTF 内部激活处理重入，任何异常不能带崩宿主
+BOOL DetectPinyinModeSEH(CTextService* svc)
+{
+    __try
+    {
+        svc->DetectPinyinMode();
+        return TRUE;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return FALSE;
+    }
+}
+
+// 模式轮询线程：MTA 独立线程，脱离宿主消息泵（e2e/应用 pump 会把延迟消息
+// 派发进 CTF 激活处理窗口造成重入崩溃——见 PITFALLS）
+DWORD WINAPI CTextService::s_ModeThreadProc(LPVOID p)
+{
+    auto* svc = (CTextService*)p;
+    HRESULT hrCo = CoInitializeEx(NULL, COINIT_MULTITHREADED);
+    for (;;)
+    {
+        DWORD w = WaitForSingleObject(svc->_modeStopEv, 300);
+        if (w != WAIT_TIMEOUT) break;
+        if (svc->_modeDirty.exchange(false))
+            DetectPinyinModeSEH(svc);
+    }
+    if (SUCCEEDED(hrCo)) CoUninitialize();
+    return 0;
+}
+
 void CTextService::DetectPinyinMode()
 {
+    // 默认关闭：拼音模式的激活回调链在个别宿主里有启动期崩溃（0xC000041D，
+    // 与 CTF 激活处理重入相关），设 LINGXI_PINYIN=1 显式启用
+    wchar_t flag[8] = L"";
+    if (!(GetEnvironmentVariableW(L"LINGXI_PINYIN", flag, 8) > 0 && flag[0] == L'1'))
+    {
+        _pinyinMode = false;
+        return;
+    }
     _pinyinMode = false;
     ITfInputProcessorProfiles* pProfiles = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, NULL, CLSCTX_INPROC_SERVER,

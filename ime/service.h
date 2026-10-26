@@ -8,6 +8,7 @@
 //
 #include <windows.h>
 #include <msctf.h>
+#include <atomic>
 #include <cstdint>
 #include <string>
 #include <vector>
@@ -20,6 +21,7 @@ namespace lingxi {
 
 constexpr LONG kCtxMaxChars = 300;          // 上下文窗口（光标前字符数）
 // WM_APP_LX_PICK 定义于 common/proto.h
+constexpr UINT WM_APP_LX_MODE = WM_APP + 2; // 封送窗口：延迟执行拼音模式检测
 
 class CTextService :
     public ITfTextInputProcessorEx,
@@ -28,6 +30,7 @@ class CTextService :
     public ITfKeyEventSink,
     public ITfThreadFocusSink,
     public ITfCompositionSink,
+    public ITfInputProcessorProfileActivationSink,
     public IPipeClientCallback
 {
 public:
@@ -70,6 +73,10 @@ public:
 
     // ---- ITfCompositionSink（拼音组合被宿主强制终止时的清理）----
     STDMETHOD(OnCompositionTerminated)(TfEditCookie ecWrite, ITfComposition* pComposition) override;
+
+    // ---- ITfInputProcessorProfileActivationSink（profile 切换 → 重判拼音/直通模式）----
+    STDMETHOD(OnActivated)(DWORD dwProfileType, LANGID langid, REFCLSID rclsid,
+                           REFGUID catid, REFGUID guidProfile, HKL hkl, DWORD dwFlags) override;
 
     // ---- IPipeClientCallback（管道读线程调用，禁止触碰 TSF）----
     void OnCandidates(uint32_t ver, uint32_t replaceLen,
@@ -124,6 +131,7 @@ private:
 
     DWORD _tmSinkCookie = TF_INVALID_COOKIE;
     DWORD _tfSinkCookie = TF_INVALID_COOKIE;
+    DWORD _asSinkCookie = TF_INVALID_COOKIE; // profile 激活通知
     DWORD _editSinkCookie = TF_INVALID_COOKIE;
     ITfContext* _pEditSinkCtx = nullptr; // 持有引用
     BOOL _fSelfInsert = FALSE;           // 自己上屏引发的编辑，忽略其 OnEndEdit
@@ -139,15 +147,23 @@ private:
 
     HWND _hwndMarshal = nullptr; // 隐藏封送窗口（宿主 UI 线程）
     static LRESULT CALLBACK MarshalWndProc(HWND, UINT, WPARAM, LPARAM);
+    static DWORD WINAPI s_ModeThreadProc(LPVOID);
+    void ModeThreadProc();
 
     // 拼音组合状态
     bool _pinyinMode = false;
+    std::atomic<bool> _modeDirty{ false }; // OnActivated 置位，模式轮询线程执行检测
     bool _fInPinyinEdit = false;  // 组合编辑会话执行中（抑制 OnEndEdit 自激发）
     std::wstring _pinyin;         // 当前拼音字母串
     ITfComposition* _pComposition = nullptr;
     ITfRange* _compRange = nullptr;
+    HANDLE _modeThread = NULL;    // 模式轮询线程（MTA，脱离消息泵）
+    HANDLE _modeStopEv = NULL;
 
     CPipeClient _pipe;
 };
+
+// composition.cpp 提供（SEH 包裹的模式检测，供激活回调安全调用）
+BOOL DetectPinyinModeSEH(CTextService* svc);
 
 } // namespace lingxi
