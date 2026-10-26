@@ -1,11 +1,19 @@
 # 交接文档（HANDOFF）
 
-> 写于 2026-10-27 深夜（设备转电池供电，本阶段到此收尾）。**任何代理读完本文档即可直接接手开发。**
-> 配套阅读：[PROGRESS.md](PROGRESS.md)（状态）· [DEVLOG.md](DEVLOG.md)（过程）· [PITFALLS.md](PITFALLS.md)（16 条已踩坑）· [README.md](../README.md)（架构/使用）
+> 最近更新：2026-10-27 深夜二稿（电量 23%，M5 代码合入待验证）。**任何代理读完本文档即可直接接手。**
+> 配套阅读：[PROGRESS.md](PROGRESS.md) · [DEVLOG.md](DEVLOG.md) · [PITFALLS.md](PITFALLS.md)（16+ 条已踩坑）· [README.md](../README.md)
+
+## ⚡ 最新状态速报（M5 拼音模式：代码完成，待解决一个启动崩溃）
+
+- **M5 全部代码已提交**（git 至 `29c5585`）：DLL 组合窗口（composition.cpp）、拼音引擎（pinyin.cpp，engine_test 9/9 PASS：`jintianqi→今天其`、`ni hao→你好`、延迟 0.94ms）、协议 flags、模式双 profile 切换、e2e 拼音用例
+- **⚠️ 阻塞问题**：e2e 启动即崩 `0xC000041D`（用户回调中 AV，ntdll KiUserCallbackDispatcher 路径）。已做**临时门控**：拼音模式默认关闭（`LINGXI_PINYIN=1` 启用，激活 sink 注册同门控，OnActivated 只置脏标记，检测移到独立 MTA 轮询线程）——但 e2e 在门控后仍崩（崩前无任何输出，fflush 已加），说明崩溃源未根除
+- **崩溃嫌疑排序**（接手优先查）：① e2e 合成宿主场景中 CTF 对我们 TIP 的激活处理与 profile 查询重入（建议接手后先**重启电脑**排除系统状态疲劳——本会话经历了几十轮 IME 激活/去激活）② `GetActiveLanguageProfile` 的调用时机 ③ 激活 sink 的注册时机
+- **M4 直通+预测路径不受影响**（最后一次全绿：e2e 13/13 exit=0；此后引入的组合代码疑似触发上述崩溃）
+- 验证拼音模式：`set LINGXI_PINYIN=1` 后构建运行 e2e（测试 6：zh-CN 激活 → 打 "jintian" → 空格 → 出"今天"类汉字）
 
 ## 一、项目一句话
 
-Windows 端 TSF 系统级 AI 输入法（代号灵犀）：两进程架构（ImeCore.dll 注入宿主 + LingxiUI.exe 候选窗/引擎），当前为"直通+预测"形态——英文前缀词表补全 + 中英文 LLM/词频续写候选，拼音转换（打汉字）是下一阶段。
+Windows 端 TSF 系统级 AI 输入法（代号灵犀）：两进程架构（ImeCore.dll 注入宿主 + LingxiUI.exe 候选窗/引擎）。**双模式**：en-US profile = 英文直通+补全/续写（M4 LLM 已实测工作）；zh-CN profile = 拼音组合输入（M5，代码完成待崩溃排查）。
 
 ## 二、当前状态（git 已提交至 `89819d1`，全部可构建、可回归）
 
