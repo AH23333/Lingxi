@@ -1,0 +1,17 @@
+# 构建产物
+bin/
+tmp/
+*.obj
+*.pdb
+*.ilk
+*.log
+
+# 第三方资源（体积大，README 记录获取方式）
+deps/llama/
+deps/models/
+deps/win-classic-samples/
+deps/data-src/*.txt
+
+# IDE
+.vs/
+.idea/
