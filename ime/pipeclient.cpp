@@ -1,0 +1,197 @@
+#include "pipeclient.h"
+
+#include "../common/proto.h"
+#include "../common/pipe_util.h"
+#include "../common/log.h"
+
+namespace lingxi {
+
+void CPipeClient::Start(IPipeClientCallback* cb, HWND hwndMarshal)
+{
+    _cb = cb;
+    _hwndMarshal = hwndMarshal;
+    if (!_csInit) { InitializeCriticalSection(&_cs); _csInit = true; }
+    _hStop = CreateEventW(NULL, TRUE, FALSE, NULL);
+    _hThread = CreateThread(NULL, 0, s_ThreadProc, this, 0, NULL);
+}
+
+void CPipeClient::Stop()
+{
+    if (_hStop) SetEvent(_hStop);
+    if (_hThread)
+    {
+        WaitForSingleObject(_hThread, 3000);
+        CloseHandle(_hThread);
+        _hThread = NULL;
+    }
+    if (_hStop) { CloseHandle(_hStop); _hStop = NULL; }
+    if (_csInit) { DeleteCriticalSection(&_cs); _csInit = false; }
+    _cb = nullptr;
+}
+
+DWORD WINAPI CPipeClient::s_ThreadProc(LPVOID p)
+{
+    ((CPipeClient*)p)->Run();
+    return 0;
+}
+
+bool CPipeClient::EnsureUIRunning()
+{
+    // UI 进程用 FILE_FLAG_FIRST_PIPE_INSTANCE 自我互斥：重复拉起无害。
+    wchar_t dllPath[MAX_PATH] = L"";
+    if (GetModuleFileNameW(g_hInst, dllPath, MAX_PATH) == 0) return false;
+    wchar_t* slash = wcsrchr(dllPath, L'\\');
+    if (!slash) return false;
+    *(slash + 1) = L'\0';
+    wchar_t exePath[MAX_PATH];
+    _snwprintf_s(exePath, _TRUNCATE, L"%sLingxiUI.exe", dllPath);
+
+    STARTUPINFOW si = { sizeof(si) };
+    PROCESS_INFORMATION pi = {};
+    if (!CreateProcessW(exePath, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+    {
+        LX_LOG(L"pipe", L"LingxiUI.exe 启动失败 err=%u（预测功能降级为纯直通）", GetLastError());
+        return false;
+    }
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    LX_LOG(L"pipe", L"已拉起 LingxiUI.exe");
+    return true;
+}
+
+void CPipeClient::Run()
+{
+    for (;;)
+    {
+        // ---- 连接阶段 ----
+        bool firstTry = true;
+        bool launched = false;
+        HANDLE hPipe = INVALID_HANDLE_VALUE;
+        while (WaitForSingleObject(_hStop, 0) == WAIT_TIMEOUT)
+        {
+            hPipe = OpenLingxiPipeClient();
+            if (hPipe != INVALID_HANDLE_VALUE) break;
+            if (firstTry)
+            {
+                firstTry = false;
+                launched = EnsureUIRunning(); // 仅首次尝试拉起
+            }
+            if (WaitForSingleObject(_hStop, launched ? 1000 : 300) != WAIT_TIMEOUT) break;
+        }
+        if (hPipe == INVALID_HANDLE_VALUE || WaitForSingleObject(_hStop, 0) != WAIT_TIMEOUT)
+        {
+            if (hPipe != INVALID_HANDLE_VALUE) CloseHandle(hPipe);
+            break;
+        }
+
+        {
+            EnterCriticalSection(&_cs);
+            _hPipe = hPipe;
+            _connected = true;
+            LeaveCriticalSection(&_cs);
+        }
+        LX_LOG(L"pipe", L"管道已连接");
+
+        // 连接后先发 HELLO（协议版本、宿主 PID）+ ACTIVATE 快照。
+        // ACTIVATE 必须在连接后补发：ActivateEx 里发的那条发生在连接前，会丢。
+        {
+            MsgHello hello{ kProtoVer, GetCurrentProcessId(), 0 };
+            WriteFrame(hPipe, MSG_HELLO, &hello, sizeof(hello), 200);
+            WriteFrame(hPipe, MSG_ACTIVATE, NULL, 0, 200);
+        }
+
+        // ---- 读写阶段 ----
+        for (;;)
+        {
+            uint8_t type = 0;
+            std::vector<uint8_t> body;
+            if (!ReadFrame(hPipe, _hStop, type, body)) break;
+            HandleMessage(type, body);
+        }
+
+        {
+            EnterCriticalSection(&_cs);
+            _connected = false;
+            _hPipe = INVALID_HANDLE_VALUE;
+            LeaveCriticalSection(&_cs);
+        }
+        CloseHandle(hPipe);
+        LX_LOG(L"pipe", L"管道断开，准备重连");
+
+        if (WaitForSingleObject(_hStop, 1000) != WAIT_TIMEOUT) break;
+    }
+}
+
+void CPipeClient::HandleMessage(uint8_t type, const std::vector<uint8_t>& body)
+{
+    const uint8_t* p = body.data();
+    const uint8_t* end = p + body.size();
+
+    switch (type)
+    {
+    case MSG_CANDS:
+    {
+        MsgCands m{};
+        if (!ReadPod(p, end, m)) return;
+        std::vector<std::wstring> cands;
+        cands.reserve(min(m.count, 16u));
+        for (uint32_t i = 0; i < m.count; i++)
+        {
+            std::wstring s;
+            if (!ReadStr(p, end, s)) return;
+            cands.push_back(std::move(s));
+        }
+        if (_cb) _cb->OnCandidates(m.ver, m.replaceLen, std::move(cands));
+        break;
+    }
+    case MSG_PICK:
+    {
+        MsgPick m{};
+        if (!ReadPod(p, end, m)) return;
+        if (_hwndMarshal)
+            PostMessageW(_hwndMarshal, WM_APP_LX_PICK, m.index, m.ver);
+        break;
+    }
+    default:
+        break;
+    }
+}
+
+bool CPipeClient::Send(uint8_t type, const void* body, uint32_t bodyLen, uint32_t timeoutMs)
+{
+    // 写操作整体串行化：HELLO/ACTIVATE（管道线程）与 SendCtx（宿主 UI 线程）
+    // 并发写会交错出损坏帧。临界区内完成整帧写入（最坏 80ms）。
+    EnterCriticalSection(&_cs);
+    bool ok = false;
+    if (_connected && _hPipe != INVALID_HANDLE_VALUE &&
+        GetTickCount64() - _lastFailTick >= 500)
+    {
+        ok = WriteFrame(_hPipe, type, body, bodyLen, timeoutMs);
+        if (!ok) _lastFailTick = GetTickCount64();
+    }
+    LeaveCriticalSection(&_cs);
+    return ok;
+}
+
+bool CPipeClient::SendStr(uint8_t type, const void* prefixBody, uint32_t prefixLen,
+                          const std::wstring& str, uint32_t timeoutMs)
+{
+    std::vector<uint8_t> body;
+    if (prefixLen)
+    {
+        const uint8_t* p = (const uint8_t*)prefixBody;
+        body.insert(body.end(), p, p + prefixLen);
+    }
+    AppendStr(body, str);
+    return Send(type, body.data(), (uint32_t)body.size(), timeoutMs);
+}
+
+bool CPipeClient::IsConnected()
+{
+    EnterCriticalSection(&_cs);
+    bool c = _connected;
+    LeaveCriticalSection(&_cs);
+    return c;
+}
+
+} // namespace lingxi
