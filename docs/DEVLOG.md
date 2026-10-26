@@ -48,9 +48,21 @@
 - 结构体参数（model/context params）来自**与二进制同 tag 的头文件**，避免布局漂移；函数指针全部 GetProcAddress，任一缺失 → 整体降级
 - 管线异步化：CTX 入队（每客户端只留最新）→ 预测工作线程（120ms 防抖 + 300ms 预算）→ LLM 空/超时 → n-gram 兜底 → alive 检查后应用
 
-## 待办
+## 2026-10-27 深夜 · M4 集成完成（电池供电收尾）
 
-- [ ] M4 集成回归（资源下载完成后）
+三线并行结果：资源线（代理A）成功——llama.cpp **b11900** 运行时 + Qwen2.5-0.5B-Instruct Q4_K_M（ModelScope 直链 491MB，255 个 API 导出全验）；测试线（代理C）成功——engine_test 5/5 PASS（n-gram 预测 <0.3ms）+ e2e 重试壳（3 次尝试+前置净化+fail-fast）；引擎线（代理B 因并发配额失败，由主代理亲自实现）。
+
+**集成期新坑两条**（详见 PITFALLS #16）：
+1. 新版 llama.cpp 必须显式 `ggml_backend_load_all()`，且它**按当前工作目录**扫描后端 DLL——LazyInit 临时切 CWD 到 llama 目录再恢复
+2. llama.cpp 版本号已改语义化（v0.7.0 是纯源码 release），预编译二进制挂在 bXXXX tag 下；ggml 头文件挪到了 `ggml/include/` 子目录
+
+**LLM 实证**：`--probe-llm` 同步探针——模型 0.3s 加载，`今天天气不错，`→候选`今天`（703ms 首测，含 mmap 预热）。降级链改为**上下文感知**：词中→词表补全（replaceLen 语义），词边界/中文→LLM 续写。
+
+e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备转电池供电，预热性能收尾（Defender 首扫慢）移交下一阶段——完整交接见 [HANDOFF.md](HANDOFF.md)。
+
+## 待办（移交下一阶段）
+
+- [ ] M4 收尾：确认 UI 预热线程完整加载（`LLM 引擎就绪` 日志）；LLM 候选质量调优（prompt/温度/多路采样）
 - [ ] M4.5：KV cache 增量复用（退格回退而非全量重评）
 - [ ] M5：拼音输入（组合窗口 + 音节切分 + 词→拼音表 + AI 重排）
 - [ ] M6：设置界面、隐身热键、卸载清理、代码签名
