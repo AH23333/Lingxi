@@ -9,10 +9,11 @@ namespace lingxi {
 constexpr uint32_t kDebounceMs = 120;   // 预测防抖
 constexpr size_t kMaxQueue = 8;         // 有界队列
 
-bool PipeServer::Start(CandWindow* wnd, IPredictor* engine)
+bool PipeServer::Start(CandWindow* wnd, IPredictor* engine, IPredictor* pinyinEngine)
 {
     _wnd = wnd;
     _engine = engine;
+    _pinyinEngine = pinyinEngine;
     InitializeCriticalSection(&_cs);
     _csInit = true;
     _hStop = CreateEventW(NULL, TRUE, FALSE, NULL);
@@ -218,11 +219,11 @@ void PipeServer::HandleCtx(ClientCtx* c, const std::vector<uint8_t>& body)
     }
 
     RECT rc = { m.caretX, m.caretY, m.caretX + m.caretW, m.caretY + m.caretH };
-    EnqueuePredict(c, m.ver, text, c->dark, rc);
+    EnqueuePredict(c, m.ver, text, c->dark, rc, (m.flags & CTX_F_PINYIN) != 0);
 }
 
 void PipeServer::EnqueuePredict(ClientCtx* c, uint32_t ver, const std::wstring& text,
-                                bool dark, const RECT& caret)
+                                bool dark, const RECT& caret, bool pinyin)
 {
     PendingPredict e;
     e.c = c;
@@ -230,6 +231,7 @@ void PipeServer::EnqueuePredict(ClientCtx* c, uint32_t ver, const std::wstring& 
     e.text = text;
     e.dark = dark;
     e.caret = caret;
+    e.pinyin = pinyin;
     e.enqueuedAt = GetTickCount64();
 
     EnterCriticalSection(&_cs);
@@ -284,7 +286,10 @@ void PipeServer::PredictProc()
         if (WaitForSingleObject(_hStop, 0) != WAIT_TIMEOUT) break;
 
         // 预测期间不持任何锁（引擎可能耗时 300ms）
-        Prediction pred = _engine->Predict(e.text);
+        // 拼音模式走专用引擎（组合字母串→汉字），否则走上下文降级链
+        Prediction pred = (e.pinyin && _pinyinEngine)
+                              ? _pinyinEngine->Predict(e.text)
+                              : _engine->Predict(e.text);
         if (WaitForSingleObject(_hStop, 0) != WAIT_TIMEOUT) break;
 
         if (!e.c || !e.c->alive) continue; // 客户端已断开，结果作废

@@ -53,6 +53,7 @@
   <ItemGroup>
     <ClCompile Include="dllmain.cpp" />
     <ClCompile Include="service.cpp" />
+    <ClCompile Include="composition.cpp" />
     <ClCompile Include="editsession.cpp" />
     <ClCompile Include="pipeclient.cpp" />
   </ItemGroup>

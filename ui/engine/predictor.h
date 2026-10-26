@@ -25,6 +25,11 @@ public:
 // 词表引擎（永远可用）
 IPredictor* CreateDefaultPredictor();
 
+// 拼音引擎（M5）：原始拼音字母串 → 汉字候选。
+// 输入 "jintianqi" → 词序列候选（如"今天天气"）；支持末尾音节不完整（"jintianq"）。
+// Prediction.replaceLen 恒为 0（DLL 用组合串长度整体替换，不依赖该字段）。
+IPredictor* CreatePinyinPredictor();
+
 // LLM 引擎：运行时加载 <exe目录>\llama\llama.dll + <exe目录>\models\*.gguf。
 // 任一资源缺失 → 返回 nullptr（调用方自然落到词表引擎）。
 IPredictor* CreateLlmPredictor();

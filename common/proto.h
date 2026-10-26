@@ -47,8 +47,13 @@ struct MsgCtx
 {
     uint32_t ver;
     int32_t caretX, caretY, caretW, caretH; // 屏幕坐标，取不到时为 0
+    uint8_t flags;                          // bit0: 拼音组合模式（text 为拼音字母串）
+    uint8_t reserved[3];
     uint32_t textChars;                     // 跟随 textChars 个 wchar_t
 };
+
+// MsgCtx.flags 位定义
+constexpr uint8_t CTX_F_PINYIN = 0x01;
 
 struct MsgCands
 {

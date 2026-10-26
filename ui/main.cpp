@@ -42,9 +42,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
 
     // 预测降级链：LLM（若 llama.dll/模型就绪）→ 词表引擎（永远可用）
     lingxi::IPredictor* engine = lingxi::CreatePredictorChain();
+    // M5 拼音引擎（zh-CN profile 组合模式下使用；数据缺失时为 null，拼音直拼兜底）
+    lingxi::IPredictor* pinyinEngine = lingxi::CreatePinyinPredictor();
 
     lingxi::PipeServer server;
-    if (!server.Start(&wnd, engine))
+    if (!server.Start(&wnd, engine, pinyinEngine))
         return 1; // 已有实例在运行（或内部错误）
 
     LX_LOG(L"ui", L"LingxiUI 启动完成");
@@ -59,5 +61,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     server.Stop();
     wnd.Shutdown();
     delete engine;
+    delete pinyinEngine;
     return 0;
 }

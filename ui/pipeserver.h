@@ -21,7 +21,7 @@ namespace lingxi {
 class PipeServer
 {
 public:
-    bool Start(CandWindow* wnd, IPredictor* engine);
+    bool Start(CandWindow* wnd, IPredictor* engine, IPredictor* pinyinEngine);
     void Stop();
 
     void SendPick(uint32_t ver, uint32_t index); // 候选窗点击（UI 主线程）
@@ -42,6 +42,7 @@ private:
         uint32_t ver = 0;
         std::wstring text;
         bool dark = false;
+        bool pinyin = false; // true: text 是拼音字母串，走拼音引擎
         RECT caret{};
         uint64_t enqueuedAt = 0;
     };
@@ -55,13 +56,14 @@ private:
     void HandleMsg(ClientCtx* c, uint8_t type, const std::vector<uint8_t>& body);
     void HandleCtx(ClientCtx* c, const std::vector<uint8_t>& body);
     void EnqueuePredict(ClientCtx* c, uint32_t ver, const std::wstring& text,
-                        bool dark, const RECT& caret);
+                        bool dark, const RECT& caret, bool pinyin);
     void SendCandidates(ClientCtx* c, uint32_t ver, const Prediction& pred);
     void Activate(ClientCtx* c);
     void Deactivate(ClientCtx* c);
 
     CandWindow* _wnd = nullptr;
     IPredictor* _engine = nullptr;
+    IPredictor* _pinyinEngine = nullptr; // M5 拼音引擎（可为 null：拼音模式退化为直拼）
     HANDLE _hThread = NULL;
     HANDLE _hPredictThread = NULL;
     HANDLE _hStop = NULL;

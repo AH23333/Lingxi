@@ -27,6 +27,7 @@ class CTextService :
     public ITfTextEditSink,
     public ITfKeyEventSink,
     public ITfThreadFocusSink,
+    public ITfCompositionSink,
     public IPipeClientCallback
 {
 public:
@@ -67,6 +68,9 @@ public:
     STDMETHOD(OnSetThreadFocus)() override;
     STDMETHOD(OnKillThreadFocus)() override;
 
+    // ---- ITfCompositionSink（拼音组合被宿主强制终止时的清理）----
+    STDMETHOD(OnCompositionTerminated)(TfEditCookie ecWrite, ITfComposition* pComposition) override;
+
     // ---- IPipeClientCallback（管道读线程调用，禁止触碰 TSF）----
     void OnCandidates(uint32_t ver, uint32_t replaceLen,
                       std::vector<std::wstring>&& cands) override;
@@ -82,9 +86,28 @@ public:
     void ClearCandidates();
     void SendHide();
 
+    // ---- M5 拼音模式（zh-CN profile 激活时启用）----
+    void DetectPinyinMode();
+    bool IsPinyinMode() const { return _pinyinMode; }
+    void HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pfEaten); // OnKeyDown 分发
+    bool PinyinKeyEaten(WPARAM wParam);                                       // OnTestKeyDown 判定
+    bool GetCandidate(uint32_t index, std::wstring& out);                     // 候选缓存读取
+    void SendPinyinCtx();                                                     // 组合串+光标矩形→UI
+
 private:
     friend class CReadSession;
     friend class CInsertSession;
+    friend class CReplaceSession;
+    friend class CPinyinEditSession; // 组合窗口编辑会话（composition.cpp）
+
+    // 编辑动作（内部经 CPinyinEditSession 在宿主线程执行）
+    void PinyinStart(wchar_t ch);
+    void PinyinAppend(wchar_t ch);
+    void PinyinShrink();
+    void PinyinCancel();
+    void PinyinCommitHanzi(const std::wstring& hanzi);
+    void PinyinCommitRaw();
+    void PinyinEndComposition(ITfContext* pCtx, const std::wstring* replaceWith); // 共用收尾
 
     bool InitSinks();
     void UninitSinks();
@@ -92,7 +115,7 @@ private:
     void RequestContextRead(ITfContext* pContext);
     bool InsertTextAtSelection(const std::wstring& text);
     bool ReplaceTextBeforeCaret(const std::wstring& text, uint32_t deleteLen);
-    void SendCtx(const std::wstring& text, const RECT& rc);
+    void SendCtx(const std::wstring& text, const RECT& rc, uint8_t flags = 0);
 
     LONG _cRef = 1;
     ITfThreadMgr* _pThreadMgr = nullptr;
@@ -116,6 +139,13 @@ private:
 
     HWND _hwndMarshal = nullptr; // 隐藏封送窗口（宿主 UI 线程）
     static LRESULT CALLBACK MarshalWndProc(HWND, UINT, WPARAM, LPARAM);
+
+    // 拼音组合状态
+    bool _pinyinMode = false;
+    bool _fInPinyinEdit = false;  // 组合编辑会话执行中（抑制 OnEndEdit 自激发）
+    std::wstring _pinyin;         // 当前拼音字母串
+    ITfComposition* _pComposition = nullptr;
+    ITfRange* _compRange = nullptr;
 
     CPipeClient _pipe;
 };

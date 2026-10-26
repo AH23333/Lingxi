@@ -50,6 +50,8 @@ STDMETHODIMP CTextService::QueryInterface(REFIID riid, void** ppv)
         *ppv = (ITfKeyEventSink*)this;
     else if (IsEqualIID(riid, IID_ITfThreadFocusSink))
         *ppv = (ITfThreadFocusSink*)this;
+    else if (IsEqualIID(riid, IID_ITfCompositionSink))
+        *ppv = (ITfCompositionSink*)this;
     if (*ppv) { AddRef(); return S_OK; }
     return E_NOINTERFACE;
 }
@@ -113,6 +115,7 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* pThreadMgr, TfClientId tid, 
     }
 
     _fActivated = true;
+    DetectPinyinMode();
     _pipe.Start(this, _hwndMarshal);
     _pipe.Send(MSG_ACTIVATE, NULL, 0);
     return S_OK;
@@ -126,6 +129,11 @@ STDMETHODIMP CTextService::Deactivate()
 {
     LX_LOG(L"ime", L"Deactivate");
     _fActivated = false;
+    _pinyinMode = false;
+    // 组合若还开着：放弃跟踪（框架会发 OnCompositionTerminated 兜底清理）
+    if (_compRange) { _compRange->Release(); _compRange = nullptr; }
+    if (_pComposition) { _pComposition->Release(); _pComposition = nullptr; }
+    _pinyin.clear();
     _pipe.Send(MSG_DEACTIVATE, NULL, 0);
     _pipe.Stop();
     ClearCandidates();
@@ -268,6 +276,12 @@ STDMETHODIMP CTextService::OnEndEdit(ITfContext* pContext, TfEditCookie ecReadOn
         return S_OK; // 自己上屏引发的编辑，避免自激发
     if (!_fActivated)
         return S_OK;
+    if (_pComposition)
+    {
+        // 组合期间的外部编辑：重发拼音组合串（保持候选与光标同步）
+        SendPinyinCtx();
+        return S_OK;
+    }
     RequestContextRead(pContext);
     return S_OK;
 }
@@ -284,12 +298,11 @@ void CTextService::RequestContextRead(ITfContext* pContext)
     pSession->Release();
 }
 
-void CTextService::OnContextRead(const std::wstring& text, const RECT& rc)
+void CTextService::SendCtx(const std::wstring& text, const RECT& rc, uint8_t flags)
 {
     if (!_fActivated) return;
     if (text.empty())
     {
-        // 空上下文：仅通知 UI 隐藏，不占版本号
         SendHide();
         return;
     }
@@ -305,10 +318,23 @@ void CTextService::OnContextRead(const std::wstring& text, const RECT& rc)
     m.caretY = rc.top;
     m.caretW = rc.right - rc.left;
     m.caretH = rc.bottom - rc.top;
+    m.flags = flags;
     m.textChars = (uint32_t)text.size();
     _pipe.SendStr(MSG_CTX, &m, sizeof(m), text);
-    LX_LOG(L"ime", L"SendCtx ver=%u chars=%u rc=(%ld,%ld,%ld,%ld)",
-           ver, m.textChars, rc.left, rc.top, rc.right, rc.bottom);
+    LX_LOG(L"ime", L"SendCtx ver=%u chars=%u flags=%u rc=(%ld,%ld,%ld,%ld)",
+           ver, m.textChars, flags, rc.left, rc.top, rc.right, rc.bottom);
+}
+
+void CTextService::OnContextRead(const std::wstring& text, const RECT& rc)
+{
+    if (!_fActivated) return;
+    if (text.empty())
+    {
+        // 空上下文：仅通知 UI 隐藏，不占版本号
+        SendHide();
+        return;
+    }
+    SendCtx(text, rc, 0);
 }
 
 // ==================== 候选与上屏 ====================
@@ -334,6 +360,13 @@ void CTextService::OnPickRequested(uint32_t ver, uint32_t index)
 
 void CTextService::HandlePickFromUI(uint32_t ver, uint32_t index)
 {
+    // 拼音组合中：鼠标选词 = 提交该汉字进组合
+    if (_pComposition)
+    {
+        std::wstring hanzi;
+        if (GetCandidate(index, hanzi)) PinyinCommitHanzi(hanzi);
+        return;
+    }
     InsertCandidate(index); // InsertCandidate 内部会校验版本
 }
 
@@ -446,7 +479,13 @@ STDMETHODIMP CTextService::OnSetFocus(BOOL fForeground)
 
 STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM lParam, BOOL* pfEaten)
 {
-    // 候选可见时拦截确认键，其余一律放行（直通形态的核心约束）
+    // 拼音模式优先（字母进组合、组合态拦截编辑键）
+    if (PinyinKeyEaten(wParam))
+    {
+        *pfEaten = TRUE;
+        return S_OK;
+    }
+    // 直通形态：候选可见时拦截确认键，其余一律放行
     bool visible = CandidatesVisible();
     if (visible) // 逐键日志只记录候选交互期，避免真实使用时刷屏
         LX_LOG(L"key", L"OnTestKeyDown vk=%u visible=1", (uint32_t)wParam);
@@ -456,6 +495,11 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LP
 
 STDMETHODIMP CTextService::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM lParam, BOOL* pfEaten)
 {
+    if (_pinyinMode)
+    {
+        HandlePinyinKey(pContext, wParam, pfEaten);
+        return S_OK;
+    }
     *pfEaten = FALSE;
     if (!CandidatesVisible()) return S_OK;
 
