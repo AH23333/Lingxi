@@ -9,7 +9,7 @@
 //
 #include "predictor.h"
 
-#include "../common/log.h"
+#include "../../common/log.h"
 
 #include <windows.h>
 #include <algorithm>
@@ -196,7 +196,8 @@ private:
         cp.n_batch = 256;
         SYSTEM_INFO si{};
         GetSystemInfo(&si);
-        cp.n_threads = (int32_t)std::max(2u, si.dwNumberOfProcessors - 1);
+        int cores = (int)si.dwNumberOfProcessors;
+        cp.n_threads = cores > 3 ? cores - 1 : 2;
         cp.n_threads_batch = cp.n_threads;
         _ctx = _api.init_from_model(_model, cp);
         if (!_ctx)

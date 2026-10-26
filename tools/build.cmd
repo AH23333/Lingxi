@@ -30,5 +30,14 @@ if exist "%OUTDIR%" (
 )
 
 msbuild "%ROOT%\LingxiIme.sln" /m /nologo /v:m /p:Configuration=%CONFIG% /p:Platform=x64
-endlocal
-exit /b %errorlevel%
+set MSBUILD_RC=%errorlevel%
+
+rem Stage llama.cpp runtime + model next to the exe (copy only when newer/missing)
+if exist "%ROOT%\deps\llama\bin" (
+    robocopy "%ROOT%\deps\llama\bin" "%OUTDIR%\llama" /XO /NJH /NJS /NDL >nul
+)
+if exist "%ROOT%\deps\models" (
+    robocopy "%ROOT%\deps\models" "%OUTDIR%\models" /XO /NJH /NJS /NDL >nul
+)
+
+endlocal & exit /b %MSBUILD_RC%
