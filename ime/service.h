@@ -175,6 +175,7 @@ private:
     // 空闲点执行（远离 CTF 激活回调与按键分发——见 PITFALLS #17/#18）
     bool _pinyinMode = false;
     bool _tempEnglish = false; // Shift 单击切换的临时英文模式
+    bool _vMode = false;       // v 模式：首字母 v 后一串字母直通英文（v 不上屏）
     // Shift 单击检测：KeyDown 置位、与其他键组合则标记 used、KeyUp 判定
     bool _shiftDown = false;
     bool _shiftUsed = false;

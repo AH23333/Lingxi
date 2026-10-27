@@ -201,6 +201,12 @@ void CTextService::DetectPinyinMode()
     if (py != _pinyinMode)
         LX_LOG(L"ime", L"拼音模式: %d", (int)py); // 仅变化时记录
     _pinyinMode = py;
+    // 离开中文 profile：复位临时英文与 v 模式，避免跨应用残留
+    if (!py)
+    {
+        _tempEnglish = false;
+        _vMode = false;
+    }
 }
 
 // ==================== 组合编辑原语 ====================
@@ -501,6 +507,9 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
 {
     // 临时英文模式（Shift 单击切换）：字母/标点一律放行，不进拼音
     if (!_pinyinMode || _tempEnglish) return false;
+    // v 模式：首字母 v 后一串字母直通英文，v 模式内所有键放行（退出在
+    // HandlePinyinKey 遇到非字母键时处理，TestKeyDown 不改状态）
+    if (_vMode) return false;
     // 中英混排：Shift 按下或 CapsLock 开启时，字母直通（输入大写/英文）
     bool shiftOrCaps = (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 1) != 0;
     if (PinyinActive())
@@ -634,6 +643,16 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         return;
     }
 
+    // v 模式：首字母 v 已进入，后续字母直通英文（放行）；遇到非字母键
+    // （空格/标点/退格等）退出 v 模式并放行该键，由宿主正常处理。
+    if (_vMode)
+    {
+        if (!IsLetterKey(wParam))
+            _vMode = false;
+        *pfEaten = FALSE;
+        return;
+    }
+
     // 非活动态：字母键启动拼音；退格等控制键放行；中文标点转换并上屏；
     // 其余非字母键放行（绝不能吞掉退格，否则已上屏文字无法删除）。
     if (!PinyinActive())
@@ -647,6 +666,13 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
             return;
         }
         wchar_t ch0 = (wchar_t)((wParam >= L'A' && wParam <= L'Z') ? (wParam + 32) : wParam);
+        // 小写 v（无 Shift/Caps）进入 v 模式：v 本身不上屏，后续字母直通英文
+        if (ch0 == L'v' && !shiftOrCaps)
+        {
+            _vMode = true;
+            *pfEaten = TRUE;
+            return;
+        }
         PinyinStart(ch0);
         return;
     }
