@@ -4,6 +4,7 @@
 
 #include "../common/proto.h"
 #include "../common/log.h"
+#include "../common/settings.h"
 
 namespace lingxi {
 
@@ -43,15 +44,7 @@ bool CandWindow::Init(HINSTANCE hInst)
     }
     SetWindowLongPtrW(_hwnd, GWLP_USERDATA, (LONG_PTR)this);
 
-    _font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
-    _toastFont = CreateFontW(34, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
-    _smallFont = CreateFontW(-10, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+    RebuildFonts(LoadSettings().candidateFontSize);
     return true;
 }
 
@@ -64,12 +57,48 @@ void CandWindow::Shutdown()
     if (_csInit) { DeleteCriticalSection(&_cs); _csInit = false; }
 }
 
+// 按字号（DPI 缩放）重建三支字体；先删旧字体，避免 GDI 泄漏
+void CandWindow::RebuildFonts(uint32_t fontSize)
+{
+    if (fontSize < 12) fontSize = 12;
+    if (fontSize > 32) fontSize = 32;
+    _fontSize = fontSize;
+    LX_LOG(L"ui", L"RebuildFonts fontSize=%u", fontSize);
+
+    UINT dpi = 96;
+    if (auto pGetDpi = (UINT(WINAPI*)())GetProcAddress(GetModuleHandleW(L"user32.dll"),
+                                                       "GetDpiForSystem"))
+        dpi = pGetDpi();
+
+    int mainH = -MulDiv((int)fontSize, dpi, 96);
+    int toastH = MulDiv((int)fontSize * 2, dpi, 96);
+    int smallH = -MulDiv((int)fontSize * 5 / 8, dpi, 96);
+
+    if (_font) { DeleteObject(_font); _font = nullptr; }
+    if (_toastFont) { DeleteObject(_toastFont); _toastFont = nullptr; }
+    if (_smallFont) { DeleteObject(_smallFont); _smallFont = nullptr; }
+
+    _font = CreateFontW(mainH, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+                        L"Microsoft YaHei UI");
+    _toastFont = CreateFontW(toastH, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE,
+                             L"Microsoft YaHei");
+    _smallFont = CreateFontW(smallH, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+}
+
 void CandWindow::LayoutMetrics(int* itemH, int* pad)
 {
     UINT dpi = 96;
     if (auto pGetDpi = (UINT(WINAPI*)())GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForSystem"))
         dpi = pGetDpi();
-    *itemH = MulDiv(30, dpi, 96);
+    uint32_t fs = LoadSettings().candidateFontSize;
+    // 行高约 1.875 倍字号（原 30 对应字号 16），保证大字不被截断
+    *itemH = MulDiv((int)fs * 15 / 8, dpi, 96);
     *pad = MulDiv(8, dpi, 96);
 }
 
@@ -147,6 +176,8 @@ void CandWindow::Show(const RECT& caretScreen, const std::vector<std::wstring>& 
                       bool dark, uint32_t ver)
 {
     if (!_hwnd) return;
+    if (uint32_t fs = LoadSettings().candidateFontSize; fs != _fontSize)
+        RebuildFonts(fs); // 字号设置变化即时生效
     EnterCriticalSection(&_cs);
     _caret = caretScreen;
     _cands = cands;

@@ -155,6 +155,7 @@ std::string SerializeUserDict(const std::vector<UdEntry>& entries)
 constexpr int IDC_CHK_PINYIN = 101;
 constexpr int IDC_CHK_EN = 102;
 constexpr int IDC_EDT_COUNT = 104;
+constexpr int IDC_CMB_FONTSIZE = 105;
 constexpr int IDC_CMB_DARK = 106;
 constexpr int IDC_CHK_CNPUNCT = 107;
 constexpr int IDC_CHK_FUZZY = 108;
@@ -168,7 +169,7 @@ constexpr int IDC_CHK_TRADITIONAL = 114;
 HWND g_hMain = nullptr;    // 隐藏消息窗口（托盘宿主）
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
 HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
-     g_hCmbDark = nullptr, g_hChkCnPunct = nullptr, g_hChkFuzzy = nullptr,
+     g_hCmbDark = nullptr, g_hCmbFontSize = nullptr, g_hChkCnPunct = nullptr, g_hChkFuzzy = nullptr,
      g_hChkShiftToggle = nullptr, g_hChkVMode = nullptr,
      g_hChkShuangpin = nullptr, g_hChkSymbolHotkey = nullptr, g_hChkTraditional = nullptr;
 HFONT g_hFont = nullptr;
@@ -196,6 +197,11 @@ void LoadToControls()
     wchar_t buf[16];
     _snwprintf_s(buf, _TRUNCATE, L"%u", s.candidateCount);
     Edit_SetText(g_hEdtCount, buf);
+    static const uint32_t kFontSizes[] = {12, 14, 16, 18, 20, 24, 28, 32};
+    int fsSel = 2;
+    for (int i = 0; i < 8; i++)
+        if (kFontSizes[i] == s.candidateFontSize) fsSel = i;
+    ComboBox_SetCurSel(g_hCmbFontSize, fsSel);
     ComboBox_SetCurSel(g_hCmbDark, (int)s.darkMode);
     g_updating = false;
 }
@@ -219,6 +225,9 @@ void SaveFromControls()
     if (n < 1) n = 1;
     if (n > 9) n = 9;
     s.candidateCount = (uint32_t)n;
+    static const uint32_t kFontSizesSave[] = {12, 14, 16, 18, 20, 24, 28, 32};
+    int fsIdx = ComboBox_GetCurSel(g_hCmbFontSize);
+    if (fsIdx >= 0 && fsIdx < 8) s.candidateFontSize = kFontSizesSave[fsIdx];
     int sel = ComboBox_GetCurSel(g_hCmbDark);
     if (sel >= 0) s.darkMode = (uint32_t)sel;
     SaveSettings(s);
@@ -440,6 +449,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             if (HIWORD(wParam) == EN_CHANGE) SaveFromControls();
             return 0;
         case IDC_CMB_DARK:
+        case IDC_CMB_FONTSIZE:
             if (HIWORD(wParam) == CBN_SELCHANGE) SaveFromControls();
             return 0;
         case IDC_BTN_USERDICT:
@@ -528,6 +538,20 @@ void CreateSettingsWindow(HINSTANCE hInst)
     ComboBox_AddString(g_hCmbDark, L"跟随应用");
     ComboBox_AddString(g_hCmbDark, L"浅色");
     ComboBox_AddString(g_hCmbDark, L"深色");
+    y += rowH + MulDiv(6, scale, 96);
+
+    // 候选字号（12-32，即时生效）
+    mkStatic(L"候选字号", 0);
+    g_hCmbFontSize = CreateWindowExW(0, L"COMBOBOX", L"",
+                                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+                                     x, y, MulDiv(100, scale, 96), rowH * 6,
+                                     g_hSettings, (HMENU)(INT_PTR)IDC_CMB_FONTSIZE, hInst, NULL);
+    for (uint32_t z : {12u, 14u, 16u, 18u, 20u, 24u, 28u, 32u})
+    {
+        wchar_t b[8];
+        _snwprintf_s(b, _TRUNCATE, L"%u", z);
+        ComboBox_AddString(g_hCmbFontSize, b);
+    }
     y += rowH + MulDiv(6, scale, 96);
 
     // 用户词典管理：查看/删除/清空/导入导出已学习词条

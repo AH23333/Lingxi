@@ -37,6 +37,8 @@ private:
     void OnPaint();
     void LayoutAndPosition();
     void LayoutMetrics(int* itemH, int* pad);
+    // 按字号（DPI 缩放）重建三支字体；先删除旧字体，避免泄漏
+    void RebuildFonts(uint32_t fontSize);
     // 调用方持锁：返回当前页在全量列表中的起止 [begin,end)
     void CurrentPageRangeLocked(size_t* begin, size_t* end) const;
 
@@ -44,6 +46,7 @@ private:
     HFONT _font = nullptr;
     HFONT _toastFont = nullptr; // toast 大字（进程内复用）
     HFONT _smallFont = nullptr; // 底部页码/标记小字
+    uint32_t _fontSize = 16;    // 当前字号（变化时重建字体）
     bool _dark = true;
     RECT _caret{};          // 屏幕坐标
     uint32_t _ver = 0;

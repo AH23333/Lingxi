@@ -37,6 +37,7 @@ Settings LoadSettings()
     DWORD v = 0;
     if (GetDword(hKey, L"PinyinEnabled", v)) s.pinyinEnabled = v != 0;
     if (GetDword(hKey, L"CandidateCount", v) && v >= 1 && v <= 9) s.candidateCount = v;
+    if (GetDword(hKey, L"CandidateFontSize", v) && v >= 12 && v <= 32) s.candidateFontSize = v;
     if (GetDword(hKey, L"DarkMode", v) && v <= 2) s.darkMode = v;
     if (GetDword(hKey, L"EnCompletion", v)) s.enCompletion = v != 0;
     if (GetDword(hKey, L"Paused", v)) s.paused = v != 0;
@@ -61,6 +62,7 @@ void SaveSettings(const Settings& s)
 
     SetDword(hKey, L"PinyinEnabled", s.pinyinEnabled ? 1 : 0);
     SetDword(hKey, L"CandidateCount", s.candidateCount);
+    SetDword(hKey, L"CandidateFontSize", s.candidateFontSize);
     SetDword(hKey, L"DarkMode", s.darkMode);
     SetDword(hKey, L"EnCompletion", s.enCompletion ? 1 : 0);
     SetDword(hKey, L"Paused", s.paused ? 1 : 0);
