@@ -11,6 +11,7 @@
 #include "symbolpanel.h"
 #include "engine/predictor.h"
 #include "../common/log.h"
+#include "../common/settings.h"
 
 // ===== 单实例命令转发 =====
 // 第二个实例（--symbols/--settings）不直接建窗，而是通过命名事件通知已运行
@@ -194,9 +195,16 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     RegisterClassW(&nwc);
     HWND hNotify = CreateWindowExW(0, L"LingxiNotifyWnd", L"", 0,
                                    0, 0, 0, 0, HWND_MESSAGE, NULL, hInst, NULL);
-    // 全局热键 Ctrl+Shift+B 调出符号面板；被占用时静默跳过（不影响其他功能）
-    RegisterHotKey(hNotify, kHotkeySymbols, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
-                   (UINT)'B');
+    // 全局热键 Ctrl+Shift+B 调出符号面板；按设置注册/注销（关闭则不独占组合键）
+    auto syncHotkey = [hNotify] {
+        if (lingxi::LoadSettings().symbolHotkey)
+            RegisterHotKey(hNotify, kHotkeySymbols,
+                           MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT, (UINT)'B');
+        else
+            UnregisterHotKey(hNotify, kHotkeySymbols);
+    };
+    syncHotkey();
+    lingxi::SetSettingsChangedCallback(syncHotkey); // 设置保存后动态注册/注销
     g_reqSymbols = [&] {
         lingxi::ShowSymbolPanel(hInst,
             [&server](const std::wstring& s) { server.SendInsertText(s); });

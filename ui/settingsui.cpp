@@ -28,6 +28,7 @@ constexpr UINT WM_APP_TRAY = WM_APP + 10; // 托盘回调消息
 
 std::function<void()> g_reloadUserDict; // 用户词典变更后重新加载引擎
 std::function<void()> g_showSymbols;   // 托盘菜单：打开符号面板
+std::function<void()> g_settingsChanged; // 设置保存后（同步热键等）
 
 // ---------------- 用户词典文件工具（UTF-8：词\t拼音\t次数）----------------
 
@@ -161,13 +162,14 @@ constexpr int IDC_CHK_SHIFTTOGGLE = 109;
 constexpr int IDC_CHK_VMODE = 110;
 constexpr int IDC_BTN_USERDICT = 111;
 constexpr int IDC_CHK_SHUANGPIN = 112;
+constexpr int IDC_CHK_SYMBOLHOTKEY = 113;
 
 HWND g_hMain = nullptr;    // 隐藏消息窗口（托盘宿主）
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
 HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
      g_hCmbDark = nullptr, g_hChkCnPunct = nullptr, g_hChkFuzzy = nullptr,
      g_hChkShiftToggle = nullptr, g_hChkVMode = nullptr,
-     g_hChkShuangpin = nullptr;
+     g_hChkShuangpin = nullptr, g_hChkSymbolHotkey = nullptr;
 HFONT g_hFont = nullptr;
 bool g_updating = false; // 程序性改控件时不回写设置
 
@@ -188,6 +190,7 @@ void LoadToControls()
     Button_SetCheck(g_hChkShiftToggle, s.shiftToggle ? BST_CHECKED : BST_UNCHECKED);
     Button_SetCheck(g_hChkVMode, s.vMode ? BST_CHECKED : BST_UNCHECKED);
     Button_SetCheck(g_hChkShuangpin, s.shuangpin ? BST_CHECKED : BST_UNCHECKED);
+    Button_SetCheck(g_hChkSymbolHotkey, s.symbolHotkey ? BST_CHECKED : BST_UNCHECKED);
     wchar_t buf[16];
     _snwprintf_s(buf, _TRUNCATE, L"%u", s.candidateCount);
     Edit_SetText(g_hEdtCount, buf);
@@ -206,6 +209,7 @@ void SaveFromControls()
     s.shiftToggle = Button_GetCheck(g_hChkShiftToggle) == BST_CHECKED;
     s.vMode = Button_GetCheck(g_hChkVMode) == BST_CHECKED;
     s.shuangpin = Button_GetCheck(g_hChkShuangpin) == BST_CHECKED;
+    s.symbolHotkey = Button_GetCheck(g_hChkSymbolHotkey) == BST_CHECKED;
     wchar_t buf[16] = L"";
     Edit_GetText(g_hEdtCount, buf, 16);
     int n = _wtoi(buf);
@@ -215,6 +219,7 @@ void SaveFromControls()
     int sel = ComboBox_GetCurSel(g_hCmbDark);
     if (sel >= 0) s.darkMode = (uint32_t)sel;
     SaveSettings(s);
+    if (g_settingsChanged) g_settingsChanged();
     LX_LOG(L"ui", L"设置已保存: pinyin=%d count=%u dark=%u en=%d cnPunct=%d fuzzy=%d shift=%d v=%d",
            (int)s.pinyinEnabled, s.candidateCount, s.darkMode, (int)s.enCompletion,
            (int)s.cnPunct, (int)s.fuzzyPinyin, (int)s.shiftToggle, (int)s.vMode);
@@ -424,6 +429,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CHK_SHIFTTOGGLE:
         case IDC_CHK_VMODE:
         case IDC_CHK_SHUANGPIN:
+        case IDC_CHK_SYMBOLHOTKEY:
             if (HIWORD(wParam) == BN_CLICKED) SaveFromControls();
             return 0;
         case IDC_EDT_COUNT:
@@ -462,7 +468,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     if (auto pGetDpi = (UINT(WINAPI*)())GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForSystem"))
         dpi = pGetDpi();
     int scale = (int)dpi;
-    int W = MulDiv(440, scale, 96), H = MulDiv(486, scale, 96);
+    int W = MulDiv(440, scale, 96), H = MulDiv(520, scale, 96);
     int x = MulDiv(16, scale, 96), y = MulDiv(16, scale, 96);
     int rowH = MulDiv(30, scale, 96);
 
@@ -501,6 +507,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_hChkShiftToggle = mkCheck(L"Shift 单击切换中/英文（无拼音时单击 Shift，显示中/英提示）", IDC_CHK_SHIFTTOGGLE);
     g_hChkVMode = mkCheck(L"v 模式（中文下首字母 v 直通英文，如 vhello 出 hello）", IDC_CHK_VMODE);
     g_hChkShuangpin = mkCheck(L"小鹤双拼（每音节两键：声母+韵母，零声母按韵母首字母补齐）", IDC_CHK_SHUANGPIN);
+    g_hChkSymbolHotkey = mkCheck(L"符号面板热键 Ctrl+Shift+B（全局独占；关闭后仅托盘/菜单打开）", IDC_CHK_SYMBOLHOTKEY);
 
     y += MulDiv(6, scale, 96);
     mkStatic(L"英文补全候选数（1-9，仅英文逐键补全时生效）", 0);
@@ -649,6 +656,11 @@ void SetUserDictReloadCallback(std::function<void()> cb)
 void SetShowSymbolsCallback(std::function<void()> cb)
 {
     g_showSymbols = std::move(cb);
+}
+
+void SetSettingsChangedCallback(std::function<void()> cb)
+{
+    g_settingsChanged = std::move(cb);
 }
 
 void ShowSettingsWindow(HINSTANCE hInst)

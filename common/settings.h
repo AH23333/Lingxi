@@ -19,7 +19,8 @@ struct Settings
     bool fuzzyPinyin = true;      // 模糊音：z/zh、c/ch、s/sh、n/l、前/后鼻音互通（精确优先）
     bool shiftToggle = true;      // 无拼音时单击 Shift 切换中/英文
     bool vMode = true;            // v 模式：中文下首字母 v 直通英文
-    bool shuangpin = false;       // 小鹤双拼：每音节两键（声母键+韵母键）
+    bool shuangpin =false;       // 小鹤双拼：每音节两键（声母键+韵母键）
+    bool symbolHotkey = true;    // 全局热键 Ctrl+Shift+B 调出符号面板（独占该组合键）
 };
 
 Settings LoadSettings();
