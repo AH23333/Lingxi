@@ -222,6 +222,40 @@ int wmain()
                 Report(r.cands.empty(), "pinyin: xyzxyz -> empty", detail);
             }
 
+            // P4b. 高频口语词（口语覆盖层）：首候选必须精确命中
+            {
+                struct Case { const wchar_t* in; const wchar_t* expect; };
+                const Case cases[] = {
+                    { L"haode",      L"好的" },
+                    { L"haoma",      L"好吗" },
+                    { L"haoba",      L"好吧" },
+                    { L"shide",      L"是的" },
+                    { L"nihao",      L"你好" },
+                    { L"nihaoma",    L"你好吗" },
+                    { L"xiexie",     L"谢谢" },
+                    { L"zaijian",    L"再见" },
+                    { L"bukeqi",     L"不客气" },
+                    { L"duibuqi",    L"对不起" },
+                    { L"meiguanxi",  L"没关系" },
+                    { L"meiwenti",   L"没问题" },
+                    { L"zhidaole",   L"知道了" },
+                    { L"mingbaile",  L"明白了" },
+                    { L"zaoshanghao", L"早上好" },
+                    { L"wanshanghao", L"晚上好" },
+                    { L"xinniankuaile", L"新年快乐" },
+                    { L"shengrikuaile", L"生日快乐" },
+                };
+                for (const auto& cs : cases)
+                {
+                    lingxi::Prediction r = py->Predict(cs.in);
+                    bool ok = !r.cands.empty() && r.cands[0] == cs.expect;
+                    wchar_t detail[160];
+                    _snwprintf_s(detail, _TRUNCATE, L"'%ls' -> first='%ls' expect='%ls'",
+                                 cs.in, r.cands.empty() ? L"" : r.cands[0].c_str(), cs.expect);
+                    Report(ok, "pinyin spoken first-match", detail);
+                }
+            }
+
             // P5. 延迟：平均 < 10ms（规格上限）
             {
                 LatencyStats st = MeasureLatency(py, L"jintianqi", 50);

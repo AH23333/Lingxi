@@ -1,3 +1,36 @@
+好的	hao de
+是的	shi de
+好吗	hao ma
+好吧	hao ba
+没问题	mei wen ti
+知道了	zhi dao le
+明白了	ming bai le
+收到	shou dao
+谢谢	xie xie
+不客气	bu ke qi
+对不起	dui bu qi
+不好意思	bu hao yi si
+没关系	mei guan xi
+请问	qing wen
+麻烦你	ma fan ni
+打扰了	da rao le
+稍等	shao deng
+等一下	deng yi xia
+怎么办	zen me ban
+回头聊	hui tou liao
+你好	ni hao
+你好吗	ni hao ma
+您好	nin hao
+早上好	zao shang hao
+晚上好	wan shang hao
+早安	zao an
+晚安	wan an
+再见	zai jian
+拜拜	bai bai
+新年快乐	xin nian kuai le
+生日快乐	sheng ri kuai le
+恭喜	gong xi
+感谢	gan xie
 了	le
 是	shi
 在	zai
@@ -4387,7 +4420,6 @@
 缓	huan
 名单	ming dan
 定义	ding yi
-收到	shou dao
 财务	cai wu
 一辈子	yi bei zi
 瘦	shou
@@ -4610,7 +4642,6 @@
 仪	yi
 铅	qian
 嫌	xian
-感谢	gan xie
 策	ce
 标语	biao yu
 堤	di
@@ -6750,7 +6781,6 @@
 奇特	qi te
 接连	jie lian
 水域	shui yu
-谢谢	xie xie
 青春	qing chun
 人民日报	ren min ri bao
 以东	yi dong
@@ -6920,7 +6950,6 @@
 共产国际	gong chan guo ji
 即可	ji ke
 喇嘛	la ma
-对不起	dui bu qi
 打着	da zhe
 相差	xiang cha
 红旗	hong qi
@@ -8379,7 +8408,6 @@
 条款	tiao kuan
 质地	zhi di
 韦	wei
-不好意思	bu hao yi si
 南昌	nan chang
 啪	pa
 定居	ding ju
@@ -8879,7 +8907,6 @@
 新华门	xin hua men
 桑	sang
 清新	qing xin
-请问	qing wen
 国产	guo chan
 天河机场	tian he ji chang
 拾荒	shi huang
@@ -9311,7 +9338,6 @@
 苍白	cang bai
 行驶	xing shi
 阿里	a li
-你好	ni hao
 写出	xie chu
 双喜	shuang xi
 实体	shi ti
@@ -16176,7 +16202,6 @@
 传球	chuan qiu
 免于	mian yu
 兔子	tu zi
-再见	zai jian
 堂屋	tang wu
 姨	yi
 岭南	ling nan
@@ -17585,7 +17610,6 @@
 孙夫人	sun fu ren
 开明	kai ming
 强者	qiang zhe
-恭喜	gong xi
 惊叹	jing tan
 放在眼里	fang zai yan li
 放疗	fang liao
@@ -21854,7 +21878,6 @@
 橈	rao
 欓	dang
 气喘吁吁	qi chuan xu xu
-没关系	mei guan xi
 男士	nan shi
 皮球	pi qiu
 睾丸	gao wan
@@ -32999,7 +33022,6 @@
 往复	wang fu
 征文	zheng wen
 必不可缺	bi bu ke que
-怎么办	zen me ban
 手工艺品	shou gong yi pin
 手舞足蹈	shou wu zu dao
 拨给	bo gei
@@ -33827,7 +33849,6 @@
 心慌意乱	xin huang yi luan
 心窝	xin wo
 怒色	nu se
-您好	nin hao
 悶	men
 惯常	guan chang
 感染者	gan ran zhe
@@ -60002,7 +60023,6 @@
 拉特	la te
 拉瓦	la wa
 拉索	la suo
-拜拜	bai bai
 拦路虎	lan lu hu
 择善而从	ze shan er cong
 持证	chi zheng
@@ -69386,7 +69406,6 @@
 日臻完善	ri zhen wan shan
 旧主	jiu zhu
 旧大陆	jiu da lu
-早安	zao an
 时调	shi diao
 昆阳	kun yang
 昌吉	chang ji
@@ -73063,7 +73082,6 @@
 昺	bing
 显摆	xian bai
 晓之以理	xiao zhi yi li
-晚安	wan an
 晚景	wan jing
 晶态	jing tai
 智者见智	zhi zhe jian zhi

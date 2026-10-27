@@ -1,0 +1,33 @@
+好的	hao de
+是的	shi de
+好吗	hao ma
+好吧	hao ba
+没问题	mei wen ti
+知道了	zhi dao le
+明白了	ming bai le
+收到	shou dao
+谢谢	xie xie
+不客气	bu ke qi
+对不起	dui bu qi
+不好意思	bu hao yi si
+没关系	mei guan xi
+请问	qing wen
+麻烦你	ma fan ni
+打扰了	da rao le
+稍等	shao deng
+等一下	deng yi xia
+怎么办	zen me ban
+回头聊	hui tou liao
+你好	ni hao
+你好吗	ni hao ma
+您好	nin hao
+早上好	zao shang hao
+晚上好	wan shang hao
+早安	zao an
+晚安	wan an
+再见	zai jian
+拜拜	bai bai
+新年快乐	xin nian kuai le
+生日快乐	sheng ri kuai le
+恭喜	gong xi
+感谢	gan xie
