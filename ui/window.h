@@ -42,6 +42,8 @@ private:
 
     HWND _hwnd = nullptr;
     HFONT _font = nullptr;
+    HFONT _toastFont = nullptr; // toast 大字（进程内复用）
+    HFONT _smallFont = nullptr; // 底部页码/标记小字
     bool _dark = true;
     RECT _caret{};          // 屏幕坐标
     uint32_t _ver = 0;
@@ -52,6 +54,8 @@ private:
     bool _visible = false;
     bool _toastMode = false;   // 正在显示中/英文模式提示
     bool _toastEnglish = false;
+    int _hoverRow = -1;        // 鼠标悬停的页内行号（-1 无），用于高亮
+    bool _trackingMouse = false;
     CRITICAL_SECTION _cs{};
     bool _csInit = false;
     std::function<void(uint32_t, uint32_t)> _pick;

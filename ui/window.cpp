@@ -46,6 +46,12 @@ bool CandWindow::Init(HINSTANCE hInst)
     _font = CreateFontW(-16, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    _toastFont = CreateFontW(34, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+    _smallFont = CreateFontW(-10, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                             DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                             CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
     return true;
 }
 
@@ -53,6 +59,8 @@ void CandWindow::Shutdown()
 {
     if (_hwnd) { DestroyWindow(_hwnd); _hwnd = nullptr; }
     if (_font) { DeleteObject(_font); _font = nullptr; }
+    if (_toastFont) { DeleteObject(_toastFont); _toastFont = nullptr; }
+    if (_smallFont) { DeleteObject(_smallFont); _smallFont = nullptr; }
     if (_csInit) { DeleteCriticalSection(&_cs); _csInit = false; }
 }
 
@@ -234,17 +242,13 @@ void CandWindow::OnPaint()
         HBRUSH hb = CreateSolidBrush(bg);
         FillRect(hdc, &rc, hb);
         DeleteObject(hb);
-        HFONT big = CreateFontW(34, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
-        HGDIOBJ old = SelectObject(hdc, big);
+        HGDIOBJ old = SelectObject(hdc, _toastFont);
         SetBkMode(hdc, TRANSPARENT);
         SetTextColor(hdc, toastEn ? (dark ? RGB(225, 225, 225) : RGB(50, 50, 50))
                                  : RGB(255, 255, 255));
         DrawTextW(hdc, toastEn ? L"英" : L"中", -1, &rc,
                   DT_SINGLELINE | DT_CENTER | DT_VCENTER);
         SelectObject(hdc, old);
-        DeleteObject(big);
         COLORREF border = dark ? RGB(90, 90, 90) : RGB(200, 200, 200);
         HBRUSH hbd = CreateSolidBrush(border);
         FrameRect(hdc, &rc, hbd);
@@ -255,10 +259,12 @@ void CandWindow::OnPaint()
 
     std::vector<std::wstring> cands;
     uint32_t pageStart = 0;
+    int hoverRow = -1;
     {
         EnterCriticalSection(&_cs);
         cands = _cands;
         pageStart = _pageStart;
+        hoverRow = _hoverRow;
         LeaveCriticalSection(&_cs);
     }
 
@@ -298,6 +304,14 @@ void CandWindow::OnPaint()
             DeleteObject(hAccent);
             SetTextColor(hdc, RGB(255, 255, 255));
         }
+        else if ((int)row == hoverRow)
+        {
+            COLORREF hoverBg = dark ? RGB(64, 64, 64) : RGB(224, 238, 252);
+            HBRUSH hHover = CreateSolidBrush(hoverBg);
+            FillRect(hdc, &rowR, hHover);
+            DeleteObject(hHover);
+            SetTextColor(hdc, fg);
+        }
         else
         {
             SetTextColor(hdc, fg);
@@ -310,10 +324,7 @@ void CandWindow::OnPaint()
     // 底部条（小号灰字，不占行高）：
     //   左侧页码（多于一页时显示“‹ 1/7 ›”）；右下角构建标记（看到它=新 DLL）。
     {
-        HGDIOBJ smallFont = CreateFontW(-10, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
-                                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
-                                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
-        SelectObject(hdc, smallFont);
+        SelectObject(hdc, _smallFont);
         COLORREF dim = dark ? RGB(150, 150, 150) : RGB(130, 130, 130);
         if (totalPages > 1)
         {
@@ -327,7 +338,6 @@ void CandWindow::OnPaint()
         RECT rcStamp = { rc.right / 2, rc.bottom - 16, rc.right - 4, rc.bottom };
         DrawTextW(hdc, kBuildStamp, -1, &rcStamp, DT_SINGLELINE | DT_RIGHT | DT_VCENTER);
         SelectObject(hdc, oldFont);
-        DeleteObject(smallFont);
     }
 
     SelectObject(hdc, oldFont);
@@ -355,6 +365,46 @@ LRESULT CandWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         _toastMode = false;
         LeaveCriticalSection(&_cs);
         ShowWindow(hwnd, SW_HIDE);
+        return 0;
+
+    case WM_MOUSEMOVE:
+    {
+        if (!_trackingMouse)
+        {
+            TRACKMOUSEEVENT tme{ sizeof(tme) };
+            tme.dwFlags = TME_LEAVE;
+            tme.hwndTrack = hwnd;
+            TrackMouseEvent(&tme);
+            _trackingMouse = true;
+        }
+        POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        int itemH = 0, pad = 0;
+        LayoutMetrics(&itemH, &pad);
+        int row = (pt.y - pad) / itemH;
+        bool valid = false;
+        {
+            EnterCriticalSection(&_cs);
+            size_t pgBegin = 0, pgEnd = 0;
+            CurrentPageRangeLocked(&pgBegin, &pgEnd);
+            valid = (row >= 0 && (size_t)row < (pgEnd - pgBegin));
+            LeaveCriticalSection(&_cs);
+        }
+        int newRow = valid ? row : -1;
+        if (newRow != _hoverRow)
+        {
+            _hoverRow = newRow;
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
+        return 0;
+    }
+
+    case WM_MOUSELEAVE:
+        _trackingMouse = false;
+        if (_hoverRow != -1)
+        {
+            _hoverRow = -1;
+            InvalidateRect(hwnd, NULL, FALSE);
+        }
         return 0;
 
     case WM_LBUTTONUP:
