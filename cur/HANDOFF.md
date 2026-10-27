@@ -12,11 +12,17 @@
 
 ## 二、当前状态（已对齐到提交）
 
-- 最新提交：`ce676de 用户词典管理界面 + 修复设置窗口污染注册表 + 性能度量鲁棒化`
+- 最新提交：`7699412 符号面板完整落地 + 单实例命令转发 + 修复 ReadFrame 丢帧`
 - 工作区：**干净**，无未提交改动。
-- 测试：engine_test **119 PASS / 0 FAIL**（Release）。
+- 测试：engine_test **0 FAIL**（Release，全 PASS）。
 - 架构：双进程。`ImeCore.dll`（TSF 文本服务，注入宿主）+ `LingxiUI.exe`（候选窗+引擎，命名管道 `\\.\pipe\lingxi-ipc`）。
 - **默认无内联组合模式**（`_inlineComp=false`），从架构上杜绝 Chromium 悬挂组合污染。
+
+### 符号面板已完成（GLM 审查意见全部处理）
+- 5 分类符号网格（常用/数学/货币/箭头/表情），点击经 MSG_INSERT_TEXT 插入宿主。
+- 已用 fakeclient 验证完整闭环（点击"，"→ 客户端收到 MSG_INSERT_TEXT，见 PITFALLS #21~#24）。
+- `cur/GLM_REVIEW_symbolpanel.md` 的 P1-1（emoji 代理对）、P1-2（selfInsert 守卫）、P1-3（诊断清理）及 P2（字体复用/多显示器/删死代码）**全部处理**。
+- 同时修复了真实的 ReadFrame 丢帧 bug（连发 HELLO+ACTIVATE 第二帧被吞）。
 
 ## 三、本会话已修复的两个"烂摊子"（质检请重点回归）
 
@@ -45,10 +51,10 @@
 
 ## 五、待办（按优先级）
 
-1. 用户明确指示：**不要穷举同音词（预选词）**，先把非选词相关交互做好：符号面板/emoji、自定义短语、双拼、字体字号皮肤、候选窗 hover/失焦、逐字组合新词学习。
-2. **文档更新**：README/docs 严重过时（仍写 M4/M5、8 万词、候选上限 9），需重写。
+1. 用户明确指示：**不要穷举同音词（预选词）**，先把非选词相关交互做好。符号面板已完成；下一步候选：自定义短语、双拼、字体字号皮肤、面板全局快捷键、候选窗 hover/失焦、逐字组合新词学习。
+2. 符号面板增强：emoji 彩色（DirectWrite）、hover 高亮、失焦自动关闭。
 3. 工程化：卸载清理验证、32 位 TIP、崩溃保护。
-4. Edge/豆包兼容：隔离性已修，待用户重启宿主复测。
+4. Edge/豆包兼容：隔离性 + ReadFrame 修复已就绪，待用户重启宿主复测。
 
 ## 六、常用命令
 
@@ -56,5 +62,6 @@
 - 跑测试（勿带 LINGXI_LOG）：`& ".\bin\enginetest\engine_test.exe"`
 - Release 重建测试：`msbuild tools\engine_test\engine_test.vcxproj /t:Rebuild /p:Configuration=Release /p:Platform=x64`
 - 打开设置：`Start-Process .\bin\Debug\LingxiUI.exe -ArgumentList "--settings"`（**勿加 -WindowStyle Hidden**，否则窗口不可见）
+- 打开符号面板：`Start-Process .\bin\Debug\LingxiUI.exe -ArgumentList "--symbols"`（已有实例时经命名事件转发）
 - 设置注册表：`HKCU\Software\LingxiIme`（删除该键=全默认）
 - 用户词典：`%APPDATA%\LingxiIme\userdict.txt`（UTF-8 无 BOM）

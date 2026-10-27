@@ -119,3 +119,26 @@
 - **根因**：DLL 缓存的日志句柄指向被删除的文件（内容继续写入但新路径看不到）；每个新拉起的 LingxiUI 开新文件
 - **正确做法**：取证时以 VEH 崩溃文件 + stdout（每行 fflush）为准；或 DLL 检测日志句柄失效重开（待办）
 - **更正（QC 复核）**：现行 `common/log.h` 的 `AppendToFile` 已改为**逐行开关文件**（每次日志行都重新 CreateFile/CloseHandle），不再缓存句柄——本坑的根因在当前实现下已消除；代价是 `LINGXI_LOG=1` 时每行一次开关文件的高频 IO（曾导致拼音延迟 0.8ms→15-44ms 的"性能回归"，见 cur/HANDOFF.md）。判读旧日志时仍按本条原样取证。
+
+## 符号面板与 IPC（2026-10-28）
+
+### 21. ReadFrame 局部缓冲吞掉同批读到的下一帧 ⭐️（连发帧静默丢失）
+- **症状**：fakeclient 连续发 HELLO+ACTIVATE 时，服务端只收到 HELLO，ACTIVATE 丢失；真实 DLL 连接后也连续发 HELLO+ACTIVATE（焦点激活可能丢失）
+- **根因**：`ReadFrame` 的 `accum` 是**函数局部**缓冲。为减少 ReadFile 次数，读取请求字节数额外 +64；若一次 ReadFile 读入多帧，取走第一帧后，下一帧的多余字节随 `accum` 销毁被丢弃
+- **正确做法**：`ReadFrame` 加持久参数 `std::vector<uint8_t>& rxbuf`，取帧后 `erase` 已消费字节、保留多读字节；UI 侧挂到 `ClientCtx::rxbuf`，DLL 侧在 `Run()` 顶层声明、每次重连 `clear`
+- **取证**：在 ReadFrame 前后 dump 收到的字节数与解析结果，对比"请求字节数"与"实际收到字节数"即可定位
+
+### 22. 宿主 TIP 自动拉起无参数实例抢占单实例
+- **症状**：Stop-Process LingxiUI 后，宿主 TIP 立即拉起一个**无参数**实例抢占单实例 mutex；手动 Start-Process 的 --symbols/--settings 实例因 mutex 已存在而退出，面板打不开
+- **正确做法**：主实例创建命名事件（自动重置）+ 隐藏 message-only 通知窗口 + 等待线程；第二实例检测到 mutex 已存在时 OpenEvent→SetEvent 转发命令再退出，由主实例在 UI 线程执行
+
+### 23. emoji 是 UTF-16 代理对，不能按"1 格=1 wchar"
+- **症状**：符号面板表情类 emoji 被画成两格（含半字符），点击插入孤立高代理
+- **根因**：BMP 外字符（如 emoji）在 UTF-16 中占 2 个 wchar（高/低代理）
+- **正确做法**：按码点遍历——`SymCount` 遇高代理（0xD800..0xDBFF）与随后低代理算 1 个符号，`SymAt` 返回码点的 wchar 偏移与长度；绘制与点击换算必须用同一套逻辑
+- **遗留**：GDI DrawText 对 emoji 仅灰度渲染，彩色需 DirectWrite
+
+### 24. 主动插入文本后要抑制"上屏即预测"
+- **症状**：点击符号上屏后，UI 误弹预测候选
+- **根因**：主动插入同样触发 OnEndEdit，被当成用户输入
+- **正确做法**：DLL 封送窗口处理 WM_APP_LX_INSERT 时，用 `_fSelfInsert` 守卫包住 `InsertTextAtSelection`，OnEndEdit 检测到该标记则跳过预测
