@@ -93,6 +93,8 @@ public:
     // ---- M5 拼音模式（zh-CN profile 激活时启用）----
     void DetectPinyinMode();
     bool IsPinyinMode() const { return _pinyinMode; }
+    // 是否正在拼音输入（有宿主组合，或无组合模式下内存拼音串非空）。
+    bool PinyinActive() const { return _pComposition || (!_inlineComp && !_pinyin.empty()); }
     void HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pfEaten); // OnKeyDown 分发
     bool PinyinKeyEaten(WPARAM wParam);                                       // OnTestKeyDown 判定
     bool GetCandidate(uint32_t index, std::wstring& out);                     // 候选缓存读取
@@ -111,6 +113,7 @@ private:
     void PinyinCancel();
     void PinyinCommitHanzi(const std::wstring& hanzi);
     void PinyinCommitRaw();
+    void PinyinResetNoInline(); // 无组合模式收尾：清内存状态并隐藏候选窗
     void PinyinEndComposition(ITfContext* pCtx, const std::wstring* replaceWith); // 共用收尾
 
     bool InitSinks();
@@ -156,6 +159,11 @@ private:
     std::wstring _pinyin;         // 当前拼音字母串
     ITfComposition* _pComposition = nullptr;
     ITfRange* _compRange = nullptr;
+    // 内联组合（把拼音字母写入宿主 composition）。Chromium 对组合的写操作/销毁
+    // 不稳定，一旦异常残留悬挂组合会污染整个 TSF 上下文（连带微软拼音）。
+    // 默认 false=无组合模式：拼音只在候选窗显示、不写入宿主，宿主从不产生组合，
+    // 从根本上杜绝悬挂组合污染。
+    bool _inlineComp = false;
 
     CPipeClient _pipe;
 };

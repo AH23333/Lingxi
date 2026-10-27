@@ -208,6 +208,17 @@ void CTextService::PinyinStart(wchar_t ch)
 {
     // 去激活/模式切换过渡期绝不启组合（此时文档栈可能正被 CTF 重建）
     if (!_fActivated || !_pinyinMode) return;
+
+    // 无组合模式：拼音字母不写入宿主，只在候选窗显示，宿主永不产生 composition。
+    if (!_inlineComp)
+    {
+        _pinyin.clear();
+        _pinyin += ch;
+        ClearCandidates();
+        SendPinyinCtx();
+        return;
+    }
+
     ITfContext* pCtx = nullptr;
     if (!GetFocusContext(_pThreadMgr, &pCtx)) return;
 
@@ -250,6 +261,13 @@ void CTextService::PinyinStart(wchar_t ch)
 
 void CTextService::PinyinAppend(wchar_t ch)
 {
+    if (!_inlineComp)
+    {
+        // 无组合模式：仅更新内存拼音串并刷新候选窗。
+        _pinyin += ch;
+        SendPinyinCtx();
+        return;
+    }
     if (!_pComposition) return;
     ITfContext* pCtx = nullptr;
     if (!GetFocusContext(_pThreadMgr, &pCtx)) return;
@@ -271,6 +289,14 @@ void CTextService::PinyinAppend(wchar_t ch)
 
 void CTextService::PinyinShrink()
 {
+    if (!_inlineComp)
+    {
+        if (_pinyin.empty()) return;
+        _pinyin.pop_back();
+        if (_pinyin.empty()) { PinyinCancel(); return; }
+        SendPinyinCtx();
+        return;
+    }
     if (!_pComposition) return;
     if (_pinyin.size() <= 1)
     {
@@ -305,16 +331,25 @@ void CTextService::PinyinEndComposition(ITfContext* pCtx, const std::wstring* re
     _fSelfInsert = TRUE;
     auto task = [this, doReplace, replaceText](TfEditCookie ec) -> HRESULT
     {
+        LX_LOG(L"ime", L"[end] enter task range=%p comp=%p doReplace=%d",
+               (void*)_compRange, (void*)_pComposition, (int)doReplace);
         if (_compRange && doReplace)
         {
             HRESULT hr = _compRange->SetText(ec, 0, replaceText.c_str(), (LONG)replaceText.size());
+            LX_LOG(L"ime", L"[end] SetText=0x%08X", hr);
             if (FAILED(hr)) return hr;
         }
-        if (_pComposition) return _pComposition->EndComposition(ec);
+        if (_pComposition)
+        {
+            HRESULT he = _pComposition->EndComposition(ec);
+            LX_LOG(L"ime", L"[end] EndComposition=0x%08X", he);
+            return he;
+        }
         return S_OK;
     };
     auto* pSession = new CPinyinEditSession(this, pCtx, task);
-    RequestSessionEx(pCtx, _tfClientId, pSession, TF_ES_READWRITE);
+    HRESULT hrs = RequestSessionEx(pCtx, _tfClientId, pSession, TF_ES_READWRITE);
+    LX_LOG(L"ime", L"[end] RequestSession=0x%08X", hrs);
     pSession->Release();
     pCtx->Release();
     _fSelfInsert = FALSE;
@@ -324,8 +359,22 @@ void CTextService::PinyinEndComposition(ITfContext* pCtx, const std::wstring* re
     _pinyin.clear();
 }
 
+// 无组合模式通用收尾：清空内存拼音/候选并隐藏候选窗（宿主没有任何组合需要结束）。
+void CTextService::PinyinResetNoInline()
+{
+    _pinyin.clear();
+    ClearCandidates();
+    SendHide();
+}
+
 void CTextService::PinyinCancel()
 {
+    if (!_inlineComp)
+    {
+        // 无组合：拼音字母从未写入宿主，直接丢弃即可。
+        PinyinResetNoInline();
+        return;
+    }
     ITfContext* pCtx = nullptr;
     if (!GetFocusContext(_pThreadMgr, &pCtx))
     {
@@ -342,6 +391,16 @@ void CTextService::PinyinCancel()
 
 void CTextService::PinyinCommitHanzi(const std::wstring& hanzi)
 {
+    if (!_inlineComp)
+    {
+        // 无组合：宿主里没有拼音字母，直接把汉字插到光标处。
+        LX_LOG(L"ime", L"无组合上屏汉字 chars=%u", (uint32_t)hanzi.size());
+        _fSelfInsert = TRUE;
+        InsertTextAtSelection(hanzi);
+        _fSelfInsert = FALSE;
+        PinyinResetNoInline();
+        return;
+    }
     ITfContext* pCtx = nullptr;
     if (!GetFocusContext(_pThreadMgr, &pCtx))
     {
@@ -357,6 +416,19 @@ void CTextService::PinyinCommitHanzi(const std::wstring& hanzi)
 
 void CTextService::PinyinCommitRaw()
 {
+    if (!_inlineComp)
+    {
+        // 无组合：回车把原始拼音字母作为普通文本上屏。
+        if (!_pinyin.empty())
+        {
+            std::wstring raw = _pinyin;
+            _fSelfInsert = TRUE;
+            InsertTextAtSelection(raw);
+            _fSelfInsert = FALSE;
+        }
+        PinyinResetNoInline();
+        return;
+    }
     ITfContext* pCtx = nullptr;
     if (!GetFocusContext(_pThreadMgr, &pCtx)) return;
     PinyinEndComposition(pCtx, nullptr); // 保留拼音字母原文
@@ -369,7 +441,8 @@ void CTextService::PinyinCommitRaw()
 
 void CTextService::SendPinyinCtx()
 {
-    if (!_compRange) return;
+    if (_inlineComp && !_compRange) return;
+    if (!_inlineComp && _pinyin.empty()) return;
     ITfContext* pCtx = nullptr;
     if (!GetFocusContext(_pThreadMgr, &pCtx)) return;
 
@@ -377,18 +450,21 @@ void CTextService::SendPinyinCtx()
     // Chromium 上 TF_ES_SYNC 常回退为异步会话：DoEditSession 会在本函数返回后
     // 才执行，此时任何"引用捕获的局部栈变量"(&rc/&hasRect)都已销毁，写入即 AV。
     // 编辑会话由 TSF 在宿主 UI 线程回调，故 GetGUIThreadInfo/SendCtx 仍在 UI 线程。
+    bool inlineComp = _inlineComp;
     std::wstring pinyin = _pinyin;
     ITfContext* pCtxSession = pCtx;
-    auto task = [this, pCtxSession, pinyin](TfEditCookie ec) -> HRESULT
+    auto task = [this, pCtxSession, pinyin, inlineComp](TfEditCookie ec) -> HRESULT
     {
-        if (!_compRange) return E_FAIL;
+        if (inlineComp && !_compRange) return E_FAIL;
         RECT rc{};
         bool hasRect = false;
         ITfContextView* pView = nullptr;
         if (SUCCEEDED(pCtxSession->GetActiveView(&pView)) && pView)
         {
             RECT rcText{};
-            HRESULT he = SafeGetTextExt(pView, pCtxSession, ec, _compRange, &rcText);
+            // 无组合时传 nullptr：用当前插入点选区定位（最安全，不触碰组合 range）。
+            ITfRange* pRangeForRect = inlineComp ? _compRange : nullptr;
+            HRESULT he = SafeGetTextExt(pView, pCtxSession, ec, pRangeForRect, &rcText);
             if (SUCCEEDED(he)) { rc = rcText; hasRect = true; }
             else if (he == E_UNEXPECTED)
                 LX_LOG(L"ime", L"GetTextExt 宿主异常，已降级系统插入符");
@@ -421,11 +497,11 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
     if (!_pinyinMode) return false;
     // 中英混排：Shift 按下或 CapsLock 开启时，字母直通（输入大写/英文）
     bool shiftOrCaps = (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 1) != 0;
-    if (_pComposition)
+    if (PinyinActive())
     {
         if (IsLetterKey(wParam))
         {
-            // 组合态的 Shift+字母：也要吃（HandlePinyinKey 会先提交字母原文再放行）
+            // 输入中的 Shift+字母：也要吃（HandlePinyinKey 会先提交原文再放行）
             return true;
         }
         if (shiftOrCaps && IsLetterKey(wParam)) return true; // 同上（不可达，防御）
@@ -438,7 +514,7 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
         if (wParam >= L'1' && wParam <= L'9') return CandidatesVisible();
         return false; // 标点等：提交后放行
     }
-    // 非组合态：Shift/Caps 下的字母直通，普通字母启动组合
+    // 未开始输入：Shift/Caps 下的字母直通，普通字母启动拼音
     if (shiftOrCaps && IsLetterKey(wParam)) return false;
     return IsLetterKey(wParam);
 }
@@ -457,11 +533,11 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
 {
     *pfEaten = TRUE;
 
-    // 中英混排：Shift/CapsLock + 字母 → 提交当前组合（保留字母原文），大写字母放行
+    // 中英混排：Shift/CapsLock + 字母 → 提交当前拼音（保留字母原文），大写字母放行
     bool shiftOrCaps = (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 1) != 0;
     if (shiftOrCaps && IsLetterKey(wParam))
     {
-        if (_pComposition)
+        if (PinyinActive())
         {
             PinyinCommitRaw();
             ClearCandidates();
@@ -472,7 +548,7 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
     }
 
     wchar_t ch = (wchar_t)((wParam >= L'A' && wParam <= L'Z') ? (wParam + 32) : wParam);
-    if (!_pComposition)
+    if (!PinyinActive())
     {
         PinyinStart(ch); // 键盘判定已保证是字母
         return;
