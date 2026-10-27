@@ -31,3 +31,95 @@
 生日快乐	sheng ri kuai le
 恭喜	gong xi
 感谢	gan xie
+# ---- 高频系语/判断（jieba 把“我是”等低估，整句易误判为“卧室”）----
+我是	wo shi
+你是	ni shi
+他是	ta shi
+她是	ta shi
+它是	ta shi
+这是	zhe shi
+那是	na shi
+就是	jiu shi
+还是	hai shi
+不是	bu shi
+但是	dan shi
+可是	ke shi
+都是	dou shi
+也是	ye shi
+真是	zhen shi
+算是	suan shi
+# ---- 能愿/心理 ----
+我想	wo xiang
+我要	wo yao
+我会	wo hui
+我能	wo neng
+想要	xiang yao
+可以	ke yi
+应该	ying gai
+可能	ke neng
+知道	zhi dao
+觉得	jue de
+希望	xi wang
+喜欢	xi huan
+# ---- 祈使/动作 ----
+试一下	shi yi xia
+等一下	deng yi xia
+看一下	kan yi xia
+用一下	yong yi xia
+找一下	zhao yi xia
+说一下	shuo yi xia
+帮我	bang wo
+给我	gei wo
+让我	rang wo
+请你	qing ni
+过来	guo lai
+回去	hui qu
+进去	jin qu
+出来	chu lai
+起来	qi lai
+# ---- 程度/评价 ----
+真的	zhen de
+真美	zhen mei
+真好	zhen hao
+真棒	zhen bang
+真厉害	zhen li hai
+太美	tai mei
+太好了	tai hao le
+好厉害	hao li hai
+不错	bu cuo
+挺好	ting hao
+还行	hai xing
+很好	hen hao
+# ---- 疑问 ----
+为什么	wei shen me
+怎么样	zen me yang
+什么意思	shen me yi si
+干什么	gan shen me
+怎么了	zen me le
+在哪里	zai na li
+有没有	you mei you
+是不是	shi bu shi
+对不对	dui bu dui
+好不好	hao bu hao
+# ---- 指代/时间/语气 ----
+想	xiang
+公园	gong yuan
+现在	xian zai
+这里	zhe li
+那里	na li
+一下	yi xia
+一点	yi dian
+一些	yi xie
+一起	yi qi
+一样	yi yang
+然后	ran hou
+因为	yin wei
+所以	suo yi
+如果	ru guo
+虽然	sui ran
+算了	suan le
+行了	xing le
+没事	mei shi
+饿	e
+吧	ba
+我饿了	wo e le

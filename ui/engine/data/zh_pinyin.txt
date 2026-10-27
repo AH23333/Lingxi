@@ -31,6 +31,91 @@
 生日快乐	sheng ri kuai le
 恭喜	gong xi
 感谢	gan xie
+我是	wo shi
+你是	ni shi
+他是	ta shi
+她是	ta shi
+它是	ta shi
+这是	zhe shi
+那是	na shi
+就是	jiu shi
+还是	hai shi
+不是	bu shi
+但是	dan shi
+可是	ke shi
+都是	dou shi
+也是	ye shi
+真是	zhen shi
+算是	suan shi
+我想	wo xiang
+我要	wo yao
+我会	wo hui
+我能	wo neng
+想要	xiang yao
+可以	ke yi
+应该	ying gai
+可能	ke neng
+知道	zhi dao
+觉得	jue de
+希望	xi wang
+喜欢	xi huan
+试一下	shi yi xia
+看一下	kan yi xia
+用一下	yong yi xia
+找一下	zhao yi xia
+说一下	shuo yi xia
+帮我	bang wo
+给我	gei wo
+让我	rang wo
+请你	qing ni
+过来	guo lai
+回去	hui qu
+进去	jin qu
+出来	chu lai
+起来	qi lai
+真的	zhen de
+真美	zhen mei
+真好	zhen hao
+真棒	zhen bang
+真厉害	zhen li hai
+太美	tai mei
+太好了	tai hao le
+好厉害	hao li hai
+不错	bu cuo
+挺好	ting hao
+还行	hai xing
+很好	hen hao
+为什么	wei shen me
+怎么样	zen me yang
+什么意思	shen me yi si
+干什么	gan shen me
+怎么了	zen me le
+在哪里	zai na li
+有没有	you mei you
+是不是	shi bu shi
+对不对	dui bu dui
+好不好	hao bu hao
+想	xiang
+公园	gong yuan
+现在	xian zai
+这里	zhe li
+那里	na li
+一下	yi xia
+一点	yi dian
+一些	yi xie
+一起	yi qi
+一样	yi yang
+然后	ran hou
+因为	yin wei
+所以	suo yi
+如果	ru guo
+虽然	sui ran
+算了	suan le
+行了	xing le
+没事	mei shi
+饿	e
+吧	ba
+我饿了	wo e le
 了	le
 是	shi
 在	zai
@@ -107,7 +192,6 @@
 向	xiang
 已	yi
 其	qi
-可以	ke yi
 给	gei
 很	hen
 发展	fa zhan
@@ -116,7 +200,6 @@
 使	shi
 前	qian
 新	xin
-想	xiang
 却	que
 这个	zhe ge
 它	ta
@@ -146,7 +229,6 @@
 全国	quan guo
 经济	jing ji
 这些	zhe xie
-不是	bu shi
 听	ting
 公司	gong si
 成	cheng
@@ -158,7 +240,6 @@
 叫	jiao
 社会	she hui
 两	liang
-知道	zhi dao
 当	dang
 三	san
 本	ben
@@ -170,9 +251,7 @@
 长	zhang
 市	shi
 门	men
-起来	qi lai
 地区	di qu
-如果	ru guo
 开始	kai shi
 正	zheng
 技术	ji shu
@@ -182,7 +261,6 @@
 美国	mei guo
 天	tian
 成为	cheng wei
-因为	yin wei
 比	bi
 米	mi
 外	wai
@@ -198,11 +276,9 @@
 问	wen
 话	hua
 其中	qi zhong
-现在	xian zai
 天安门	tian an men
 不能	bu neng
 打	da
-一些	yi xie
 老	lao
 时间	shi jian
 自	zi
@@ -221,8 +297,6 @@
 生活	sheng huo
 时候	shi hou
 一种	yi zhong
-可能	ke neng
-出来	chu lai
 学生	xue sheng
 以及	yi ji
 石首	shi shou
@@ -235,10 +309,8 @@
 死	si
 省	sheng
 住	zhu
-所以	suo yi
 万	wan
 不同	bu tong
-这里	zhe li
 学院	xue yuan
 因	yin
 曾	ceng
@@ -250,7 +322,6 @@
 会议	hui yi
 达	da
 头	tou
-但是	dan shi
 作	zuo
 该	gai
 女	nv
@@ -283,7 +354,6 @@
 许多	xu duo
 先	xian
 应	ying
-吧	ba
 县	xian
 日本	ri ben
 之间	zhi jian
@@ -309,7 +379,6 @@
 水	shui
 武汉	wu han
 南	nan
-虽然	sui ran
 根据	gen ju
 法律	fa lv
 影响	ying xiang
@@ -344,7 +413,6 @@
 而且	er qie
 另	ling
 生	sheng
-一样	yi yang
 面积	mian ji
 各种	ge zhong
 全	quan
@@ -369,7 +437,6 @@
 说道	shuo dao
 世纪	shi ji
 为了	wei le
-应该	ying gai
 之一	zhi yi
 经	jing
 按	an
@@ -493,7 +560,6 @@
 最大	zui da
 边	bian
 位	wei
-然后	ran hou
 农业	nong ye
 经过	jing guo
 专业	zhuan ye
@@ -505,8 +571,6 @@
 明	ming
 设	she
 一声	yi sheng
-觉得	jue de
-一起	yi qi
 理论	li lun
 今天	jin tian
 非常	fei chang
@@ -559,7 +623,6 @@
 知	zhi
 主	zhu
 战争	zhan zheng
-可是	ke shi
 不知	bu zhi
 政策	zheng ce
 不要	bu yao
@@ -585,7 +648,6 @@
 面	mian
 称为	cheng wei
 结构	jie gou
-一点	yi dian
 别	bie
 成立	cheng li
 初	chu
@@ -596,7 +658,6 @@
 结果	jie guo
 投资	tou zi
 后来	hou lai
-一下	yi xia
 水平	shui ping
 保护	bao hu
 主任	zhu ren
@@ -624,7 +685,6 @@
 襄阳	xiang yang
 方	fang
 几个	ji ge
-那里	na li
 甚	shen
 公里	gong li
 完	wan
@@ -650,7 +710,6 @@
 及其	ji qi
 公民	gong min
 锛	ben
-希望	xi wang
 条	tiao
 新闻	xin wen
 剑	jian
@@ -795,7 +854,6 @@
 声音	sheng yin
 意见	yi jian
 办	ban
-过来	guo lai
 保持	bao chi
 今日	jin ri
 待	dai
@@ -835,7 +893,6 @@
 国民党	guo min dang
 平均	ping jun
 消息	xiao xi
-还是	hai shi
 安全	an quan
 独立	du li
 啦	la
@@ -850,7 +907,6 @@
 这次	zhe ci
 经验	jing yan
 采取	cai qu
-喜欢	xi huan
 根本	gen ben
 领域	ling yu
 具体	ju ti
@@ -877,7 +933,6 @@
 李	li
 令	ling
 飞	fei
-为什么	wei shen me
 感到	gan dao
 流	liu
 无法	wu fa
@@ -910,7 +965,6 @@
 正是	zheng shi
 明显	ming xian
 改	gai
-就是	jiu shi
 刀	dao
 欧洲	ou zhou
 破	po
@@ -1213,7 +1267,6 @@
 南京	nan jing
 海军	hai jun
 外交部	wai jiao bu
-真是	zhen shi
 朱	zhu
 网	wang
 心想	xin xiang
@@ -1405,7 +1458,6 @@
 商业	shang ye
 高速	gao su
 有限公司	you xian gong si
-真的	zhen de
 克	ke
 救	jiu
 只能	zhi neng
@@ -1426,7 +1478,6 @@
 音乐	yin yue
 建成	jian cheng
 斗	dou
-回去	hui qu
 层	ceng
 难道	nan dao
 接着	jie zhe
@@ -1569,7 +1620,6 @@
 油	you
 相互	xiang hu
 读	du
-是不是	shi bu shi
 部长	bu zhang
 球	qiu
 守	shou
@@ -1685,7 +1735,6 @@
 招生	zhao sheng
 攻击	gong ji
 天然	tian ran
-不错	bu cuo
 势	shi
 亲自	qin zi
 鬼	gui
@@ -1808,7 +1857,6 @@
 深入	shen ru
 推进	tui jin
 石油	shi you
-进去	jin qu
 射	she
 地上	di shang
 效果	xiao guo
@@ -1934,7 +1982,6 @@
 叶	ye
 城楼	cheng lou
 轮	lun
-公园	gong yuan
 哥	ge
 空中	kong zhong
 软件	ruan jian
@@ -2488,7 +2535,6 @@
 劝	quan
 多个	duo ge
 举办	ju ban
-算是	suan shi
 简称	jian cheng
 装置	zhuang zhi
 宜	yi
@@ -3565,7 +3611,6 @@
 差别	cha bie
 外资	wai zi
 千万	qian wan
-有没有	you mei you
 依法	yi fa
 地点	di dian
 终	zhong
@@ -3605,7 +3650,6 @@
 军阀	jun fa
 一下子	yi xia zi
 荷兰	he lan
-怎么样	zen me yang
 黄石市	huang shi shi
 洛阳	luo yang
 想象	xiang xiang
@@ -4020,7 +4064,6 @@
 生产力	sheng chan li
 近日	jin ri
 仅次于	jin ci yu
-想要	xiang yao
 当日	dang ri
 不下	bu xia
 湾	wan
@@ -4183,7 +4226,6 @@
 州长	zhou zhang
 手臂	shou bi
 话题	hua ti
-饿	e
 人间	ren jian
 不良	bu liang
 每日	mei ri
@@ -5960,7 +6002,6 @@
 商城	shang cheng
 回归	hui gui
 崖	ya
-干什么	gan shen me
 桂林	gui lin
 长官	zhang guan
 真理	zhen li
@@ -6277,7 +6318,6 @@
 肠子	chang zi
 人民大会堂	ren min da hui tang
 会员	hui yuan
-我会	wo hui
 箱	xiang
 肩膀	jian bang
 风暴	feng bao
@@ -6530,7 +6570,6 @@
 升高	sheng gao
 国防委员会	guo fang wei yuan hui
 深远	shen yuan
-算了	suan le
 粒	li
 过年	guo nian
 钙	gai
@@ -10681,7 +10720,6 @@
 初级阶段	chu ji jie duan
 危	wei
 城池	cheng chi
-好不好	hao bu hao
 常住	chang zhu
 弥漫	mi man
 忠诚	zhong cheng
@@ -12154,7 +12192,6 @@
 朝天椒	chao tian jiao
 末端	mo duan
 死亡率	si wang lv
-没事	mei shi
 盛华仁	sheng hua ren
 石墨	shi mo
 礼貌	li mao
@@ -140411,7 +140448,6 @@
 太盛	tai sheng
 太空舱	tai kong cang
 太空衣	tai kong yi
-太美	tai mei
 太阳党	tai yang dang
 失调症	shi tiao zheng
 头虱	tou shi
@@ -193812,7 +193848,6 @@
 太多年	tai duo nian
 太大	tai da
 太奇	tai qi
-太好了	tai hao le
 太妈	tai ma
 太妙了	tai miao le
 太妹	tai mei
@@ -256748,7 +256783,6 @@
 真够傻	zhen gou sha
 真大	zhen da
 真太后	zhen tai hou
-真好	zhen hao
 真好汉	zhen hao han
 真好玩	zhen hao wan
 真如慧	zhen ru hui
@@ -256803,7 +256837,6 @@
 真材实料	zhen cai shi liao
 真枪	zhen qiang
 真核细胞	zhen he xi bao
-真棒	zhen bang
 真武庙	zhen wu miao
 真武观	zhen wu guan
 真死	zhen si
@@ -256854,7 +256887,6 @@
 真糟糕	zhen zao gao
 真紧	zhen jin
 真累	zhen lei
-真美	zhen mei
 真能干	zhen neng gan
 真脏实犯	zhen zang shi fan
 真草	zhen cao
@@ -281309,7 +281341,6 @@
 译经	yi jing
 译述	yi shu
 译错	yi cuo
-试一下	shi yi xia
 试一试	shi yi shi
 试业	shi ye
 试乘	shi cheng
@@ -288815,7 +288846,6 @@
 还着	hai zhe
 还算	hai suan
 还织	hai zhi
-还行	hai xing
 还行得通	hai xing de tong
 还让出	hai rang chu
 还让到	hai rang dao

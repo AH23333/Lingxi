@@ -657,8 +657,10 @@ private:
         return std::log(1.0 + (double)_entries[idx].rank);
     }
 
-    // 词数成本：词链中每个词都加，倾向用更少（更长）的词。
-    static constexpr double kWordCountCost = 1.5;
+    // 词数成本：log(1+rank) 已符合 Zipf 单字概率模型，多字词的 rank 本身
+    // 反映其概率，不再额外奖励"少词"——否则生僻长词（相去、石碣镇）会靠
+    // 少一个词数罚压过高频单字组合（想+去、世界+真美）。
+    static constexpr double kWordCountCost = 0.0;
     // 每个模糊音节的罚分：使模糊命中排在精确命中之后，但仍可作为容错候选。
     static constexpr double K_FUZZY = 3.0;
     // 模糊音仅对至多 3 音节的词做变体枚举（控制组合数 4^3 以内）。
@@ -1056,15 +1058,16 @@ private:
         }
 
         // 分层排序：① 切分路径自然度（tier）→ ② 完整覆盖优先（未覆盖单元少）
-        // → ③ 整词/长词优先（词数少）→ ④ 词频高（cost 低）。
-        // 既保证完整拼音匹配的整词压过单字，又让最优切分的单字备选压过碎路径怪词。
+        // → ③ 概率 cost 低。
+        // 不再把"词数少"作为 cost 之前的硬排序：log(1+rank) 已符合 Zipf 词概率
+        // 模型，常用整词的 rank 远小于其拆字单字 rank 乘积，自然胜出；而生僻长词
+        // （相去、石碣镇）若硬性按词数少优先，会压过更合理的高频词组合。
         std::stable_sort(all.begin(), all.end(),
                          [](const Candidate& a, const Candidate& b)
                          {
                              if (a.tier != b.tier) return a.tier < b.tier;
                              int ua = a.units - a.covered, ub = b.units - b.covered;
                              if (ua != ub) return ua < ub;
-                             if (a.words != b.words) return a.words < b.words;
                              return a.cost < b.cost;
                          });
         return all;

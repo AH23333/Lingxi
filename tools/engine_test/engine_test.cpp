@@ -13,6 +13,7 @@
 #include "predictor.h"
 #include "../../common/proto.h"
 #include "../../common/punct.h"
+#include "../../common/log.h"
 
 #include <windows.h>
 #include <psapi.h>
@@ -103,6 +104,7 @@ static LatencyStats MeasureLatency(lingxi::IPredictor* p, const std::wstring& ct
 
 int wmain()
 {
+    lingxi::InitLogging();
     if (EnsureWordlists())
         wprintf(L"[INFO] wordlists staged under <exeDir>\\data\n");
     else
@@ -185,6 +187,65 @@ int wmain()
         }
         else
         {
+            // 整句质量回归：典型长串的首选必须是语义正确的句子（防止词频/cost
+            // 模型改动导致同音词回退，如"世界"→"石碣"、"想"→"向"）。
+            // 同时把前 3 候选写到 %TEMP%\lingxi_sent.txt 供人工查看。
+            {
+                struct SCase { const wchar_t* in; const wchar_t* top; };
+                const SCase kSent[] = {
+                    {L"shijie", L"世界"},
+                    {L"woshi", L"我是"},
+                    {L"zhenmei", L"真美"},
+                    {L"shiyixia", L"试一下"},
+                    {L"zhegeshijiezhenmei", L"这个世界真美"},
+                    {L"tamenzaikaihui", L"他们在开会"},
+                    {L"woshiyigexuesheng", L"我是一个学生"},
+                    {L"wojintianxiangqugongyuankaihui", L"我今天想去公园开会"},
+                    {L"nichifanlema", L"你吃饭了吗"},
+                    {L"womingtianyaoqubeijing", L"我明天要去北京"},
+                    {L"tashiwodehaopengyou", L"他是我的好朋友"},
+                    {L"womenyiqiqukandianying", L"我们一起去看电影"},
+                    {L"zhegewentihenjiandan", L"这个问题很简单"},
+                    {L"wofeichangxihuanzhegedifang", L"我非常喜欢这个地方"},
+                    {L"nizaiganshenme", L"你在干什么"},
+                    {L"woxianghuijiashuijiao", L"我想回家睡觉"},
+                    {L"jintiantianqizhenhao", L"今天天气真好"},
+                    {L"wobumingbainideyisi", L"我不明白你的意思"},
+                    {L"qingbangwoyixia", L"请帮我一下"},
+                    {L"woelexiangchifan", L"我饿了想吃饭"},
+                    {L"tazaixuexiaodushu", L"他在学校读书"},
+                    {L"wohengaoxingrenshini", L"我很高兴认识你"},
+                    {L"zhesishenmedongxi", L"这是什么东西"},
+                    {L"womenquchifanba", L"我们去吃饭吧"},
+                };
+                wchar_t sfile[MAX_PATH] = L"";
+                wchar_t tdir[MAX_PATH] = L"";
+                if (GetTempPathW(MAX_PATH, tdir))
+                    _snwprintf_s(sfile, _TRUNCATE, L"%lslingxi_sent.txt", tdir);
+                HANDLE hsf = CreateFileW(sfile, GENERIC_WRITE, 0, NULL,
+                                         CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                for (const auto& c : kSent)
+                {
+                    lingxi::Prediction r = py->Predict(c.in);
+                    std::wstring line = std::wstring(c.in) + L" ->";
+                    for (size_t k = 0; k < r.cands.size() && k < 3; k++)
+                        line += L"  [" + std::to_wstring(k) + L"]" + r.cands[k];
+                    line += L"\r\n";
+                    DWORD wr2 = 0;
+                    WriteFile(hsf, line.data(), (DWORD)(line.size() * 2), &wr2, NULL);
+
+                    bool ok = !r.cands.empty() && r.cands[0] == c.top;
+                    wchar_t detail[160];
+                    _snwprintf_s(detail, _TRUNCATE,
+                                 L"'%ls' top='%ls' got='%ls'",
+                                 c.in, c.top,
+                                 r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                    Report(ok, "sentence top is contextually correct", detail);
+                }
+                CloseHandle(hsf);
+                wprintf(L"[SENT] sentence results written to %ls\n", sfile);
+            }
+
             // P1. "jintianqi" → 存在以"今"开头的候选
             {
                 lingxi::Prediction r = py->Predict(L"jintianqi");
@@ -436,7 +497,7 @@ int wmain()
                         {L"zhang", L"长"},
                         {L"shi", L"是"},
                         {L"jing", L"经"},
-                        {L"xiang", L"向"},
+                        {L"xiang", L"想"},
                     };
                     for (const auto& c : tops)
                     {
