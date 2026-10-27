@@ -8,6 +8,12 @@ namespace lingxi {
 
 static const wchar_t kCandWndClass[] = L"LingxiCandidateWnd";
 
+// 编译时间戳：候选窗右下角可见，用于区分各应用加载的新旧版 DLL
+// （TSF 已加载的 DLL 重建后旧进程不换新，必须重启应用）
+#define LX_WSTR2(x) L##x
+#define LX_WSTR(x) LX_WSTR2(x)
+static const wchar_t kBuildStamp[] = LX_WSTR(__DATE__) L" " LX_WSTR(__TIME__);
+
 bool CandWindow::Init(HINSTANCE hInst)
 {
     InitializeCriticalSection(&_cs);
@@ -63,7 +69,7 @@ void CandWindow::LayoutAndPosition()
     int itemH = 0, pad = 0;
     LayoutMetrics(&itemH, &pad);
 
-    _height = pad * 2 + itemH * (int)_cands.size();
+    _height = pad * 2 + itemH * (int)_cands.size() + 18; // +18：底部构建标记条
 
     int textMax = 0;
     HDC hdc = GetDC(_hwnd);
@@ -181,6 +187,19 @@ void CandWindow::OnPaint()
         wchar_t buf[512];
         _snwprintf_s(buf, _TRUNCATE, L"%d  %s", (i + 1) % 10, cands[i].c_str());
         DrawTextW(hdc, buf, -1, &row, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+    }
+
+    // 右下角构建标记（小号灰字，不占行高）：能看到它 = 这个应用加载的是新 DLL
+    {
+        HGDIOBJ smallFont = CreateFontW(-10, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+        SelectObject(hdc, smallFont);
+        SetTextColor(hdc, dark ? RGB(120, 120, 120) : RGB(160, 160, 160));
+        RECT rcStamp = { 0, rc.bottom - 16, rc.right - 4, rc.bottom };
+        DrawTextW(hdc, kBuildStamp, -1, &rcStamp, DT_SINGLELINE | DT_RIGHT | DT_VCENTER);
+        SelectObject(hdc, oldFont);
+        DeleteObject(smallFont);
     }
 
     SelectObject(hdc, oldFont);
