@@ -113,9 +113,11 @@ void CTextService::DetectPinyinMode()
     // ⚠️ 不要在按键路径上调 GetActiveLanguageProfile —— 它会触发 CTF 输入
     // 上下文重算（实测：按键分发内调用导致 sandwich 上下文重建、GetTextExt
     // 失效、候选窗锚点丢失，见 PITFALLS）。
+    // 默认启用；LINGXI_PINYIN=0 可退回纯直通（zh-CN 不再进组合）。
     bool py = false;
     wchar_t flag[8] = L"";
-    if (GetEnvironmentVariableW(L"LINGXI_PINYIN", flag, 8) > 0 && flag[0] == L'1' && _pThreadMgr)
+    bool disabled = GetEnvironmentVariableW(L"LINGXI_PINYIN", flag, 8) > 0 && flag[0] == L'0';
+    if (!disabled && _pThreadMgr)
     {
         ITfKeystrokeMgr* pKm = nullptr;
         CLSID fg{};

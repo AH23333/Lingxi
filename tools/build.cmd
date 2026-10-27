@@ -25,9 +25,9 @@ rem itself be locked (mapped by a live process) and undeletable, which would
 rem make the rename fail and LNK1168 return. Stamped files are cleaned on some
 rem later run when unlocked.
 set "OUTDIR=%ROOT%\bin\%CONFIG%"
+set "STAMP=%RANDOM%%RANDOM%"
 if exist "%OUTDIR%" (
     del /q "%OUTDIR%\*.prev" 2>nul
-    set "STAMP=%RANDOM%%RANDOM%"
     for %%F in (ImeCore.dll LingxiUI.exe) do (
         if exist "%OUTDIR%\%%F" ren "%OUTDIR%\%%F" "%%F.%STAMP%.prev" 2>nul
     )

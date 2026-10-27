@@ -36,6 +36,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     }
     if (argv) LocalFree(argv);
 
+    // 就绪信号：进程启动即创建未触发事件，管道服务监听后置信号。
+    // e2e 等此事件替代盲等（冷启动 LLM 加载可达数秒，管道未就绪时 CTX 被丢弃）。
+    HANDLE hReady = CreateEventW(NULL, TRUE, FALSE, L"Local\\LingxiUIReady");
+
     lingxi::CandWindow wnd;
     if (!wnd.Init(hInst))
         return 1;
@@ -48,6 +52,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     lingxi::PipeServer server;
     if (!server.Start(&wnd, engine, pinyinEngine))
         return 1; // 已有实例在运行（或内部错误）
+
+    if (hReady) SetEvent(hReady); // 管道服务已监听；句柄随进程存活，不主动关
 
     LX_LOG(L"ui", L"LingxiUI 启动完成");
 

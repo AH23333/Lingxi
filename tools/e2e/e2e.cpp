@@ -687,17 +687,24 @@ static bool RunScenario()
 
         Report(ActivateAnyLingxiProfile(10), "ActivateLanguageProfile (Lingxi TIP)");
 
-        // 等 LingxiUI 就绪（冷启动 + Defender 首扫可能远超 1.2s）：候选窗在
-        // pipe 服务起来之前创建，作为就绪信号；未就绪时打字会因管道未连接丢 CTX
+        // 等 LingxiUI 管道服务就绪（冷启动 LLM 加载可达数秒；管道未就绪时 CTX
+        // 会被丢弃，之后没有新按键就没有新 CTX）。就绪信号由 LingxiUI 在
+        // server.Start 后置位（Local\\LingxiUIReady）。
         {
             bool ready = false;
-            for (int i = 0; i < 40; i++)
+            for (int i = 0; i < 100; i++)
             {
                 PumpMessages();
-                if (FindWindowW(L"LingxiCandidateWnd", NULL)) { ready = true; break; }
+                HANDLE h = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, L"Local\\LingxiUIReady");
+                if (h)
+                {
+                    DWORD w = WaitForSingleObject(h, 0);
+                    CloseHandle(h);
+                    if (w == WAIT_OBJECT_0) { ready = true; break; }
+                }
                 Sleep(200);
             }
-            if (ready) Sleep(400); // pipe server 初始化余量
+            if (ready) Sleep(300); // pipe accept 线程余量
             wprintf(L"[INFO] LingxiUI %ls\n", ready ? L"ready" : L"NOT ready (timeout)");
             fflush(stdout);
         }
@@ -879,13 +886,13 @@ static bool RunScenario()
             break; // fail-fast
         }
 
-        // ---- 测试 6：M5 拼音模式（LINGXI_PINYIN=1 时启用；默认关闭待崩溃排查）----
+        // ---- 测试 6：M5 拼音模式（默认启用；LINGXI_PINYIN=0 时跳过）----
         {
             wchar_t pf[8] = L"";
-            bool pinyinEnabled = GetEnvironmentVariableW(L"LINGXI_PINYIN", pf, 8) > 0 && pf[0] == L'1';
+            bool pinyinEnabled = !(GetEnvironmentVariableW(L"LINGXI_PINYIN", pf, 8) > 0 && pf[0] == L'0');
             if (!pinyinEnabled)
             {
-                wprintf(L"[SKIP] pinyin test (set LINGXI_PINYIN=1 to enable)\n");
+                wprintf(L"[SKIP] pinyin test (LINGXI_PINYIN=0 disables pinyin mode)\n");
                 fflush(stdout);
             }
             else
