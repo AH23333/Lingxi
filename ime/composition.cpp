@@ -373,9 +373,16 @@ void CTextService::SendPinyinCtx()
 bool CTextService::PinyinKeyEaten(WPARAM wParam)
 {
     if (!_pinyinMode) return false;
+    // 中英混排：Shift 按下或 CapsLock 开启时，字母直通（输入大写/英文）
+    bool shiftOrCaps = (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 1) != 0;
     if (_pComposition)
     {
-        if (IsLetterKey(wParam)) return true;
+        if (IsLetterKey(wParam))
+        {
+            // 组合态的 Shift+字母：也要吃（HandlePinyinKey 会先提交字母原文再放行）
+            return true;
+        }
+        if (shiftOrCaps && IsLetterKey(wParam)) return true; // 同上（不可达，防御）
         switch (wParam)
         {
         case VK_BACK: case VK_ESCAPE: case VK_RETURN:
@@ -383,9 +390,11 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
             return true;
         }
         if (wParam >= L'1' && wParam <= L'9') return CandidatesVisible();
-        return false; // 标点等：提交拼音原文后放行
+        return false; // 标点等：提交后放行
     }
-    return IsLetterKey(wParam); // 非组合态：字母启动组合
+    // 非组合态：Shift/Caps 下的字母直通，普通字母启动组合
+    if (shiftOrCaps && IsLetterKey(wParam)) return false;
+    return IsLetterKey(wParam);
 }
 
 bool CTextService::GetCandidate(uint32_t index, std::wstring& out)
@@ -401,17 +410,30 @@ bool CTextService::GetCandidate(uint32_t index, std::wstring& out)
 void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pfEaten)
 {
     *pfEaten = TRUE;
-    wchar_t ch = (wParam >= L'A' && wParam <= L'Z') ? (wchar_t)(wParam + 32) : (wchar_t)wParam;
+
+    // 中英混排：Shift/CapsLock + 字母 → 提交当前组合（保留字母原文），大写字母放行
+    bool shiftOrCaps = (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 1) != 0;
+    if (shiftOrCaps && IsLetterKey(wParam))
+    {
+        if (_pComposition)
+        {
+            PinyinCommitRaw();
+            ClearCandidates();
+            SendHide();
+        }
+        *pfEaten = FALSE; // 字母按 Shift 状态由应用上屏
+        return;
+    }
 
     if (!_pComposition)
     {
-        PinyinStart(ch); // 键盘判定已保证是字母
+        PinyinStart((wchar_t)(wParam >= L'A' && wParam <= L'Z') ? wParam + 32 : wParam); // 键盘判定已保证是字母
         return;
     }
 
     if (IsLetterKey(wParam))
     {
-        PinyinAppend(ch);
+        PinyinAppend((wchar_t)(wParam >= L'A' && wParam <= L'Z') ? wParam + 32 : wParam);
         return;
     }
     switch (wParam)
@@ -445,11 +467,15 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
             else                                                PinyinCommitRaw();
             return;
         }
-        // 标点/其他：提交拼音原文，按键本身放行给应用
-        PinyinCommitRaw();
-        ClearCandidates();
-        SendHide();
-        *pfEaten = FALSE;
+        // 标点/其他：优先提交汉字首选（标点随后放行），无候选则保留字母原文
+        {
+            std::wstring hanzi;
+            if (GetCandidate(0, hanzi)) PinyinCommitHanzi(hanzi);
+            else                        PinyinCommitRaw();
+            ClearCandidates();
+            SendHide();
+            *pfEaten = FALSE;
+        }
         return;
     }
 }
