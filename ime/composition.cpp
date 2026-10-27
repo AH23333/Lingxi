@@ -492,7 +492,31 @@ void CTextService::SendPinyinCtx()
                 rc = { pt.x, pt.y, pt.x, pt.y };
             }
         }
-        SendCtx(pinyin, rc, CTX_F_PINYIN);
+        // 读已上屏上文（光标前 ≤kCtxMaxChars）：与 CReadSession 同法。无组合模式
+        // （默认）下拼音从未写入宿主，选区即插入点，读到的全是已提交文本——
+        // 这是 LLM 整句重排的上下文来源（R3）。
+        std::wstring committed;
+        TF_SELECTION selCtx{};
+        ULONG fetchedCtx = 0;
+        if (SUCCEEDED(pCtxSession->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &selCtx, &fetchedCtx)) &&
+            fetchedCtx == 1 && selCtx.range)
+        {
+            ITfRange* pBack = nullptr;
+            if (SUCCEEDED(selCtx.range->Clone(&pBack)) && pBack)
+            {
+                pBack->Collapse(ec, TF_ANCHOR_END);
+                LONG moved = 0;
+                pBack->ShiftStart(ec, -kCtxMaxChars, &moved, NULL);
+                wchar_t buf[kCtxMaxChars + 1] = L"";
+                ULONG cch = 0;
+                if (SUCCEEDED(pBack->GetText(ec, 0, buf, kCtxMaxChars, &cch)) && cch > 0)
+                    committed.assign(buf, cch);
+                pBack->Release();
+            }
+            selCtx.range->Release();
+        }
+
+        SendCtx(pinyin, rc, CTX_F_PINYIN | CTX_F_CTX_PREFIX, committed);
         return S_OK;
     };
     auto* pSession = new CPinyinEditSession(this, pCtx, task);

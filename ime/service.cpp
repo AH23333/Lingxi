@@ -313,7 +313,8 @@ void CTextService::RequestContextRead(ITfContext* pContext)
     pSession->Release();
 }
 
-void CTextService::SendCtx(const std::wstring& text, const RECT& rc, uint8_t flags)
+void CTextService::SendCtx(const std::wstring& text, const RECT& rc, uint8_t flags,
+                           const std::wstring& ctxPrefix)
 {
     if (!_fActivated) return;
     if (text.empty())
@@ -333,11 +334,20 @@ void CTextService::SendCtx(const std::wstring& text, const RECT& rc, uint8_t fla
     m.caretY = rc.top;
     m.caretW = rc.right - rc.left;
     m.caretH = rc.bottom - rc.top;
-    m.flags = flags;
+    m.ctxChars = (uint32_t)ctxPrefix.size();
     m.textChars = (uint32_t)text.size();
-    _pipe.SendStr(MSG_CTX, &m, sizeof(m), text);
-    LX_LOG(L"ime", L"SendCtx ver=%u chars=%u flags=%u rc=(%ld,%ld,%ld,%ld)",
-           ver, m.textChars, flags, rc.left, rc.top, rc.right, rc.bottom);
+    if (!ctxPrefix.empty()) flags |= CTX_F_CTX_PREFIX;
+    m.flags = flags;
+    // 帧体 = POD + [可选][u32 len][ctx wchar...] + [u32 len][text wchar...]。
+    // 不用 SendStr：ctxPrefix 存在时需要两个字符串段，手工拼装
+    // （接收端按长度自洽判别新旧格式，见 pipeserver HandleCtx）。
+    std::vector<uint8_t> body;
+    AppendPod(body, m);
+    if (!ctxPrefix.empty()) AppendStr(body, ctxPrefix);
+    AppendStr(body, text);
+    _pipe.Send(MSG_CTX, body.data(), (uint32_t)body.size());
+    LX_LOG(L"ime", L"SendCtx ver=%u chars=%u ctxChars=%u flags=%u rc=(%ld,%ld,%ld,%ld)",
+           ver, m.textChars, m.ctxChars, flags, rc.left, rc.top, rc.right, rc.bottom);
 }
 
 void CTextService::OnContextRead(const std::wstring& text, const RECT& rc)

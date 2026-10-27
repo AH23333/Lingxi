@@ -231,15 +231,57 @@ void PipeServer::Deactivate(ClientCtx* c)
 
 void PipeServer::HandleCtx(ClientCtx* c, const std::vector<uint8_t>& body)
 {
+    // 双格式解析（按"POD 尺寸 + 字符串长度与帧总长自洽"判别）：
+    //   V2 = 本版 MsgCtx（含 ctxChars）+ [可选 ctx 串] + text 串；
+    //   V1 = 宿主进程里驻留的上一版 DLL 发的旧帧（MsgCtxV1，能改名不能覆盖，
+    //        重建后老 DLL 会一直跑到宿主退出），必须兼容。
     const uint8_t* p = body.data();
     const uint8_t* end = p + body.size();
     MsgCtx m{};
-    if (!ReadPod(p, end, m)) return;
     std::wstring text;
-    if (!ReadStr(p, end, text)) return;
+    std::wstring ctx;
 
-    LX_LOG(L"pipe", L"CTX ver=%u chars=%u flags=%u",
-           m.ver, (uint32_t)text.size(), (uint32_t)m.flags);
+    bool parsed = false;
+    if (body.size() >= sizeof(MsgCtx))
+    {
+        const uint8_t* q = p;
+        MsgCtx m2{};
+        if (ReadPod(q, end, m2) &&
+            body.size() == sizeof(MsgCtx)
+                              + (m2.ctxChars > 0 ? 2 + (size_t)m2.ctxChars * 2 : 0)
+                              + 2 + (size_t)m2.textChars * 2) // 每串一个 u16 长度前缀
+        {
+            std::wstring ctxTmp, textTmp;
+            if (m2.ctxChars > 0 && !ReadStr(q, end, ctxTmp)) return;
+            if (!ReadStr(q, end, textTmp)) return;
+            m = m2;
+            ctx = std::move(ctxTmp);
+            text = std::move(textTmp);
+            parsed = true;
+        }
+    }
+    if (!parsed)
+    {
+        const uint8_t* q = p;
+        MsgCtxV1 m1{};
+        if (ReadPod(q, end, m1) &&
+            body.size() == sizeof(MsgCtxV1) + 2 + (size_t)m1.textChars * 2)
+        {
+            std::wstring textTmp;
+            if (!ReadStr(q, end, textTmp)) return;
+            m.ver = m1.ver;
+            m.caretX = m1.caretX; m.caretY = m1.caretY;
+            m.caretW = m1.caretW; m.caretH = m1.caretH;
+            m.flags = m1.flags;
+            m.textChars = m1.textChars;
+            text = std::move(textTmp);
+            parsed = true;
+        }
+    }
+    if (!parsed) return; // 长度不自洽：损坏帧，丢弃
+
+    LX_LOG(L"pipe", L"CTX ver=%u chars=%u ctxChars=%u flags=%u",
+           m.ver, (uint32_t)text.size(), (uint32_t)ctx.size(), (uint32_t)m.flags);
 
     if (text.empty())
     {
@@ -252,16 +294,18 @@ void PipeServer::HandleCtx(ClientCtx* c, const std::vector<uint8_t>& body)
     }
 
     RECT rc = { m.caretX, m.caretY, m.caretX + m.caretW, m.caretY + m.caretH };
-    EnqueuePredict(c, m.ver, text, c->dark, rc, (m.flags & CTX_F_PINYIN) != 0);
+    EnqueuePredict(c, m.ver, text, c->dark, rc, (m.flags & CTX_F_PINYIN) != 0, ctx);
 }
 
 void PipeServer::EnqueuePredict(ClientCtx* c, uint32_t ver, const std::wstring& text,
-                                bool dark, const RECT& caret, bool pinyin)
+                                bool dark, const RECT& caret, bool pinyin,
+                                const std::wstring& ctx)
 {
     PendingPredict e;
     e.c = c;
     e.ver = ver;
     e.text = text;
+    e.ctx = ctx;
     e.dark = dark;
     e.caret = caret;
     e.pinyin = pinyin;

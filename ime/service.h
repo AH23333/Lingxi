@@ -134,7 +134,8 @@ private:
     void RequestContextRead(ITfContext* pContext);
     bool InsertTextAtSelection(const std::wstring& text);
     bool ReplaceTextBeforeCaret(const std::wstring& text, uint32_t deleteLen);
-    void SendCtx(const std::wstring& text, const RECT& rc, uint8_t flags = 0);
+    void SendCtx(const std::wstring& text, const RECT& rc, uint8_t flags = 0,
+                 const std::wstring& ctxPrefix = {}); // ctxPrefix: 已上屏上文（CTX_F_CTX_PREFIX，R3 重排用）
 
     LONG _cRef = 1;
     ITfThreadMgr* _pThreadMgr = nullptr;

@@ -72,11 +72,24 @@ struct MsgCtx
     int32_t caretX, caretY, caretW, caretH; // 屏幕坐标，取不到时为 0
     uint8_t flags;                          // bit0: 拼音组合模式（text 为拼音字母串）
     uint8_t reserved[3];
+    uint32_t ctxChars;                      // bit1 置位时存在：跟随 ctxChars 个 wchar_t（已上屏上文，LLM 重排用）
     uint32_t textChars;                     // 跟随 textChars 个 wchar_t
 };
 
 // MsgCtx.flags 位定义
 constexpr uint8_t CTX_F_PINYIN = 0x01;
+constexpr uint8_t CTX_F_CTX_PREFIX = 0x02;
+
+// 旧版 MsgCtx（无 ctxChars）：宿主进程里驻留的上一版 DLL 仍按此格式发帧
+// （能改名不能覆盖，重建后老 DLL 继续跑到进程退出），接收端必须兼容。
+struct MsgCtxV1
+{
+    uint32_t ver;
+    int32_t caretX, caretY, caretW, caretH;
+    uint8_t flags;
+    uint8_t reserved[3];
+    uint32_t textChars;
+};
 
 struct MsgCands
 {

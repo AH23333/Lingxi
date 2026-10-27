@@ -51,6 +51,7 @@ private:
         ClientCtx* c = nullptr;
         uint32_t ver = 0;
         std::wstring text;
+        std::wstring ctx;    // 已上屏上文（V2 帧 CTX_F_CTX_PREFIX；LLM 重排用，可能为空）
         bool dark = false;
         bool pinyin = false; // true: text 是拼音字母串，走拼音引擎
         RECT caret{};
@@ -66,7 +67,8 @@ private:
     void HandleMsg(ClientCtx* c, uint8_t type, const std::vector<uint8_t>& body);
     void HandleCtx(ClientCtx* c, const std::vector<uint8_t>& body);
     void EnqueuePredict(ClientCtx* c, uint32_t ver, const std::wstring& text,
-                        bool dark, const RECT& caret, bool pinyin);
+                        bool dark, const RECT& caret, bool pinyin,
+                        const std::wstring& ctx = {});
     void SendCandidates(ClientCtx* c, uint32_t ver, const Prediction& pred);
     void ApplyLearn(ClientCtx* c, uint32_t ver, uint32_t index); // 选字反馈→自学习
     void Activate(ClientCtx* c);

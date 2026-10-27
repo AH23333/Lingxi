@@ -482,7 +482,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     if (auto pGetDpi = (UINT(WINAPI*)())GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForSystem"))
         dpi = pGetDpi();
     int scale = (int)dpi;
-    int W = MulDiv(440, scale, 96), H = MulDiv(554, scale, 96);
+    int W = MulDiv(440, scale, 96), H = MulDiv(670, scale, 96);
     int x = MulDiv(16, scale, 96), y = MulDiv(16, scale, 96);
     int rowH = MulDiv(30, scale, 96);
 
