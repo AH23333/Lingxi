@@ -202,6 +202,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
             [&server](const std::wstring& s) { server.SendInsertText(s); });
     };
     g_reqSettings = [&] { lingxi::ShowSettingsWindow(hInst); };
+    // 托盘菜单"符号面板"入口（复用 g_reqSymbols）
+    lingxi::SetShowSymbolsCallback([] { if (g_reqSymbols) g_reqSymbols(); });
     static NotifyThreadParam tpS{ hEvtSymbols, hNotify, WM_NOTIFY_SYMBOLS };
     static NotifyThreadParam tpE{ hEvtSettings, hNotify, WM_NOTIFY_SETTINGS };
     CreateThread(NULL, 0, NotifyThreadProc, &tpS, 0, NULL);

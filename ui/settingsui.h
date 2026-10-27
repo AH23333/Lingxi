@@ -16,5 +16,7 @@ void ShowSettingsWindow(HINSTANCE hInst);
 
 // 注册"用户词典已变更（清空/导入）"回调，由 main 绑定到拼音引擎的 ReloadUserDict。
 void SetUserDictReloadCallback(std::function<void()> cb);
+// 注册"打开符号面板"回调，由 main 绑定（供托盘菜单调用）。
+void SetShowSymbolsCallback(std::function<void()> cb);
 
 } // namespace lingxi

@@ -27,6 +27,7 @@ constexpr wchar_t kUserDictWndClass[] = L"LingxiUserDictWnd";
 constexpr UINT WM_APP_TRAY = WM_APP + 10; // 托盘回调消息
 
 std::function<void()> g_reloadUserDict; // 用户词典变更后重新加载引擎
+std::function<void()> g_showSymbols;   // 托盘菜单：打开符号面板
 
 // ---------------- 用户词典文件工具（UTF-8：词\t拼音\t次数）----------------
 
@@ -580,6 +581,7 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         AppendMenuW(menu, MF_STRING | (s.pinyinEnabled ? MF_CHECKED : 0), 2001, L"拼音组合模式");
         AppendMenuW(menu, MF_STRING | (s.paused ? MF_CHECKED : 0), 2004, L"暂停预测（完全直通）");
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(menu, MF_STRING, 2005, L"符号面板（Ctrl+Shift+B）");
         AppendMenuW(menu, MF_STRING, 2002, L"设置...");
         AppendMenuW(menu, MF_STRING, 2003, L"退出");
         POINT pt;
@@ -603,6 +605,9 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
             SaveSettings(ns);
             break;
         }
+        case 2005:
+            if (g_showSymbols) g_showSymbols();
+            break;
         case 2002:
             CreateSettingsWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
             break;
@@ -639,6 +644,11 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 void SetUserDictReloadCallback(std::function<void()> cb)
 {
     g_reloadUserDict = std::move(cb);
+}
+
+void SetShowSymbolsCallback(std::function<void()> cb)
+{
+    g_showSymbols = std::move(cb);
 }
 
 void ShowSettingsWindow(HINSTANCE hInst)
