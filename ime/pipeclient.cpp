@@ -61,6 +61,7 @@ bool CPipeClient::EnsureUIRunning()
 
 void CPipeClient::Run()
 {
+    std::vector<uint8_t> rxbuf; // 持久接收缓冲（跨 ReadFrame 保留多帧字节）
     for (;;)
     {
         // ---- 连接阶段 ----
@@ -101,11 +102,12 @@ void CPipeClient::Run()
         }
 
         // ---- 读写阶段 ----
+        rxbuf.clear();
         for (;;)
         {
             uint8_t type = 0;
             std::vector<uint8_t> body;
-            if (!ReadFrame(hPipe, _hStop, type, body)) break;
+            if (!ReadFrame(hPipe, _hStop, rxbuf, type, body)) break;
             HandleMessage(type, body);
         }
 
@@ -150,6 +152,16 @@ void CPipeClient::HandleMessage(uint8_t type, const std::vector<uint8_t>& body)
         if (!ReadPod(p, end, m)) return;
         if (_hwndMarshal)
             PostMessageW(_hwndMarshal, WM_APP_LX_PICK, m.index, m.ver);
+        break;
+    }
+    case MSG_INSERT_TEXT:
+    {
+        std::wstring* s = new std::wstring();
+        if (!ReadStr(p, end, *s)) { delete s; return; }
+        if (_hwndMarshal)
+            PostMessageW(_hwndMarshal, WM_APP_LX_INSERT, 0, (LPARAM)s);
+        else
+            delete s;
         break;
     }
     default:

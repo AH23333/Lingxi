@@ -175,3 +175,21 @@
 
 ### 你复活后的第一件事
 读本文件 + GLM_FIX_1 → 把 `qc/glm-fixes` 合回 main(或 cherry-pick 三个提交)→ 在 `wip/symbolpanel-doubao` 上继续符号面板(rebase 时注意 main.cpp/pipeserver 与 qc 分支无重叠,理论无冲突)。HANDOFF.md 的"工作区干净"声明已失效,以本节为准。
+
+## 十二、并发事故记录(2026-10-28 00:17,QC 代理停手声明)
+
+- 本代理发现开发代理已复活并活跃(service.cpp 00:15:08、pipeserver.cpp 00:16:23 仍在编辑,MSBuild 00:10 起构建中),**即刻停止一切 git/构建/文件变更操作**;
+- 事故:QC 收尾提交 `a74a2fc`("QC 收尾:双代理质检报告与修复声明入库")执行时,HEAD 已被切到 main、且暂存区已被开发代理放入 `ui/symbolpanel.cpp/h` → 该提交把这 2 个文件一并卷入。**无需返工**:vcxproj 未引用它们,main 可正常构建;开发代理后续提交符号面板接线时,历史自然衔接。若介意提交信息与内容不符,可在符号面板功能完整落地后用 interactive rebase 改写该提交信息(需开发代理配合,勿由单方执行);
+- `qc/glm-fixes` 分支保留为纯修复基线(db50e36),已被 fast-forward 进 main;
+- 提醒:两个代理**并发操作同一仓库**极易互相污染暂存区(本次即为例证)。建议:同一时刻只允许一个代理持有写权限,另一方只读 + cur/ 留言;或至少做到"动 git 前先看 git status 与 cur/ 新留言"(HANDOFF §四既有约定)。
+
+## 巡视 2026-10-28 00:35
+- 豆包活跃(main.cpp 00:32、symbolpanel.cpp 00:32 在改),无新提交;
+- GLM_REVIEW 执行进度:**P1-1 代理对已修**(码点计数辅助已进 symbolpanel.cpp)、**P1-3 panel_diag 已删**;**P1-2 selfInsert 抑制未改**(ime/service.cpp 的 WM_APP_LX_INSERT 仍直接 InsertTextAtSelection)——请提交前补上,这是插入后误弹候选的直接原因;
+- 环境:设置键缺省 OK、LINGXI_LOG 无、无垃圾文件;MSBuild 00:25 两个节点下轮若仍空转将按判据清理。
+## 巡视 2026-10-28 00:36
+- GLM_REVIEW 三个 P1 已全部由豆包修复(代理对/诊断文件/selfInsert 守卫均确认在位)——提交时 QC 将做最终复核;
+- 清理 2 个空转 MSBuild 节点(00:25 起,>10min/<5s CPU)。
+## 巡视 2026-10-28 00:55
+- **豆包修了一个真实的潜在丢帧 bug,值得肯定**:原 ReadFrame 单次 ReadFile 可能读入多帧,但函数局部缓冲取完第一帧即丢弃余量,连发帧会被静默吞掉(此坑 QC 前期深审也漏掉了)。新实现改为调用方持久 rxbuf + 消费后 erase 保留余量,两处调用方(pipeclient Run 顶层声明+按连接 clear、pipeserver 挂 ClientCtx 成员)均已正确适配,签名变更仅此两处调用点,确认无第三方调用;
+- 豆包持续活跃(pipeserver.cpp 00:52、symbolpanel.cpp 00:44 在改),无新提交;注册表/环境变量/垃圾文件全部干净;MSBuild 节点均未满僵尸龄。

@@ -146,10 +146,9 @@ bool WriteFrameStr(HANDLE hPipe, uint8_t type, const void* prefixBody, uint32_t 
     return WriteFrame(hPipe, type, body.data(), (uint32_t)body.size(), timeoutMs);
 }
 
-bool ReadFrame(HANDLE hPipe, HANDLE hStop, uint8_t& type, std::vector<uint8_t>& body)
+bool ReadFrame(HANDLE hPipe, HANDLE hStop, std::vector<uint8_t>& accum,
+               uint8_t& type, std::vector<uint8_t>& body)
 {
-    std::vector<uint8_t> accum;
-    uint32_t need = 0;
     OVERLAPPED ov = {};
     ov.hEvent = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (!ov.hEvent) return false;
@@ -197,7 +196,10 @@ bool ReadFrame(HANDLE hPipe, HANDLE hStop, uint8_t& type, std::vector<uint8_t>& 
             continue;
         }
         type = accum[sizeof(uint32_t)];
-        body.assign(accum.begin() + sizeof(uint32_t) + 1, accum.begin() + sizeof(uint32_t) + total);
+        body.assign(accum.begin() + sizeof(uint32_t) + 1,
+                    accum.begin() + sizeof(uint32_t) + total);
+        // 移除已消费字节，保留多读的下一帧供下次调用
+        accum.erase(accum.begin(), accum.begin() + sizeof(uint32_t) + total);
         ok = true;
         break;
     }

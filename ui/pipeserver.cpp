@@ -132,9 +132,7 @@ void PipeServer::ClientProc(ClientCtx* c)
     {
         uint8_t type = 0;
         std::vector<uint8_t> body;
-        bool rf = ReadFrame(c->hPipe, _hStop, type, body);
-        LX_LOG(L"client", L"ReadFrame pipe=%p ok=%d type=%u body=%u",
-               c->hPipe, (int)rf, (uint32_t)type, (uint32_t)body.size());
+        bool rf = ReadFrame(c->hPipe, _hStop, c->rxbuf, type, body);
         if (!rf) break;
         HandleMsg(c, type, body);
     }
@@ -405,6 +403,19 @@ void PipeServer::SendPick(uint32_t ver, uint32_t index)
     MsgPick m{ ver, index };
     WriteFrame(a->hPipe, MSG_PICK, &m, sizeof(m), 200);
     LX_LOG(L"ui", L"PICK ver=%u index=%u", ver, index);
+}
+
+// 符号面板：把符号文本发给当前活跃客户端，DLL 侧经封送窗口插入。
+void PipeServer::SendInsertText(const std::wstring& text)
+{
+    ClientCtx* a = nullptr;
+    EnterCriticalSection(&_cs);
+    a = _active;
+    LeaveCriticalSection(&_cs);
+    if (!a || !a->alive) return;
+    std::vector<uint8_t> body;
+    AppendStr(body, text);
+    WriteFrame(a->hPipe, MSG_INSERT_TEXT, body.data(), (DWORD)body.size(), 200);
 }
 
 // 选字反馈（键盘/鼠标）：按 ver 取最近一次拼音预测，用全局索引定位被选词，

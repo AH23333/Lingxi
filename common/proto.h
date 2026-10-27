@@ -23,6 +23,8 @@ constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\lingxi-ime-ipc";
 
 // DLL 内隐藏封送窗口消息：wParam=index, lParam=ver
 constexpr UINT WM_APP_LX_PICK = WM_APP + 1;
+// 封送窗口：插入任意文本（符号面板）。lParam=堆分配的 std::wstring*，UI 线程取出后 delete
+constexpr UINT WM_APP_LX_INSERT = WM_APP + 3;
 
 // 候选分页：数字键 1-9 对应一页内的 9 个候选，翻页键切换页。
 constexpr uint32_t kPageSize = 9;
@@ -53,6 +55,7 @@ enum MsgType : uint8_t
     MSG_PAGE = 8,       // DLL→UI  翻页：请求显示 pageStart 起始的那一页
     MSG_PICKED = 9,     // DLL→UI  键盘选字反馈（空格/数字），用于自学习（ver+index）
     MSG_MODE_TOAST = 10,// DLL→UI  中/英文模式切换的短暂提示（body=u8 english）
+    MSG_INSERT_TEXT = 11,// UI→DLL 插入任意文本（符号面板点击）；body=字符串
 };
 
 #pragma pack(push, 1)

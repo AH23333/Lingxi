@@ -25,6 +25,7 @@ public:
     void Stop();
 
     void SendPick(uint32_t ver, uint32_t index); // 候选窗点击（UI 主线程）
+    void SendInsertText(const std::wstring& text); // 符号面板：向当前活跃客户端插入文本
 
 private:
     struct LearnRec // 最近一次拼音预测，用于选字反馈自学习
@@ -42,6 +43,7 @@ private:
         bool dark = false;
         PipeServer* owner = nullptr;
         LearnRec lastLearn;
+        std::vector<uint8_t> rxbuf; // 持久接收缓冲（跨 ReadFrame 保留多帧字节）
     };
 
     struct PendingPredict

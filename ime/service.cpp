@@ -702,6 +702,21 @@ LRESULT CALLBACK CTextService::MarshalWndProc(HWND hwnd, UINT msg, WPARAM wParam
             DetectPinyinModeSEH(svc);
         return 0;
     }
+    if (msg == WM_APP_LX_INSERT)
+    {
+        auto* svc = (CTextService*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+        auto* s = (std::wstring*)lParam;
+        if (svc && s)
+        {
+            if (svc->PinyinActive()) svc->AbortCompositionState();
+            // 守卫整个自插入窗口，避免上屏后 OnEndEdit 误弹上下文预测
+            svc->_fSelfInsert = TRUE;
+            svc->InsertTextAtSelection(*s);
+            svc->_fSelfInsert = FALSE;
+        }
+        delete s;
+        return 0;
+    }
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }
 

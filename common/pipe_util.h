@@ -21,8 +21,11 @@ HANDLE OpenLingxiPipeClient();
 bool WriteFrame(HANDLE hPipe, uint8_t type, const void* body, uint32_t bodyLen, uint32_t timeoutMs);
 
 // 读取一帧。阻塞直到完整帧到达、hStop 被触发或管道出错。
+// rxbuf 为调用方持有的持久接收缓冲：一次 ReadFile 可能读到多帧，多余字节
+// 必须保留到下次调用，否则下一帧会丢失。
 // 返回 false 表示应结束读取循环（出错/停止）。
-bool ReadFrame(HANDLE hPipe, HANDLE hStop, uint8_t& type, std::vector<uint8_t>& body);
+bool ReadFrame(HANDLE hPipe, HANDLE hStop, std::vector<uint8_t>& rxbuf,
+               uint8_t& type, std::vector<uint8_t>& body);
 
 // 便捷封装：帧体 = body 后跟一个字符串。
 bool WriteFrameStr(HANDLE hPipe, uint8_t type, const void* prefixBody, uint32_t prefixLen,

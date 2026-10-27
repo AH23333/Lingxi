@@ -2,8 +2,6 @@
 #include "../common/log.h"
 
 #include <windowsx.h>
-#include <cstdio>
-#include <vector>
 #include <string>
 
 namespace lingxi {
@@ -27,6 +25,7 @@ constexpr int kCell = 38;
 constexpr int kCols = 9;
 constexpr int kCatH = 26;
 constexpr int kPad = 4;
+constexpr int kCatCount = (int)(sizeof(kCats) / sizeof(kCats[0]));
 
 HWND g_hPanel = nullptr;
 int g_cat = 0;
@@ -35,11 +34,32 @@ std::function<void(const std::wstring&)> g_onInsert;
 
 const wchar_t* CurrentSymbols() { return kCats[g_cat].symbols; }
 
-int SymCount() { return (int)wcslen(CurrentSymbols()); }
+// 码点数量：UTF-16 代理对按 1 个码点计。
+int SymCount(const wchar_t* s)
+{
+    int n = 0;
+    for (int i = 0; s[i];)
+    {
+        if (IS_SURROGATE_PAIR(s[i], s[i + 1])) i += 2;
+        else i += 1;
+        ++n;
+    }
+    return n;
+}
+
+// 第 idx 个码点的 wchar 偏移与长度（代理对 len=2）。
+void SymAt(const wchar_t* s, int idx, int* off, int* len)
+{
+    int o = 0;
+    for (int i = 0; i < idx; ++i)
+        o += (IS_SURROGATE_PAIR(s[o], s[o + 1])) ? 2 : 1;
+    *off = o;
+    *len = (IS_SURROGATE_PAIR(s[o], s[o + 1])) ? 2 : 1;
+}
 
 int PanelHeight()
 {
-    int rows = (SymCount() + kCols - 1) / kCols;
+    int rows = (SymCount(CurrentSymbols()) + kCols - 1) / kCols;
     return kCatH + kPad + rows * kCell + kPad;
 }
 
@@ -53,17 +73,6 @@ void ClosePanel()
 
 LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
-    // 追踪关键生命周期消息
-    if (msg == WM_DESTROY || msg == WM_CLOSE || msg == WM_NCDESTROY ||
-        msg == WM_RBUTTONDOWN || msg == WM_KEYDOWN)
-    {
-        FILE* f = nullptr;
-        if (_wfopen_s(&f, L"tmp\\panel_msg.txt", L"a") == 0 && f)
-        {
-            fwprintf(f, L"msg=0x%X wp=%lu\n", msg, (unsigned long)wp);
-            fclose(f);
-        }
-    }
     switch (msg)
     {
     case WM_LBUTTONDOWN:
@@ -72,9 +81,9 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         int y = GET_Y_LPARAM(lp);
         if (y < kCatH)
         {
-            int cw = (PanelWidth() - 2 * kPad) / 5;
+            int cw = (PanelWidth() - 2 * kPad) / kCatCount;
             int c = (x - kPad) / cw;
-            if (c >= 0 && c < 5 && c != g_cat)
+            if (c >= 0 && c < kCatCount && c != g_cat)
             {
                 g_cat = c;
                 SetWindowPos(h, HWND_TOPMOST, 0, 0, PanelWidth(), PanelHeight(),
@@ -86,23 +95,20 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         int col = (x - kPad) / kCell;
         int row = (y - kCatH - kPad) / kCell;
         int idx = row * kCols + col;
-        if (col >= 0 && col < kCols && idx >= 0 && idx < SymCount())
+        int total = SymCount(CurrentSymbols());
+        if (col >= 0 && col < kCols && idx >= 0 && idx < total)
         {
-            wchar_t s[2] = { CurrentSymbols()[idx], 0 };
+            int off = 0, len = 1;
+            SymAt(CurrentSymbols(), idx, &off, &len);
+            std::wstring s(CurrentSymbols() + off, len);
             if (g_onInsert) g_onInsert(s);
-            // 插入后保留面板（便于连续输入）；点击符号，不抢焦点
+            // 插入后保留面板（便于连续输入）；点击符号不抢焦点
             return 0;
         }
         return 0;
     }
     case WM_RBUTTONDOWN:
         ClosePanel();
-        return 0;
-    case WM_KEYDOWN:
-        if (wp == VK_ESCAPE) ClosePanel();
-        return 0;
-    case WM_ACTIVATEAPP:
-        if (wp == FALSE) { /* 点击其他应用时不立即关闭，保持可用 */ }
         return 0;
     case WM_PAINT:
     {
@@ -118,8 +124,8 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         HGDIOBJ oldFont = SelectObject(hdc, g_font);
 
         // 分类按钮
-        int cw = (PanelWidth() - 2 * kPad) / 5;
-        for (int i = 0; i < 5; i++)
+        int cw = (PanelWidth() - 2 * kPad) / kCatCount;
+        for (int i = 0; i < kCatCount; i++)
         {
             RECT cr{ kPad + i * cw, 2, kPad + (i + 1) * cw, kCatH - 1 };
             if (i == g_cat)
@@ -137,17 +143,20 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
 
-        // 网格符号
+        // 网格符号（按码点步进，cell 与点击换算一致）
         const wchar_t* sym = CurrentSymbols();
+        int total = SymCount(sym);
         SetTextColor(hdc, RGB(30, 30, 30));
-        for (int i = 0; i < SymCount(); i++)
+        for (int i = 0; i < total; i++)
         {
             int c = i % kCols;
             int r = i / kCols;
             RECT cell{ kPad + c * kCell, kCatH + kPad + r * kCell,
                        kPad + (c + 1) * kCell, kCatH + kPad + (r + 1) * kCell };
-            wchar_t s[2] = { sym[i], 0 };
-            DrawTextW(hdc, s, -1, &cell, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            int off = 0, len = 1;
+            SymAt(sym, i, &off, &len);
+            DrawTextW(hdc, sym + off, len, &cell,
+                      DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
 
         SelectObject(hdc, oldFont);
@@ -179,35 +188,32 @@ void ShowSymbolPanel(HINSTANCE hInst, std::function<void(const std::wstring&)> o
     wc.hCursor = LoadCursor(0, IDC_ARROW);
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wc.lpszClassName = L"LingxiSymbolPanel";
-    ATOM atm = RegisterClassW(&wc);
-    DWORD regErr = GetLastError();
+    RegisterClassW(&wc);
 
-    g_font = CreateFontW(20, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
-                         0, 0, CLEARTYPE_QUALITY, 0, L"Microsoft YaHei UI");
+    // 字体进程内复用：仅首次创建，避免每次开面板泄漏一个 HFONT。
+    if (!g_font)
+        g_font = CreateFontW(20, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                             0, 0, CLEARTYPE_QUALITY, 0, L"Microsoft YaHei UI");
 
+    // 按鼠标所在显示器（含副屏负坐标）的工作区钳位
     POINT pt;
     GetCursorPos(&pt);
+    HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{};
+    mi.cbSize = sizeof(mi);
+    GetMonitorInfoW(mon, &mi);
+    const RECT w = mi.rcWork;
     int x = pt.x;
     int y = pt.y;
-    int sw = GetSystemMetrics(SM_CXSCREEN);
-    int sh = GetSystemMetrics(SM_CYSCREEN);
-    if (x + PanelWidth() > sw) x = sw - PanelWidth();
-    if (y + PanelHeight() > sh) y = sh - PanelHeight();
+    if (x + PanelWidth() > w.right) x = w.right - PanelWidth();
+    if (x < w.left) x = w.left;
+    if (y + PanelHeight() > w.bottom) y = w.bottom - PanelHeight();
+    if (y < w.top) y = w.top;
 
     g_hPanel = CreateWindowExW(WS_EX_TOPMOST | WS_EX_NOACTIVATE,
         L"LingxiSymbolPanel", L"符号面板",
         WS_POPUP | WS_BORDER, x, y, PanelWidth(), PanelHeight(),
         0, 0, hInst, 0);
-    DWORD createErr = GetLastError();
-
-    FILE* f = nullptr;
-    if (_wfopen_s(&f, L"tmp\\panel_diag.txt", L"a") == 0 && f)
-    {
-        fwprintf(f, L"atom=%u regErr=%lu font=%p hwnd=%p createErr=%lu\n",
-                 atm, regErr, (void*)g_font, (void*)g_hPanel, createErr);
-        fclose(f);
-    }
-
     if (g_hPanel)
     {
         ShowWindow(g_hPanel, SW_SHOWNOACTIVATE);

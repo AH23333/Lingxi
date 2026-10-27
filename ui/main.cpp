@@ -8,8 +8,54 @@
 #include "window.h"
 #include "pipeserver.h"
 #include "settingsui.h"
+#include "symbolpanel.h"
 #include "engine/predictor.h"
 #include "../common/log.h"
+
+// ===== 单实例命令转发 =====
+// 第二个实例（--symbols/--settings）不直接建窗，而是通过命名事件通知已运行
+// 实例。这样即使宿主 TIP 已自动拉起一个无参数实例（它占了单实例），命令
+// 仍能送达。
+constexpr wchar_t kEvtShowSymbols[] = L"Local\\LingxiUI_ShowSymbols";
+constexpr wchar_t kEvtShowSettings[] = L"Local\\LingxiUI_ShowSettings";
+constexpr UINT WM_NOTIFY_SYMBOLS = WM_APP + 20;
+constexpr UINT WM_NOTIFY_SETTINGS = WM_APP + 21;
+
+std::function<void()> g_reqSymbols;
+std::function<void()> g_reqSettings;
+
+LRESULT CALLBACK NotifyWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_NOTIFY_SYMBOLS) { if (g_reqSymbols) g_reqSymbols(); return 0; }
+    if (msg == WM_NOTIFY_SETTINGS) { if (g_reqSettings) g_reqSettings(); return 0; }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+struct NotifyThreadParam { HANDLE evt; HWND target; UINT msg; };
+
+DWORD WINAPI NotifyThreadProc(LPVOID p)
+{
+    auto* tp = (NotifyThreadParam*)p;
+    for (;;)
+    {
+        if (WaitForSingleObject(tp->evt, INFINITE) == WAIT_OBJECT_0)
+            PostMessageW(tp->target, tp->msg, 0, 0);
+    }
+    return 0;
+}
+
+// 打开（必要时等待）命名事件并触发，供第二个实例调用。
+static void SignalNamedEvent(const wchar_t* name)
+{
+    HANDLE evt = NULL;
+    for (int i = 0; i < 40; i++)
+    {
+        evt = OpenEventW(EVENT_MODIFY_STATE, FALSE, name);
+        if (evt) break;
+        Sleep(100); // 主实例可能还在启动
+    }
+    if (evt) { SetEvent(evt); CloseHandle(evt); }
+}
 
 static int ProbeLlm()
 {
@@ -74,10 +120,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     bool wantSettings = false;
+    bool wantSymbols = false;
     if (argv)
     {
         for (int i = 1; i < argc; i++)
+        {
             if (wcscmp(argv[i], L"--settings") == 0) wantSettings = true;
+            if (wcscmp(argv[i], L"--symbols") == 0) wantSymbols = true;
+        }
     }
     if (argv && argc >= 2 && wcscmp(argv[1], L"--probe-llm") == 0)
     {
@@ -100,6 +150,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     if (!hSingleton || GetLastError() == ERROR_ALREADY_EXISTS)
     {
         if (hSingleton) CloseHandle(hSingleton);
+        // 已有实例：把命令转发给它，再退出
+        if (wantSymbols) SignalNamedEvent(kEvtShowSymbols);
+        if (wantSettings) SignalNamedEvent(kEvtShowSettings);
         return 0;
     }
 
@@ -127,7 +180,29 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     if (pinyinEngine)
         lingxi::SetUserDictReloadCallback([&] { pinyinEngine->ReloadUserDict(); });
     lingxi::InitTrayAndSettings(hInst); // 托盘 + 设置入口（右下角）
-    if (wantSettings) lingxi::ShowSettingsWindow(hInst);
+
+    // 单实例命令转发：命名事件（自动重置）+ 隐藏通知窗口 + 等待线程
+    HANDLE hEvtSymbols = CreateEventW(NULL, FALSE, FALSE, kEvtShowSymbols);
+    HANDLE hEvtSettings = CreateEventW(NULL, FALSE, FALSE, kEvtShowSettings);
+    WNDCLASSW nwc{};
+    nwc.lpfnWndProc = NotifyWndProc;
+    nwc.hInstance = hInst;
+    nwc.lpszClassName = L"LingxiNotifyWnd";
+    RegisterClassW(&nwc);
+    HWND hNotify = CreateWindowExW(0, L"LingxiNotifyWnd", L"", 0,
+                                   0, 0, 0, 0, HWND_MESSAGE, NULL, hInst, NULL);
+    g_reqSymbols = [&] {
+        lingxi::ShowSymbolPanel(hInst,
+            [&server](const std::wstring& s) { server.SendInsertText(s); });
+    };
+    g_reqSettings = [&] { lingxi::ShowSettingsWindow(hInst); };
+    static NotifyThreadParam tpS{ hEvtSymbols, hNotify, WM_NOTIFY_SYMBOLS };
+    static NotifyThreadParam tpE{ hEvtSettings, hNotify, WM_NOTIFY_SETTINGS };
+    CreateThread(NULL, 0, NotifyThreadProc, &tpS, 0, NULL);
+    CreateThread(NULL, 0, NotifyThreadProc, &tpE, 0, NULL);
+
+    if (wantSettings) g_reqSettings();
+    if (wantSymbols) g_reqSymbols();
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0)
