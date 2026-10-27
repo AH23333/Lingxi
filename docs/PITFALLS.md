@@ -82,3 +82,28 @@
 - 结构体参数（model/context params）**必须**用与二进制同 tag 的头文件编译，否则字段偏移漂移导致写错字段
 - 运行时 LoadLibrary + GetProcAddress 绑定，任一符号缺失 → 引擎整体降级，绝不崩溃
 - LoadLibrary 加载带依赖的 llama.dll 要用 `LoadLibraryExW(..., LOAD_WITH_ALTERED_SEARCH_PATH)`，否则 ggml.dll 等依赖按默认搜索路径找不到
+
+## M5 崩溃排查（2026-10-27，三段式）
+
+### 17. 激活 sink 挂错对象 → 堆损坏崩溃（0xC000041D）⭐️（本次最贵）
+- **症状**：e2e 启动即崩 `0xC000041D`（用户回调中致命异常），且无任何 stdout；偶发 `act=0x80004005`
+- **根因**：把 `ITfInputProcessorProfileActivationSink` AdviseSink 到 **ITfThreadMgr 的 ITfSource** 上（错误对象）。该调用时而 E_FAIL、时而“成功”，但会写坏 CTF 内部 sink 表；之后**任意堆分配**都会在 ntdll 里 AV（实测在我们 `Deactivate→CPipeClient::Send` 的 vector 分配里爆，极具迷惑性——崩溃点不等于肇事点）
+- **取证手段**：e2e 里注册 first-chance VEH，把 RIP/调用栈按“模块名+RVA”写文件，再用链接 map（`/MAP`）离线解析。没有符号时“崩在 ntdll 堆”这类信息完全无法定位
+- **正确做法**：文档约定挂在 **ITfInputProcessorProfiles 的 ITfSource**（进程级单例）。但实测即使 QI 已实现该 IID，CTF 仍返回 `CONNECT_E_CANNOTCONNECT`（0x80040202，内部另有约束）——最终方案是**彻底不用激活 sink**：改用按键路径的语言变化检查（`GetKeyboardLayout`）+ KeySink 前台切换/文档焦点/激活置脏，全部零 CTF 重入
+
+### 18. 按键分发内禁止调 GetActiveLanguageProfile
+- **症状**：拼音模式下候选窗不出现，SendCtx 的 caret rect 全是 (0,0,0,0)
+- **根因**：`ITfInputProcessorProfiles::GetActiveLanguageProfile` 在 CTF 按键分发（TestKeyDown/KeyDown 回调）内调用会触发**输入上下文栈重算**：多出一个 sandwich 文档、GetTextExt 失效、候选窗锚点丢失
+- **正确做法**：模式检测只用只读廉价信号——`ITfKeystrokeMgr::GetForeground`（是否我们的 TIP 在前台）+ `GetKeyboardLayout`（当前语言是否 zh-CN）。纯查询、无副作用，按键路径可安全调用
+
+### 19. 语言切换 churn 期：TSF 框架组合操作脆弱 + 陈旧 store sink DEP
+- **症状A**：切语言后立刻打拼音，`StartComposition` 内 textinputframework.dll 读 `-1` 指针 AV
+- **症状B**：churn 后 CTF 可能弃用旧 TSF sink 而不通知合成 store；陈旧 sink 的 vtable 指向已释放内存 → 下次授锁时 **DEP（执行堆地址）**
+- **对策（产品侧）**：`HandlePinyinKeySEH` 全程 SEH 包裹组合键处理；异常时 `AbortCompositionState`（不 Release 可疑对象，只断开跟踪）并降级回直通。**TIP 的第一铁律：任何框架异常不能带崩宿主**
+- **对策（测试宿主侧）**：e2e 的 `TestStore::RequestLock` 同样 SEH 包裹（产品应用按契约自管 sink 生命周期，无此问题）
+- **未解项**：合成宿主在语言 churn 后拼音组合无法完整走通（字母能进组合但会被遏制降级）；拼音转换逻辑由 engine_test 9/9 背书，真实宿主表现待 Win+Space 手工验证
+
+### 20. e2e 每 attempt 删日志文件 → DLL 句柄写已删除文件
+- **症状**：多 attempt 运行后日志里 DLL 行与 LingxiUI 行代际混杂、部分丢失
+- **根因**：DLL 缓存的日志句柄指向被删除的文件（内容继续写入但新路径看不到）；每个新拉起的 LingxiUI 开新文件
+- **正确做法**：取证时以 VEH 崩溃文件 + stdout（每行 fflush）为准；或 DLL 检测日志句柄失效重开（待办）

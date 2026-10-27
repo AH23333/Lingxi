@@ -60,6 +60,22 @@
 
 e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备转电池供电，预热性能收尾（Defender 首扫慢）移交下一阶段——完整交接见 [HANDOFF.md](HANDOFF.md)。
 
+## 2026-10-27 深夜 · M5 启动崩溃排查与修复（三段式）
+
+接手时的阻塞问题：M5 代码合入后 e2e 启动即崩 `0xC000041D`，门控（LINGXI_PINYIN=1）后仍崩、崩前无输出。
+
+**第一步：取证。** e2e 里注册 first-chance VEH，把异常码/RIP/调用栈按"模块名+RVA"写入 `%TEMP%\lingxi-e2e-crash.txt`；用链接 map（ImeCore.vcxproj 加 `/MAP`）离线解析函数名。没有这一步，"崩在 ntdll 堆"完全无法下手。
+
+**第一段：堆损坏根因。** 栈解码出 `ActivateEx→Deactivate→CPipeClient::Send→ntdll 堆 AV WRITE 0x24`：激活 sink 被 AdviseSink 到 ITfThreadMgr 的 ITfSource（错误对象，文档要求 ITfInputProcessorProfiles 的 ITfSource），写坏 CTF 内部 sink 表，之后任意堆分配即爆。崩溃点不等于肇事点。修复：移除错误注册（连带发现：即便挂对对象 CTF 仍 CONNECT_E_CANNOTCONNECT，最终彻底不用激活 sink）。
+
+**第二段：键路径 TSF 查询副作用。** 修掉崩溃后拼音模式下候选窗全部失锚（SendCtx rect 全零）。定位：`GetActiveLanguageProfile` 在 CTF 按键分发内调用会触发输入上下文栈重算（多出 sandwich 文档、GetTextExt 失效）。模式检测改为纯只读信号：`GetForeground`（我们是否前台 TIP）+ `GetKeyboardLayout`（语言是否 zh-CN），按键路径零 CTF 重入。
+
+**第三段：框架 churn 遏制。** 语言切换后打拼音，`StartComposition` 内 textinputframework 读 -1 指针 AV；后续又发现 CTF 弃用旧 store sink 不通知导致陈旧 vtable DEP（执行堆地址）。产品侧：`HandlePinyinKeySEH` 全程包裹 + `AbortCompositionState` 安全复位并降级直通；测试宿主侧：TestStore::RequestLock 同样 SEH 包裹。**TIP 铁律：任何框架异常不能带崩宿主。**
+
+**附带修复**：build.cmd 的固定 `.prev` 改名策略在旧文件被进程映射（不可删）时失效 → LNK1168；改为随机后缀改名。e2e 增加 LingxiUI 就绪等待（轮询候选窗创建，替代盲睡 1.2s——冷启动+Defender 首扫可远超 1.2s，管道未连接时 CTX 会被设计性丢弃）。
+
+**验证**：engine_test 9/9 PASS（含拼音 4 项，延迟 0.32ms）；e2e 默认门控 exit=0、LINGXI_PINYIN=1 也 exit=0（tests 1-5 全 PASS，拼音组合用例在合成宿主受语言 churn 限制为诊断级，进程零崩溃）。真实宿主拼音体验待 Win+Space 手工验证。
+
 ## 待办（移交下一阶段）
 
 - [ ] M4 收尾：确认 UI 预热线程完整加载（`LLM 引擎就绪` 日志）；LLM 候选质量调优（prompt/温度/多路采样）
