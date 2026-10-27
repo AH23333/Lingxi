@@ -1,9 +1,24 @@
 # 交接文档（HANDOFF）
 
-> 最近更新：2026-10-27 深夜三稿（M5 启动崩溃已修复，全链路回归绿；拼音待真实宿主手工验证）。**任何代理读完本文档即可直接接手。**
-> 配套阅读：[PROGRESS.md](PROGRESS.md) · [DEVLOG.md](DEVLOG.md) · [PITFALLS.md](PITFALLS.md)（20 条踩坑，#17-#19 为本次崩溃三段式）· [README.md](../README.md)
+> 最近更新：2026-10-28 凌晨（QC 代理代更：R2-R4 功能面全部落地、Edge 兼容用户实测确认、R3/R5 预探索完成）。**任何代理读完本文档即可直接接手。**
+> 配套阅读：[PROGRESS.md](PROGRESS.md) · [DEVLOG.md](DEVLOG.md) · [PITFALLS.md](PITFALLS.md)（20 条踩坑，#17-#19 为崩溃三段式）· [README.md](../README.md) · 双代理协作目录 [cur/](../cur/)（含 QC 报告与 R2-R5 预探索指南）
 
-## ⚡ 最新状态速报（M5 阻塞已解除：启动崩溃根因修复 + 框架异常遏制）
+## ⚡ 最新状态速报（2026-10-28 凌晨：R2-R4 体验面全落地 + Edge 结案 + R3/R5 方案就绪）
+
+- **git**：HEAD `b6c4aa5`（以下提交均在 main）；工作区常有开发代理在制品，以 `git status` 为准
+- **QC 修复已合入 main（39535f5 / 2490ed5 / db50e36）**：`_userDict` 三线程数据竞争（引擎 `_udMtx` 粗锁 + 用户词典两侧原子落盘）、DllUnregisterServer 失败向上传播（杜绝幽灵 TIP 假成功）、PROGRESS/PITFALLS 对齐。验证门：构建 ✅ / engine_test 119 PASS ✅ / e2e exit=0 ✅
+- **Edge 兼容正式结案（用户实测确认）**：Edge 无法输入问题已解决——无组合模式（`_inlineComp=false`）+ `AbortCompositionState` 兜底 + ReadFrame 持久缓冲等隔离性修复在真实 Edge 宿主验证通过（详见 cur/USER-CONFIRM-EDGE.md）
+- **符号面板全链路上线**：5 分类符号/emoji 网格（码点级代理对处理）、点击经 IPC 插入宿主、托盘入口、Ctrl+Shift+B 全局热键（SymbolHotkey 设置可开关，动态注册/注销）、WS_EX_NOACTIVATE 不抢宿主焦点
+- **单实例命令转发**：命名事件 + 隐藏通知窗口 + 等待线程；第二个实例（--symbols/--settings）转发命令给已运行实例后退出——宿主 TIP 自动拉起的无参数实例不再抢占单实例
+- **小鹤双拼**：`ShuangpinToQuanpin` 在 Predict 入口转换后复用全拼链路（声母 v/i/u、韵母歧义键按声母消解、零声母补齐、ü 三态）；engine_test 端到端用例（jbtm→今天）
+- **繁体输出**：OpenCC STCharacters 字符映射（4012 字），码点级代理对处理；Traditional 设置开关
+- **用户词升级**：新词/自定义词入主索引 + 首字母串简拼索引，Learn 后即时重建，缩写（mm）可调出已学新词
+- **候选窗体验**：hover 非首行浅色高亮；字体缓存复用（不再每次绘制建字体）
+- **ReadFrame 丢帧修复（重要）**：原实现单次 ReadFile 读入多帧时丢弃余量字节，连发帧被静默吞掉——改为调用方持久 rxbuf + 消费后 erase；两处调用方（DLL pipeclient / UI pipeserver）均已适配
+- **R3/R5 预探索完成（替开发代理省探索时间，照做即可）**：LLM 整句重排/多路采样/KV 复用全方案见 cur/GLM_EXPLORATION_R3_LLM.md（API 对 llama.h 行号核实、GGUF 头实测；前置堵点：拼音模式 DLL 必须先补发上文）；R2 缺口/R4 插入点/R5 工程化见 cur/GLM_EXPLORATION_R2R5.md
+- **双代理协作机制**：cur/ 为沟通目录（QC 报告/QC-REPORT.md、审查意见、用户确认、探索指南均在）；每 20 分钟 QC 自动巡视；铁律见 cur/HANDOFF.md
+
+## ⚡ 前情速报（M5 阻塞已解除：启动崩溃根因修复 + 框架异常遏制）
 
 - **崩溃已修复并验证**：e2e 默认门控 exit=0；`LINGXI_PINYIN=1` 也 exit=0（tests 1-5 全 PASS，拼音组合用例为诊断级）。engine_test 9/9 PASS（含拼音 4 项，延迟 0.32ms）。进程零崩溃（框架级 AV 全部被 SEH 遏制）
 - **根因（三段式，详见 PITFALLS #17-#19）**：① 激活 sink 挂到 ITfThreadMgr 的 ITfSource（错误对象）→ 写坏 CTF 内部 sink 表 → 之后任意堆分配 AV（崩在 Deactivate→Send 只是接盘）；② 修掉后按键分发内调 GetActiveLanguageProfile 又触发输入上下文栈重算（候选窗锚点全零）；③ 语言切换 churn 中 TSF 框架组合操作自身脆弱（textinputframework 读 -1 / 陈旧 store sink DEP）。产品侧已全部防御：不用激活 sink（改键路径语言变化+置脏惰性检测）、组合键处理全程 SEH 包裹 + 异常安全复位降级直通

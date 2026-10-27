@@ -98,9 +98,23 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 
 经验：单编 vcxproj 的 OutDir 是工程私有目录（tools\e2e\bin、ui\bin），与 sln 的根 bin\Debug 不同——回归前必须跑 tools\build.cmd 全量构建，否则跑的是旧 exe（本轮两次踩坑）。Python [IO.File] 相对路径不随 PowerShell 的 cd 变化，需绝对路径。
 
+## 2026-10-28 凌晨 · R2-R4 体验面全落地 + QC 深度质检 + 双代理协作成型
+
+- **QC 修复合入 main（39535f5/2490ed5/db50e36）**：`_userDict` 三线程数据竞争（引擎 `_udMtx` 粗锁 + 引擎/设置界面两侧原子落盘）、DllUnregisterServer 失败向上传播（杜绝幽灵 TIP）、文档对齐。验证门：构建 + engine_test 119 PASS + e2e exit=0
+- **符号面板全链路**：5 分类符号/emoji（码点级代理对处理）、点击经 MSG_INSERT_TEXT→封送窗口插入、托盘入口、Ctrl+Shift+B 热键（SymbolHotkey 可开关，动态注册/注销）、单实例命令转发（命名事件+通知窗口，宿主自动拉起的无参数实例不再抢占）；WM_APP_LX_INSERT 包 `_fSelfInsert` 防上屏后误弹候选
+- **ReadFrame 丢帧修复**：单次 ReadFile 读入多帧时余量字节被丢弃（连发帧静默丢失）→ 调用方持久 rxbuf + 消费后 erase；DLL/UI 两处调用方适配
+- **小鹤双拼**：Predict 入口 `ShuangpinToQuanpin` 转换后复用全拼链路（jbtm→今天 用例）；**繁体输出**：OpenCC STCharacters 4012 字映射（码点级代理对处理）；**用户词升级**：新词入主索引 + 首字母简拼索引（mm→已学新词），Learn 后即时重建
+- **QC 专项审查介入**：GLM_REVIEW 三个 P1（代理对/诊断文件/selfInsert 守卫）全部在提交前修复；设置窗口 g_updating 门控修复了"打开即写 0"的注册表污染（历史脏数据已清）
+- **用户实测确认**：Edge 无法输入问题正式结案（cur/USER-CONFIRM-EDGE.md）
+- **R3/R5 预探索交付**：LLM 重排/多路采样/KV 复用全方案（cur/GLM_EXPLORATION_R3_LLM.md，API 对 llama.h 核实）+ R2 缺口/R4 插入点/R5 工程化指南（cur/GLM_EXPLORATION_R2R5.md）——开发代理照做即可，无需再探索
+- **协作机制**：双代理经 cur/ 沟通（QC 每 20 分钟自动巡视，活跃期 QC 不碰代码/git，停滞期接管修复）；本节文档由 QC 代更
+
 ## 待办（移交下一阶段）
 
-- [ ] M4 收尾：确认 UI 预热线程完整加载（`LLM 引擎就绪` 日志）；LLM 候选质量调优（prompt/温度/多路采样）
-- [ ] M4.5：KV cache 增量复用（退格回退而非全量重评）
-- [ ] M5：拼音输入（组合窗口 + 音节切分 + 词→拼音表 + AI 重排）
-- [ ] M6：设置界面、隐身热键、卸载清理、代码签名
+- [x] ~~M4 收尾~~：LLM 已实证工作；候选质量调优并入 R3（方案已就绪）
+- [x] ~~M4.5~~：KV 复用方案已入 R3 专文（§4），实施时按方案做
+- [x] ~~M5 拼音输入~~：已上线（双拼/繁体/自学习齐备）
+- [x] ~~M6 设置界面/隐身热键~~：已上线（托盘"暂停预测"即隐身等效，不再新做热键）
+- [ ] R3：LLM 整句重排 + 多路采样 + KV cache（按 cur/GLM_EXPLORATION_R3_LLM.md 实施）
+- [ ] R4 尾巴：自定义短语、字体字号皮肤（字号进行中）
+- [ ] R5：32 位 TIP、卸载清理、崩溃保护、签名、regress.cmd（按 cur/GLM_EXPLORATION_R2R5.md 实施）
