@@ -159,6 +159,8 @@ void CPipeClient::HandleMessage(uint8_t type, const std::vector<uint8_t>& body)
 
 bool CPipeClient::Send(uint8_t type, const void* body, uint32_t bodyLen, uint32_t timeoutMs)
 {
+    // 未 Start（激活失败路径可能先发 DEACTIVATE）：临界区尚未初始化，直接拒绝
+    if (!_csInit) return false;
     // 写操作整体串行化：HELLO/ACTIVATE（管道线程）与 SendCtx（宿主 UI 线程）
     // 并发写会交错出损坏帧。临界区内完成整帧写入（最坏 80ms）。
     EnterCriticalSection(&_cs);

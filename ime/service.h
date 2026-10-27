@@ -21,7 +21,6 @@ namespace lingxi {
 
 constexpr LONG kCtxMaxChars = 300;          // 上下文窗口（光标前字符数）
 // WM_APP_LX_PICK 定义于 common/proto.h
-constexpr UINT WM_APP_LX_MODE = WM_APP + 2; // 封送窗口：延迟执行拼音模式检测
 
 class CTextService :
     public ITfTextInputProcessorEx,
@@ -30,7 +29,6 @@ class CTextService :
     public ITfKeyEventSink,
     public ITfThreadFocusSink,
     public ITfCompositionSink,
-    public ITfInputProcessorProfileActivationSink,
     public IPipeClientCallback
 {
 public:
@@ -74,10 +72,6 @@ public:
     // ---- ITfCompositionSink（拼音组合被宿主强制终止时的清理）----
     STDMETHOD(OnCompositionTerminated)(TfEditCookie ecWrite, ITfComposition* pComposition) override;
 
-    // ---- ITfInputProcessorProfileActivationSink（profile 切换 → 重判拼音/直通模式）----
-    STDMETHOD(OnActivated)(DWORD dwProfileType, LANGID langid, REFCLSID rclsid,
-                           REFGUID catid, REFGUID guidProfile, HKL hkl, DWORD dwFlags) override;
-
     // ---- IPipeClientCallback（管道读线程调用，禁止触碰 TSF）----
     void OnCandidates(uint32_t ver, uint32_t replaceLen,
                       std::vector<std::wstring>&& cands) override;
@@ -92,6 +86,7 @@ public:
     void InsertCandidate(uint32_t index);
     void ClearCandidates();
     void SendHide();
+    void AbortCompositionState(); // 组合操作异常后安全复位（不释放可疑对象）
 
     // ---- M5 拼音模式（zh-CN profile 激活时启用）----
     void DetectPinyinMode();
@@ -131,8 +126,8 @@ private:
 
     DWORD _tmSinkCookie = TF_INVALID_COOKIE;
     DWORD _tfSinkCookie = TF_INVALID_COOKIE;
-    DWORD _asSinkCookie = TF_INVALID_COOKIE; // profile 激活通知
     DWORD _editSinkCookie = TF_INVALID_COOKIE;
+    LANGID _lastLangid = 0; // 按键路径语言变化检测（替代 CTF 上不可连接的激活 sink）
     ITfContext* _pEditSinkCtx = nullptr; // 持有引用
     BOOL _fSelfInsert = FALSE;           // 自己上屏引发的编辑，忽略其 OnEndEdit
 
@@ -147,23 +142,25 @@ private:
 
     HWND _hwndMarshal = nullptr; // 隐藏封送窗口（宿主 UI 线程）
     static LRESULT CALLBACK MarshalWndProc(HWND, UINT, WPARAM, LPARAM);
-    static DWORD WINAPI s_ModeThreadProc(LPVOID);
-    void ModeThreadProc();
+    void MaybeRedetectPinyinMode(); // 按键路径入口：语言变化/脏标记 → 惰性检测
 
-    // 拼音组合状态
+    // 拼音模式：语言/TIP 前台/焦点变化只置 _modeDirty，实际检测延迟到
+    // 按键路径（宿主 UI 线程、远离 CTF 激活回调窗口）——见 PITFALLS 启动崩溃条目
     bool _pinyinMode = false;
-    std::atomic<bool> _modeDirty{ false }; // OnActivated 置位，模式轮询线程执行检测
+    std::atomic<bool> _modeDirty{ false }; // 语言/前台/焦点变化置位，按键路径执行检测
     bool _fInPinyinEdit = false;  // 组合编辑会话执行中（抑制 OnEndEdit 自激发）
     std::wstring _pinyin;         // 当前拼音字母串
     ITfComposition* _pComposition = nullptr;
     ITfRange* _compRange = nullptr;
-    HANDLE _modeThread = NULL;    // 模式轮询线程（MTA，脱离消息泵）
-    HANDLE _modeStopEv = NULL;
 
     CPipeClient _pipe;
 };
 
 // composition.cpp 提供（SEH 包裹的模式检测，供激活回调安全调用）
 BOOL DetectPinyinModeSEH(CTextService* svc);
+// composition.cpp 提供：拼音组合键处理全程 SEH 包裹——组合编辑会话在 CTF/TSF
+// 框架内部执行，宿主状态突变（语言切换、文档拆除）可能触发框架内部 AV，
+// TIP 必须遏制而不能带崩宿主进程
+void HandlePinyinKeySEH(CTextService* svc, ITfContext* pContext, WPARAM wParam, BOOL* pfEaten);
 
 } // namespace lingxi

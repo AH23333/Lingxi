@@ -116,14 +116,9 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* pThreadMgr, TfClientId tid, 
     }
 
     _fActivated = true;
-    // 模式轮询线程：OnActivated 只置脏标记，检测在独立 MTA 线程执行
-    //（脱离宿主消息泵，避开与 CTF 激活处理的重入崩溃——默认关闭，
-    //  LINGXI_PINYIN=1 启用拼音模式）
-    if (!_modeStopEv)
-    {
-        _modeStopEv = CreateEventW(NULL, TRUE, FALSE, NULL);
-        _modeThread = CreateThread(NULL, 0, s_ModeThreadProc, this, 0, NULL);
-    }
+    // 拼音模式：激活期只置脏标记，首次按键时在宿主 UI 线程上检测
+    //（绝不在激活回调窗口内调 TSF 查询，也无需 MTA 线程——见 PITFALLS 启动崩溃条目）
+    _modeDirty.store(true);
     _pipe.Start(this, _hwndMarshal);
     _pipe.Send(MSG_ACTIVATE, NULL, 0);
     return S_OK;
@@ -138,22 +133,11 @@ STDMETHODIMP CTextService::Deactivate()
     LX_LOG(L"ime", L"Deactivate");
     _fActivated = false;
     _pinyinMode = false;
+    _modeDirty.store(false);
     // 组合若还开着：放弃跟踪（框架会发 OnCompositionTerminated 兜底清理）
     if (_compRange) { _compRange->Release(); _compRange = nullptr; }
     if (_pComposition) { _pComposition->Release(); _pComposition = nullptr; }
     _pinyin.clear();
-    if (_modeStopEv)
-    {
-        SetEvent(_modeStopEv);
-        if (_modeThread)
-        {
-            WaitForSingleObject(_modeThread, 2000);
-            CloseHandle(_modeThread);
-            _modeThread = NULL;
-        }
-        CloseHandle(_modeStopEv);
-        _modeStopEv = NULL;
-    }
     _pipe.Send(MSG_DEACTIVATE, NULL, 0);
     _pipe.Stop();
     ClearCandidates();
@@ -180,16 +164,10 @@ bool CTextService::InitSinks()
     if (FAILED(_pThreadMgr->QueryInterface(IID_ITfSource, (void**)&pSrc))) return false;
     HRESULT hr1 = pSrc->AdviseSink(IID_ITfThreadMgrEventSink, (ITfThreadMgrEventSink*)this, &_tmSinkCookie);
     HRESULT hr2 = pSrc->AdviseSink(IID_ITfThreadFocusSink, (ITfThreadFocusSink*)this, &_tfSinkCookie);
-    // profile 激活通知：同 TIP 内 en-US/zh-CN profile 切换不会重走 Activate。
-    // ⚠️ 仅在 LINGXI_PINYIN=1 时注册：与个别宿主的启动崩溃相关（见 HANDOFF 待查）
-    wchar_t pyflag[8] = L"";
-    bool pinyinEnabled = GetEnvironmentVariableW(L"LINGXI_PINYIN", pyflag, 8) > 0 && pyflag[0] == L'1';
-    HRESULT hr4 = S_OK;
-    if (pinyinEnabled)
-        hr4 = pSrc->AdviseSink(IID_ITfInputProcessorProfileActivationSink,
-                               (ITfInputProcessorProfileActivationSink*)this, &_asSinkCookie);
-    else
-        hr4 = S_OK;
+    // profile/语言切换的重判不再用 CTF 激活 sink：它在 ITfInputProcessorProfiles
+    // 上始终 CONNECT_E_CANNOTCONNECT（QI 已实现仍被拒，CTF 内部另有约束），且
+    // 全局单例上的 sink 注册正是当初堆损坏崩溃的事故面。改用廉价只读信号：
+    // 按键路径的语言变化检查 + KeySink 前台切换置脏（见 MaybeRedetectPinyinMode）。
     pSrc->Release();
 
     ITfKeystrokeMgr* pKm = nullptr;
@@ -199,8 +177,8 @@ bool CTextService::InitSinks()
     HRESULT hr3 = pKm->AdviseKeyEventSink(_tfClientId, (ITfKeyEventSink*)this, TRUE);
     pKm->Release();
 
-    LX_LOG(L"ime", L"InitSinks: tmgr=0x%08X tfocus=0x%08X key=0x%08X act=0x%08X", hr1, hr2, hr3, hr4);
-    return SUCCEEDED(hr1) && SUCCEEDED(hr2) && SUCCEEDED(hr3) && SUCCEEDED(hr4);
+    LX_LOG(L"ime", L"InitSinks: tmgr=0x%08X tfocus=0x%08X key=0x%08X", hr1, hr2, hr3);
+    return SUCCEEDED(hr1) && SUCCEEDED(hr2) && SUCCEEDED(hr3);
 }
 
 void CTextService::UninitSinks()
@@ -212,7 +190,6 @@ void CTextService::UninitSinks()
         {
             if (_tmSinkCookie != TF_INVALID_COOKIE) pSrc->UnadviseSink(_tmSinkCookie);
             if (_tfSinkCookie != TF_INVALID_COOKIE) pSrc->UnadviseSink(_tfSinkCookie);
-            if (_asSinkCookie != TF_INVALID_COOKIE) pSrc->UnadviseSink(_asSinkCookie);
             pSrc->Release();
         }
         ITfKeystrokeMgr* pKm = nullptr;
@@ -224,20 +201,7 @@ void CTextService::UninitSinks()
     }
     _tmSinkCookie = TF_INVALID_COOKIE;
     _tfSinkCookie = TF_INVALID_COOKIE;
-    _asSinkCookie = TF_INVALID_COOKIE;
     InitTextEditSink(nullptr);
-}
-
-// ==================== ITfInputProcessorProfileActivationSink ====================
-
-STDMETHODIMP CTextService::OnActivated(DWORD dwProfileType, LANGID langid, REFCLSID rclsid,
-                                       REFGUID catid, REFGUID guidProfile, HKL hkl, DWORD dwFlags)
-{
-    // 回调内零动作：只标记"模式需要重判"，实际检测由管道线程执行
-    //（脱离消息泵，避免与 CTF 激活处理重入——见 PITFALLS 启动崩溃条目）
-    if (IsEqualCLSID(rclsid, CLSID_LingxiTextService))
-        _modeDirty.store(true);
-    return S_OK;
 }
 
 bool CTextService::InitTextEditSink(ITfDocumentMgr* pDocMgr)
@@ -282,6 +246,7 @@ STDMETHODIMP CTextService::OnSetFocus(ITfDocumentMgr* pdimFocus, ITfDocumentMgr*
     // 注意参数顺序：SDK 中第一参数是"获得焦点"的文档，第二参数是"失去焦点"的。
     // 挂错方向会导致焦点切换后编辑 sink 停留在旧文档上，预测从此失灵。
     LX_LOG(L"ime", L"OnSetFocus got=%p prev=%p", pdimFocus, pdimPrevFocus);
+    _modeDirty.store(true); // 焦点变化后重判拼音/直通模式（按键路径惰性执行）
     InitTextEditSink(pdimFocus);
     if (pdimFocus)
     {
@@ -517,12 +482,17 @@ static bool IsSelectionKey(WPARAM wParam)
 STDMETHODIMP CTextService::OnSetFocus(BOOL fForeground)
 {
     _fForeground = fForeground;
+    // TIP 前台切换（含同语言内切换到其他输入法）：重判拼音/直通模式
+    _modeDirty.store(true);
     LX_LOG(L"ime", L"KeySink OnSetFocus foreground=%d", fForeground);
     return S_OK;
 }
 
 STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM lParam, BOOL* pfEaten)
 {
+    // 惰性模式检测：语言变化/前台切换/激活只置脏标记，这里首次用到才查
+    MaybeRedetectPinyinMode();
+
     // 拼音模式优先（字母进组合、组合态拦截编辑键）
     if (PinyinKeyEaten(wParam))
     {
@@ -539,9 +509,11 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LP
 
 STDMETHODIMP CTextService::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM lParam, BOOL* pfEaten)
 {
+    MaybeRedetectPinyinMode(); // 个别应用不走 TestKeyDown
+
     if (_pinyinMode)
     {
-        HandlePinyinKey(pContext, wParam, pfEaten);
+        HandlePinyinKeySEH(this, pContext, wParam, pfEaten); // SEH 包裹（框架 AV 遏制）
         return S_OK;
     }
     *pfEaten = FALSE;
@@ -593,13 +565,6 @@ LRESULT CALLBACK CTextService::MarshalWndProc(HWND hwnd, UINT msg, WPARAM wParam
         auto* svc = (CTextService*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
         if (svc)
             svc->HandlePickFromUI((uint32_t)lParam, (uint32_t)wParam); // ver, index
-        return 0;
-    }
-    if (msg == WM_APP_LX_MODE)
-    {
-        auto* svc = (CTextService*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
-        if (svc)
-            lingxi::DetectPinyinModeSEH(svc); // 延迟模式检测（避开激活重入窗口）
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wParam, lParam);

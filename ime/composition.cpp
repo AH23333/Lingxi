@@ -58,7 +58,9 @@ static bool IsLetterKey(WPARAM wParam)
 
 // ==================== 模式检测 ====================
 
-// SEH 包裹：OnActivated 可能与 CTF 内部激活处理重入，任何异常不能带崩宿主
+// SEH 包裹：模式检测涉及 TSF 查询，任何异常不能带崩宿主。
+// 调用时机：按键路径（OnTestKeyDown/OnKeyDown）惰性触发——全部 TSF 调用
+// 留在宿主 UI 线程，远离 CTF 激活回调窗口（见 PITFALLS 启动崩溃条目）。
 BOOL DetectPinyinModeSEH(CTextService* svc)
 {
     __try
@@ -72,56 +74,70 @@ BOOL DetectPinyinModeSEH(CTextService* svc)
     }
 }
 
-// 模式轮询线程：MTA 独立线程，脱离宿主消息泵（e2e/应用 pump 会把延迟消息
-// 派发进 CTF 激活处理窗口造成重入崩溃——见 PITFALLS）
-DWORD WINAPI CTextService::s_ModeThreadProc(LPVOID p)
+// 按键路径入口：语言变化（GetKeyboardLayout，纯 user32 查询）或脏标记 → 惰性检测。
+// 全部信号零 CTF 重入；GetForeground 仅在真正检测时调用一次。
+void CTextService::MaybeRedetectPinyinMode()
 {
-    auto* svc = (CTextService*)p;
-    HRESULT hrCo = CoInitializeEx(NULL, COINIT_MULTITHREADED);
-    for (;;)
+    LANGID cur = LOWORD((UINT_PTR)GetKeyboardLayout(0));
+    if (cur != _lastLangid)
     {
-        DWORD w = WaitForSingleObject(svc->_modeStopEv, 300);
-        if (w != WAIT_TIMEOUT) break;
-        if (svc->_modeDirty.exchange(false))
-            DetectPinyinModeSEH(svc);
+        _lastLangid = cur;
+        _modeDirty.store(true);
     }
-    if (SUCCEEDED(hrCo)) CoUninitialize();
-    return 0;
+    if (_modeDirty.exchange(false))
+        DetectPinyinModeSEH(this);
+}
+
+// SEH 包裹拼音组合键处理：组合编辑会话同步跑在 CTF/TSF 框架内部，
+// 语言切换/文档拆除的过渡窗口里框架可能内部 AV（实测 textinputframework.dll
+// 读 -1 指针，见 PITFALLS）。遏制之：安全复位组合状态并降级回直通模式。
+void HandlePinyinKeySEH(CTextService* svc, ITfContext* pContext, WPARAM wParam, BOOL* pfEaten)
+{
+    __try
+    {
+        svc->HandlePinyinKey(pContext, wParam, pfEaten);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        *pfEaten = TRUE; // 异常键吃掉，不透传半处理状态给应用
+        svc->AbortCompositionState();
+        LX_LOG(L"ime", L"组合键处理异常 0x%08X，已复位并降级直通",
+               (uint32_t)GetExceptionCode());
+    }
 }
 
 void CTextService::DetectPinyinMode()
 {
-    // 默认关闭：拼音模式的激活回调链在个别宿主里有启动期崩溃（0xC000041D，
-    // 与 CTF 激活处理重入相关），设 LINGXI_PINYIN=1 显式启用
+    // 拼音模式 = 前台键盘 TIP 是我们 && 当前输入语言是中文（zh-CN profile）。
+    // 全部用只读查询（GetForeground + GetKeyboardLayout）：
+    // ⚠️ 不要在按键路径上调 GetActiveLanguageProfile —— 它会触发 CTF 输入
+    // 上下文重算（实测：按键分发内调用导致 sandwich 上下文重建、GetTextExt
+    // 失效、候选窗锚点丢失，见 PITFALLS）。
+    bool py = false;
     wchar_t flag[8] = L"";
-    if (!(GetEnvironmentVariableW(L"LINGXI_PINYIN", flag, 8) > 0 && flag[0] == L'1'))
+    if (GetEnvironmentVariableW(L"LINGXI_PINYIN", flag, 8) > 0 && flag[0] == L'1' && _pThreadMgr)
     {
-        _pinyinMode = false;
-        return;
-    }
-    _pinyinMode = false;
-    ITfInputProcessorProfiles* pProfiles = nullptr;
-    if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, NULL, CLSCTX_INPROC_SERVER,
-                                   IID_ITfInputProcessorProfiles, (void**)&pProfiles)))
-    {
-        LANGID lang = 0;
-        GUID guidProfile{};
-        // 查询"我们这个 TIP"当前激活的 profile：zh-CN 配置 → 拼音模式
-        if (SUCCEEDED(pProfiles->GetActiveLanguageProfile(CLSID_LingxiTextService,
-                                                         &lang, &guidProfile)) &&
-            IsEqualGUID(guidProfile, GUID_LingxiProfile_zhCN))
+        ITfKeystrokeMgr* pKm = nullptr;
+        CLSID fg{};
+        if (SUCCEEDED(_pThreadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKm)))
         {
-            _pinyinMode = true;
+            if (SUCCEEDED(pKm->GetForeground(&fg)) && IsEqualCLSID(fg, CLSID_LingxiTextService))
+                py = (LOWORD((UINT_PTR)GetKeyboardLayout(0)) == 0x0804);
+            pKm->Release();
         }
-        pProfiles->Release();
     }
-    LX_LOG(L"ime", L"拼音模式: %d", (int)_pinyinMode);
+    if (py != _pinyinMode)
+        LX_LOG(L"ime", L"拼音模式: %d (lang=0x%04X)", (int)py,
+               (unsigned)LOWORD((UINT_PTR)GetKeyboardLayout(0))); // 仅变化时记录
+    _pinyinMode = py;
 }
 
 // ==================== 组合编辑原语 ====================
 
 void CTextService::PinyinStart(wchar_t ch)
 {
+    // 去激活/模式切换过渡期绝不启组合（此时文档栈可能正被 CTF 重建）
+    if (!_fActivated || !_pinyinMode) return;
     ITfContext* pCtx = nullptr;
     if (!GetFocusContext(_pThreadMgr, &pCtx)) return;
 
@@ -391,6 +407,18 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
 }
 
 // ==================== ITfCompositionSink ====================
+
+void CTextService::AbortCompositionState()
+{
+    // 组合操作中发生框架级异常：对象状态可疑，不 Release（交给框架/进程清理），
+    // 只断开跟踪并降级直通，避免后续键继续在坏状态上操作。
+    _compRange = nullptr;
+    _pComposition = nullptr;
+    _pinyin.clear();
+    _fSelfInsert = FALSE;
+    _pinyinMode = false; // 降级：下次焦点/激活事件重置脏标记后可重新启用
+    _modeDirty.store(true);
+}
 
 STDMETHODIMP CTextService::OnCompositionTerminated(TfEditCookie ecWrite, ITfComposition* pComposition)
 {
