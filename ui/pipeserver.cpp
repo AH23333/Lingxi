@@ -200,6 +200,12 @@ void PipeServer::HandleMsg(ClientCtx* c, uint8_t type, const std::vector<uint8_t
             ApplyLearn(c, pk.ver, pk.index);
         break;
     }
+    case MSG_MODE_TOAST:
+    {
+        uint8_t english = 0;
+        if (p < end) { memcpy(&english, p, 1); _wnd->ShowModeToast(english != 0); }
+        break;
+    }
     default:
         break;
     }

@@ -455,6 +455,13 @@ void CTextService::SendPage()
     }
 }
 
+// 中/英文模式切换提示：发一个字节给 UI，候选窗位置短暂显示"中/英"。
+void CTextService::SendModeToast(bool english)
+{
+    uint8_t e = english ? 1 : 0;
+    _pipe.Send(MSG_MODE_TOAST, &e, sizeof(e));
+}
+
 // 键盘选字反馈：确认候选版本一致后，把 (ver, 全局索引) 发给 UI，UI 据此自学习。
 void CTextService::NotifyPicked(uint32_t globalIndex)
 {
@@ -600,9 +607,26 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM
 {
     MaybeRedetectPinyinMode(); // 个别应用不走 TestKeyDown
 
-    if (_pinyinMode)
+    // Shift 单击检测：记录 Shift 按下；Shift 与其他键组合则标记 used
+    if (wParam == VK_SHIFT)
+    {
+        _shiftDown = true;
+        _shiftUsed = false;
+        _shiftWasActive = PinyinActive();
+    }
+    else if (_shiftDown)
+        _shiftUsed = true;
+
+    // 中文输入（拼音模式且非临时英文）才走拼音处理
+    if (IsChineseInput())
     {
         HandlePinyinKeySEH(this, pContext, wParam, pfEaten); // SEH 包裹（框架 AV 遏制）
+        return S_OK;
+    }
+    // 临时英文模式：字母/标点一律放行
+    if (_tempEnglish)
+    {
+        *pfEaten = FALSE;
         return S_OK;
     }
     *pfEaten = FALSE;
@@ -633,9 +657,21 @@ STDMETHODIMP CTextService::OnTestKeyUp(ITfContext*, WPARAM, LPARAM, BOOL* pfEate
     return S_OK;
 }
 
-STDMETHODIMP CTextService::OnKeyUp(ITfContext*, WPARAM, LPARAM, BOOL* pfEaten)
+STDMETHODIMP CTextService::OnKeyUp(ITfContext*, WPARAM wParam, LPARAM, BOOL* pfEaten)
 {
     *pfEaten = FALSE;
+    // Shift 单击（未与其他键组合、按下前后均无拼音活动）：在中文/临时英文间切换
+    if (wParam == VK_SHIFT && _shiftDown)
+    {
+        if (!_shiftUsed && !_shiftWasActive && !PinyinActive() && _pinyinMode)
+        {
+            _tempEnglish = !_tempEnglish;
+            LX_LOG(L"key", L"Shift toggle -> tempEnglish=%d", (int)_tempEnglish);
+            SendModeToast(_tempEnglish);
+        }
+        _shiftDown = false;
+        _shiftUsed = false;
+    }
     return S_OK;
 }
 

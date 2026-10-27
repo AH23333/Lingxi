@@ -168,6 +168,36 @@ void CandWindow::SetPage(uint32_t ver, uint32_t pageStart)
     }
 }
 
+void CandWindow::ShowModeToast(bool english)
+{
+    if (!_hwnd) return;
+    bool dark = _dark;
+    EnterCriticalSection(&_cs);
+    _toastMode = true;
+    _toastEnglish = english;
+    _dark = dark;
+    LeaveCriticalSection(&_cs);
+
+    int w = 78, h = 58;
+    int x = _lastX, y = _lastY;
+    if (_caret.right != 0 || _caret.bottom != 0)
+    {
+        x = _caret.left;
+        y = _caret.bottom + 4;
+    }
+    HMONITOR mon = MonitorFromRect(&_caret, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{ sizeof(mi) };
+    if (GetMonitorInfoW(mon, &mi))
+    {
+        if (y + h > mi.rcWork.bottom) y = _caret.top - h - 4;
+        if (y < mi.rcWork.top) y = mi.rcWork.top;
+        x = max(mi.rcWork.left, min(x, mi.rcWork.right - w));
+    }
+    SetWindowPos(_hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    InvalidateRect(_hwnd, NULL, TRUE);
+    SetTimer(_hwnd, 1, 1000, NULL);
+}
+
 void CandWindow::Hide()
 {
     if (!_hwnd || !_visible) return;
@@ -185,13 +215,49 @@ void CandWindow::OnPaint()
     HDC hdc = BeginPaint(_hwnd, &ps);
     if (!hdc) return;
 
+    RECT rc;
+    GetClientRect(_hwnd, &rc);
+
+    // 中/英文模式提示气泡：居中大字，1 秒后由 WM_TIMER 关闭
+    bool toast = false, toastEn = false, dark = true;
+    {
+        EnterCriticalSection(&_cs);
+        toast = _toastMode;
+        toastEn = _toastEnglish;
+        dark = _dark;
+        LeaveCriticalSection(&_cs);
+    }
+    if (toast)
+    {
+        COLORREF bg = toastEn ? (dark ? RGB(60, 60, 60) : RGB(250, 250, 250))
+                             : RGB(0, 120, 215);
+        HBRUSH hb = CreateSolidBrush(bg);
+        FillRect(hdc, &rc, hb);
+        DeleteObject(hb);
+        HFONT big = CreateFontW(34, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                                DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei");
+        HGDIOBJ old = SelectObject(hdc, big);
+        SetBkMode(hdc, TRANSPARENT);
+        SetTextColor(hdc, toastEn ? (dark ? RGB(225, 225, 225) : RGB(50, 50, 50))
+                                 : RGB(255, 255, 255));
+        DrawTextW(hdc, toastEn ? L"英" : L"中", -1, &rc,
+                  DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+        SelectObject(hdc, old);
+        DeleteObject(big);
+        COLORREF border = dark ? RGB(90, 90, 90) : RGB(200, 200, 200);
+        HBRUSH hbd = CreateSolidBrush(border);
+        FrameRect(hdc, &rc, hbd);
+        DeleteObject(hbd);
+        EndPaint(_hwnd, &ps);
+        return;
+    }
+
     std::vector<std::wstring> cands;
-    bool dark = true;
     uint32_t pageStart = 0;
     {
         EnterCriticalSection(&_cs);
         cands = _cands;
-        dark = _dark;
         pageStart = _pageStart;
         LeaveCriticalSection(&_cs);
     }
@@ -202,9 +268,6 @@ void CandWindow::OnPaint()
     size_t pgEnd = min(total, pgBegin + kPageSize);
     size_t totalPages = total ? (total + kPageSize - 1) / kPageSize : 1;
     size_t curPage = pgBegin / kPageSize + 1;
-
-    RECT rc;
-    GetClientRect(_hwnd, &rc);
 
     COLORREF bg = dark ? RGB(43, 43, 43) : RGB(250, 250, 250);
     COLORREF fg = dark ? RGB(222, 222, 222) : RGB(32, 32, 32);
@@ -284,6 +347,14 @@ LRESULT CandWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     {
     case WM_PAINT:
         OnPaint();
+        return 0;
+
+    case WM_TIMER:
+        KillTimer(hwnd, (UINT_PTR)wParam);
+        EnterCriticalSection(&_cs);
+        _toastMode = false;
+        LeaveCriticalSection(&_cs);
+        ShowWindow(hwnd, SW_HIDE);
         return 0;
 
     case WM_LBUTTONUP:

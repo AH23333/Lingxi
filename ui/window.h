@@ -23,6 +23,8 @@ public:
     void Hide();
     // 翻页：显示全量列表中 pageStart 起始的那一页（ver 不匹配则忽略）。
     void SetPage(uint32_t ver, uint32_t pageStart);
+    // 中/英文模式切换的短暂提示：在光标附近显示“中/英”，约 1 秒后自动消失。
+    void ShowModeToast(bool english);
 
     void SetPickHandler(std::function<void(uint32_t ver, uint32_t index)> handler)
     {
@@ -48,6 +50,8 @@ private:
     int _width = 0, _height = 0;
     int _lastX = 120, _lastY = 120;
     bool _visible = false;
+    bool _toastMode = false;   // 正在显示中/英文模式提示
+    bool _toastEnglish = false;
     CRITICAL_SECTION _cs{};
     bool _csInit = false;
     std::function<void(uint32_t, uint32_t)> _pick;

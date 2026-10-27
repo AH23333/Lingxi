@@ -499,7 +499,8 @@ void CTextService::SendPinyinCtx()
 
 bool CTextService::PinyinKeyEaten(WPARAM wParam)
 {
-    if (!_pinyinMode) return false;
+    // 临时英文模式（Shift 单击切换）：字母/标点一律放行，不进拼音
+    if (!_pinyinMode || _tempEnglish) return false;
     // 中英混排：Shift 按下或 CapsLock 开启时，字母直通（输入大写/英文）
     bool shiftOrCaps = (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 1) != 0;
     if (PinyinActive())

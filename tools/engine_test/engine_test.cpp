@@ -187,12 +187,15 @@ int wmain()
         }
         else
         {
-            // 整句质量回归：典型长串的首选必须是语义正确的句子（防止词频/cost
+            // 整句质量回归：核心长串的首选必须是语义正确的句子（防止词频/cost
             // 模型改动导致同音词回退，如"世界"→"石碣"、"想"→"向"）。
-            // 同时把前 3 候选写到 %TEMP%\lingxi_sent.txt 供人工查看。
+            // 另有一批扩展句（extra）只写诊断文件、不记分：它们暴露的是纯
+            // unigram 模型的上下文消歧上限，留待 R3 LLM 整句重排统一解决，
+            // 不做逐词穷举。
             {
                 struct SCase { const wchar_t* in; const wchar_t* top; };
-                const SCase kSent[] = {
+                // 核心：必须全通过，纳入回归
+                const SCase kSentCore[] = {
                     {L"shijie", L"世界"},
                     {L"woshi", L"我是"},
                     {L"zhenmei", L"真美"},
@@ -218,30 +221,60 @@ int wmain()
                     {L"zhesishenmedongxi", L"这是什么东西"},
                     {L"womenquchifanba", L"我们去吃饭吧"},
                 };
+                // 扩展：仅诊断，不记分（R3 待办）
+                const SCase kSentExtra[] = {
+                    {L"woxihuanchipingguo", L"我喜欢吃苹果"},
+                    {L"tazaigongsishangban", L"他在公司上班"},
+                    {L"woyaoquchaoshimaidongxi", L"我要去超市买东西"},
+                    {L"zhegedianyinghenhaokan", L"这个电影很好看"},
+                    {L"wobuhuishuoyingyu", L"我不会说英语"},
+                    {L"womenxuexiaohenda", L"我们学校很大"},
+                    {L"qinggeiwoyibeishui", L"请给我一杯水"},
+                    {L"wozailushangduchele", L"我在路上堵车了"},
+                    {L"tadalanqiuhenlihai", L"他打篮球很厉害"},
+                    {L"woyongshoujidadianhua", L"我用手机打电话"},
+                    {L"jintianwanshangyouyueliang", L"今天晚上有月亮"},
+                    {L"wojiazhuzaihaibian", L"我家住在海边"},
+                    {L"tashiwonvpengyou", L"她是我女朋友"},
+                    {L"wozaiwangshangmaidongxi", L"我在网上买东西"},
+                    {L"zhegezizenmexie", L"这个字怎么写"},
+                    {L"womeitianzaoshangpaobu", L"我每天早上跑步"},
+                    {L"taqizixingcheshangban", L"他骑自行车上班"},
+                    {L"wozaicantingchifan", L"我在餐厅吃饭"},
+                    {L"zhegehaizihencongming", L"这个孩子很聪明"},
+                    {L"woxiangheyibeikafei", L"我想喝一杯咖啡"},
+                };
                 wchar_t sfile[MAX_PATH] = L"";
                 wchar_t tdir[MAX_PATH] = L"";
                 if (GetTempPathW(MAX_PATH, tdir))
                     _snwprintf_s(sfile, _TRUNCATE, L"%lslingxi_sent.txt", tdir);
                 HANDLE hsf = CreateFileW(sfile, GENERIC_WRITE, 0, NULL,
                                          CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-                for (const auto& c : kSent)
+                auto runGroup = [&](const SCase* arr, size_t cnt, bool assert)
                 {
-                    lingxi::Prediction r = py->Predict(c.in);
-                    std::wstring line = std::wstring(c.in) + L" ->";
-                    for (size_t k = 0; k < r.cands.size() && k < 3; k++)
-                        line += L"  [" + std::to_wstring(k) + L"]" + r.cands[k];
-                    line += L"\r\n";
-                    DWORD wr2 = 0;
-                    WriteFile(hsf, line.data(), (DWORD)(line.size() * 2), &wr2, NULL);
-
-                    bool ok = !r.cands.empty() && r.cands[0] == c.top;
-                    wchar_t detail[160];
-                    _snwprintf_s(detail, _TRUNCATE,
-                                 L"'%ls' top='%ls' got='%ls'",
-                                 c.in, c.top,
-                                 r.cands.empty() ? L"<none>" : r.cands[0].c_str());
-                    Report(ok, "sentence top is contextually correct", detail);
-                }
+                    for (size_t i = 0; i < cnt; i++)
+                    {
+                        const SCase& c = arr[i];
+                        lingxi::Prediction r = py->Predict(c.in);
+                        std::wstring line = std::wstring(c.in) +
+                            (assert ? L" [CORE]" : L" [extra]") + L" ->";
+                        for (size_t k = 0; k < r.cands.size() && k < 3; k++)
+                            line += L"  [" + std::to_wstring(k) + L"]" + r.cands[k];
+                        line += L"\r\n";
+                        DWORD wr2 = 0;
+                        WriteFile(hsf, line.data(), (DWORD)(line.size() * 2), &wr2, NULL);
+                        if (!assert) continue;
+                        bool ok = !r.cands.empty() && r.cands[0] == c.top;
+                        wchar_t detail[160];
+                        _snwprintf_s(detail, _TRUNCATE,
+                                     L"'%ls' top='%ls' got='%ls'",
+                                     c.in, c.top,
+                                     r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                        Report(ok, "sentence top is contextually correct", detail);
+                    }
+                };
+                runGroup(kSentCore, sizeof(kSentCore) / sizeof(SCase), true);
+                runGroup(kSentExtra, sizeof(kSentExtra) / sizeof(SCase), false);
                 CloseHandle(hsf);
                 wprintf(L"[SENT] sentence results written to %ls\n", sfile);
             }

@@ -101,12 +101,16 @@ public:
     // ---- M5 拼音模式（zh-CN profile 激活时启用）----
     void DetectPinyinMode();
     bool IsPinyinMode() const { return _pinyinMode; }
+    // 中文模式下单击 Shift 进入临时英文，再单击切回（_tempEnglish 仅在 zh-CN
+    // profile 内有意义；切回中文 = 拼音模式且非临时英文）。
+    bool IsChineseInput() const { return _pinyinMode && !_tempEnglish; }
     // 是否正在拼音输入（有宿主组合，或无组合模式下内存拼音串非空）。
     bool PinyinActive() const { return _pComposition || (!_inlineComp && !_pinyin.empty()); }
     void HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pfEaten); // OnKeyDown 分发
     bool PinyinKeyEaten(WPARAM wParam);                                       // OnTestKeyDown 判定
     bool GetCandidate(uint32_t index, std::wstring& out);                     // 候选缓存读取
     void SendPinyinCtx();                                                     // 组合串+光标矩形→UI
+    void SendModeToast(bool english);                                        // 中/英文切换短暂提示
 
 private:
     friend class CReadSession;
@@ -170,6 +174,11 @@ private:
     // 拼音模式：激活/焦点/TIP 前台/语言变化只投递封送消息，实际检测在消息泵
     // 空闲点执行（远离 CTF 激活回调与按键分发——见 PITFALLS #17/#18）
     bool _pinyinMode = false;
+    bool _tempEnglish = false; // Shift 单击切换的临时英文模式
+    // Shift 单击检测：KeyDown 置位、与其他键组合则标记 used、KeyUp 判定
+    bool _shiftDown = false;
+    bool _shiftUsed = false;
+    bool _shiftWasActive = false; // Shift 按下时是否正在拼音输入
     std::atomic<bool> _modeDirty{ false }; // 语言/前台/焦点变化置位，按键路径执行检测
     bool _fInPinyinEdit = false;  // 组合编辑会话执行中（抑制 OnEndEdit 自激发）
     std::wstring _pinyin;         // 当前拼音字母串
