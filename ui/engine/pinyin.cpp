@@ -21,6 +21,7 @@
 
 #include <windows.h>
 #include <algorithm>
+#include <cmath>
 #include <cstdint>
 #include <fstream>
 #include <string>
@@ -375,48 +376,139 @@ private:
         return t;
     }
 
-    // 候选组装：最优整链 + 首词替代链 + 仅首词
+    // 词频加权 Viterbi：在音节序列上全局择优（代价 = Σ log(1+词频名次)，
+    // 名次越小越常用；多词链代价项更多，自然偏好少词/高频组合）。
+    struct DpNode
+    {
+        double cost = 0;
+        int prev = -1;      // 后继位置（WalkChain 用）
+        uint32_t entry = 0; // 本段词条
+        uint32_t span = 0;  // 消耗音节数
+        bool valid = false;
+    };
+
+    // 计算 [start, n) 的最优词链：dp[i] = 位置 i 选取的词 + 后继代价。
+    // 复用 BuildOptions（各跨度桶内词频序），每位置每跨度取头部若干。
+    void DpSuffix(const std::vector<std::wstring>& sylls, size_t start, bool lastPartial,
+                  std::vector<DpNode>& dp) const
+    {
+        const size_t n = sylls.size();
+        dp.assign(n + 1, DpNode{});
+        dp[n].valid = true; // 终点
+        for (size_t i = n; i-- > start;)
+        {
+            std::vector<WordOpt> opts;
+            BuildOptions(sylls, i, lastPartial, opts);
+            for (const WordOpt& o : opts)
+            {
+                if (i + o.span > n) continue;
+                const DpNode& nxt = dp[i + o.span];
+                if (!nxt.valid) continue;
+                double c = std::log(1.0 + (double)_entries[o.entry].rank) + nxt.cost;
+                if (!dp[i].valid || c < dp[i].cost)
+                    dp[i] = { c, (int)(i + o.span), o.entry, o.span, true };
+            }
+        }
+    }
+
+    static bool WalkChain(const std::vector<DpNode>& dp, size_t start, std::vector<WordOpt>& chain)
+    {
+        if (start >= dp.size() || !dp[start].valid) return false;
+        size_t i = start;
+        while (i + 1 < dp.size())
+        {
+            const DpNode& nd = dp[i];
+            if (!nd.valid) return false;
+            chain.push_back({ nd.span, nd.entry });
+            i = (size_t)nd.prev;
+        }
+        return !chain.empty();
+    }
+
+    // 候选组装：Viterbi 最优整链 + 末字变体（最后一音节的其他高频字）+
+    // 首词替代链 + 仅首词；按序去重取前 9。
     void CollectPathCandidates(const SegPath& path, std::vector<std::wstring>& pool) const
     {
-        std::vector<WordOpt> scratch, chain;
-        int budget = kDfsBudget;
-        if (!DfsChain(path.sylls, 0, path.partialTail, scratch, chain, budget))
+        const std::vector<std::wstring>& sylls = path.sylls;
+        const size_t n = sylls.size();
+
+        std::vector<DpNode> dp;
+        DpSuffix(sylls, 0, path.partialTail, dp);
+
+        std::vector<WordOpt> chain;
+        if (!WalkChain(dp, 0, chain))
         {
-            // 整链失败：至少给出最优首词
-            BuildOptions(path.sylls, 0, path.partialTail, scratch);
-            if (!scratch.empty()) pool.push_back(_entries[scratch[0].entry].word);
+            // 兑底：贪心 DFS（旧实现）
+            std::vector<WordOpt> scratch;
+            int budget = kDfsBudget;
+            if (DfsChain(sylls, 0, path.partialTail, scratch, chain, budget))
+            {
+                pool.push_back(ChainText(chain));
+                std::vector<WordOpt> firstOpts;
+                BuildOptions(sylls, 0, path.partialTail, firstOpts);
+                if (!firstOpts.empty()) pool.push_back(_entries[firstOpts[0].entry].word);
+            }
+            else
+            {
+                std::vector<WordOpt> firstOpts;
+                BuildOptions(sylls, 0, path.partialTail, firstOpts);
+                if (!firstOpts.empty()) pool.push_back(_entries[firstOpts[0].entry].word);
+            }
             return;
         }
 
-        // 1) 最优整链
         std::wstring firstWord = _entries[chain[0].entry].word;
-        pool.push_back(ChainText(chain));
+        pool.push_back(ChainText(chain)); // 1) 全局最优整链
 
-        // 2) 首词替代链：换 2/3 频词后重新贪心补完
+        // 2) 末字变体：最后一音节的其他高频字（今天其 → 今天气/今天起/今天期…）。
+        //    条件：末词只覆盖最后一个音节（单字收尾）。
+        if (!chain.empty() && chain.back().span == 1)
+        {
+            std::vector<WordOpt> lastOpts;
+            BuildOptions(sylls, n - 1, path.partialTail, lastOpts);
+            std::wstring prefixText;
+            for (size_t k = 0; k + 1 < chain.size(); k++) prefixText += _entries[chain[k].entry].word;
+            int variants = 0;
+            std::wstring curLast = _entries[chain.back().entry].word;
+            for (const WordOpt& o : lastOpts)
+            {
+                const PyEntry& e = _entries[o.entry];
+                if (e.word == curLast) continue;
+                pool.push_back(prefixText + e.word);
+                if (++variants >= 3) break;
+            }
+        }
+
+        // 3) 首词替代链：换位置 0 的其他词，其余用 DP 最优补完
         std::vector<WordOpt> firstOpts;
-        BuildOptions(path.sylls, 0, path.partialTail, firstOpts);
+        BuildOptions(sylls, 0, path.partialTail, firstOpts);
         int alts = 0;
         for (size_t k = 1; k < firstOpts.size() && alts < 2; k++)
         {
             const PyEntry& e = _entries[firstOpts[k].entry];
-            if (e.word == firstWord) continue; // 同词不同读音，跳过
-            std::vector<WordOpt> rest;
-            int b2 = kDfsBudget / 2;
-            if (firstOpts[k].span >= path.sylls.size() ||
-                !DfsChain(path.sylls, firstOpts[k].span, path.partialTail, scratch, rest, b2))
+            if (e.word == firstWord) continue;
+            if (firstOpts[k].span >= n)
             {
-                pool.push_back(e.word); // 补完失败 → 仅首词
+                pool.push_back(e.word); // 单词覆盖全部音节
             }
             else
             {
-                std::wstring alt = e.word;
-                for (const WordOpt& o : rest) alt += _entries[o.entry].word;
-                pool.push_back(std::move(alt));
+                std::vector<DpNode> dp2;
+                DpSuffix(sylls, firstOpts[k].span, path.partialTail, dp2);
+                std::vector<WordOpt> rest;
+                if (!WalkChain(dp2, firstOpts[k].span, rest))
+                    pool.push_back(e.word);
+                else
+                {
+                    std::wstring alt = e.word;
+                    for (const WordOpt& o : rest) alt += _entries[o.entry].word;
+                    pool.push_back(std::move(alt));
+                }
             }
             alts++;
         }
 
-        // 3) 仅首词候选（单词条，部分输入/整链失败时有用；与整链重复时由去重消化）
+        // 4) 仅首词（部分输入/前缀场景有用；重复由去重消化）
         if (chain.size() > 1) pool.push_back(std::move(firstWord));
     }
 
