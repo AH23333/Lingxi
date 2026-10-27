@@ -51,6 +51,7 @@ enum MsgType : uint8_t
     MSG_CANDS = 6,      // UI→DLL  全量候选列表（UI 窗口据此分页显示）
     MSG_PICK = 7,       // UI→DLL  鼠标点击候选，请求上屏（index 为全量全局索引）
     MSG_PAGE = 8,       // DLL→UI  翻页：请求显示 pageStart 起始的那一页
+    MSG_PICKED = 9,     // DLL→UI  键盘选字反馈（空格/数字），用于自学习（ver+index）
 };
 
 #pragma pack(push, 1)

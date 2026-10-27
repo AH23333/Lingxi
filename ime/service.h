@@ -93,6 +93,8 @@ public:
     // 中文标点：判定该键是否映射为中文标点；映射并上屏（拼音活动时先提交首选）
     bool IsChinesePunctKey(WPARAM wParam);
     bool CommitChinesePunct(WPARAM wParam);
+    // 键盘选字反馈（空格/数字/标点首选）：通知 UI 自学习，globalIndex 为全量候选索引
+    void NotifyPicked(uint32_t globalIndex);
     void AbortCompositionState(); // 组合操作异常后安全复位，并在宿主结束悬挂组合
     void AbortHostCompositionInner(ITfRange* pRange, ITfComposition* pComp); // SEH 内层 C++ 实现
 

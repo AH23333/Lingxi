@@ -444,6 +444,68 @@ int wmain()
                 }
             }
 
+            // P9. 自学习用户词典：选字后该词置顶（备份/恢复真实词典，不污染）
+            {
+                // 拼出 userdict 路径并备份现有内容
+                wchar_t appdata[MAX_PATH] = {0};
+                GetEnvironmentVariableW(L"APPDATA", appdata, MAX_PATH);
+                std::wstring upath = std::wstring(appdata) + L"\\LingxiIme\\userdict.txt";
+                std::vector<uint8_t> backup;
+                bool existed = false;
+                HANDLE hb = CreateFileW(upath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                if (hb != INVALID_HANDLE_VALUE)
+                {
+                    existed = true;
+                    DWORD sz = GetFileSize(hb, NULL);
+                    backup.resize(sz);
+                    DWORD rd = 0;
+                    ReadFile(hb, backup.data(), sz, &rd, NULL);
+                    CloseHandle(hb);
+                }
+                DeleteFileW(upath.c_str()); // 从干净状态开始
+
+                // 全新预测：zang 首选不是“脏”（模糊高频“长/张”在前）
+                lingxi::Prediction r0 = py->Predict(L"zang");
+                bool beforeNotZang = r0.cands.empty() || r0.cands[0] != L"脏";
+                Report(beforeNotZang, "learn: before feedback top is not '脏'",
+                       r0.cands.empty() ? L"<none>" : r0.cands[0].c_str());
+
+                // 用户两次选“脏”（模拟偏好）
+                py->Learn(L"zang", L"脏");
+                py->Learn(L"zang", L"脏");
+
+                // 再打 zang：“脏”应置顶
+                lingxi::Prediction r1 = py->Predict(L"zang");
+                bool promoted = !r1.cands.empty() && r1.cands[0] == L"脏";
+                Report(promoted, "learn: after feedback '脏' promoted to top",
+                       r1.cands.empty() ? L"<none>" : r1.cands[0].c_str());
+
+                // 持久化：新建引擎实例（重新加载词典）后“脏”仍置顶
+                {
+                    lingxi::IPredictor* py2 = lingxi::CreatePinyinPredictor();
+                    lingxi::Prediction r2 = py2->Predict(L"zang");
+                    bool persisted = !r2.cands.empty() && r2.cands[0] == L"脏";
+                    Report(persisted, "learn: preference persisted across reload",
+                           r2.cands.empty() ? L"<none>" : r2.cands[0].c_str());
+                    delete py2;
+                }
+
+                // 恢复原有词典（无则删除测试文件）
+                if (existed)
+                {
+                    HANDLE hw = CreateFileW(upath.c_str(), GENERIC_WRITE, 0, NULL,
+                                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                    if (hw != INVALID_HANDLE_VALUE)
+                    {
+                        DWORD wr = 0;
+                        WriteFile(hw, backup.data(), (DWORD)backup.size(), &wr, NULL);
+                        CloseHandle(hw);
+                    }
+                }
+                else DeleteFileW(upath.c_str());
+            }
+
             delete py;
         }
     }

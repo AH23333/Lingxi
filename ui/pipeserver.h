@@ -27,6 +27,13 @@ public:
     void SendPick(uint32_t ver, uint32_t index); // 候选窗点击（UI 主线程）
 
 private:
+    struct LearnRec // 最近一次拼音预测，用于选字反馈自学习
+    {
+        uint32_t ver = 0;
+        std::wstring raw;              // 用户输入的原始拼音串
+        std::vector<std::wstring> cands; // 全量候选
+    };
+
     struct ClientCtx
     {
         HANDLE hPipe = INVALID_HANDLE_VALUE;
@@ -34,6 +41,7 @@ private:
         bool active = false;
         bool dark = false;
         PipeServer* owner = nullptr;
+        LearnRec lastLearn;
     };
 
     struct PendingPredict
@@ -58,6 +66,7 @@ private:
     void EnqueuePredict(ClientCtx* c, uint32_t ver, const std::wstring& text,
                         bool dark, const RECT& caret, bool pinyin);
     void SendCandidates(ClientCtx* c, uint32_t ver, const Prediction& pred);
+    void ApplyLearn(ClientCtx* c, uint32_t ver, uint32_t index); // 选字反馈→自学习
     void Activate(ClientCtx* c);
     void Deactivate(ClientCtx* c);
 

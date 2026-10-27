@@ -455,6 +455,26 @@ void CTextService::SendPage()
     }
 }
 
+// 键盘选字反馈：确认候选版本一致后，把 (ver, 全局索引) 发给 UI，UI 据此自学习。
+void CTextService::NotifyPicked(uint32_t globalIndex)
+{
+    if (!_csInit) return;
+    uint32_t ver = 0;
+    bool ok = false;
+    EnterCriticalSection(&_cs);
+    if (_verCands == _verSent && globalIndex < _cands.size())
+    {
+        ver = _verCands;
+        ok = true;
+    }
+    LeaveCriticalSection(&_cs);
+    if (ok)
+    {
+        MsgPick m{ ver, globalIndex };
+        _pipe.Send(MSG_PICKED, &m, sizeof(m));
+    }
+}
+
 void CTextService::InsertCandidate(uint32_t index)
 {
     std::wstring text;

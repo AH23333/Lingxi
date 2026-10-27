@@ -116,6 +116,31 @@ public:
             p.cands.push_back(c.word);
             if (p.cands.size() >= kPredictMaxCandidates) break;
         }
+
+        // 自学习置顶：用户在该拼音串下选过的词，按选择次数降序提到最前
+        // （即使常规候选未生成，也补入，保证用户偏好可重现）；其余候选保序。
+        std::string key = NormKey(raw);
+        auto uit = _userDict.find(key);
+        if (uit != _userDict.end() && !uit->second.empty())
+        {
+            std::vector<UserPick> ups = uit->second;
+            std::stable_sort(ups.begin(), ups.end(),
+                             [](const UserPick& a, const UserPick& b) {
+                                 if (a.count != b.count) return a.count > b.count;
+                                 return a.word < b.word;
+                             });
+            std::vector<std::wstring> reordered;
+            reordered.reserve(p.cands.size() + ups.size());
+            std::unordered_set<std::wstring> promoted;
+            for (const auto& up : ups)
+                if (promoted.insert(up.word).second) reordered.push_back(up.word);
+            for (const auto& w : p.cands)
+                if (promoted.insert(w).second) reordered.push_back(w);
+            if (reordered.size() > kPredictMaxCandidates)
+                reordered.resize(kPredictMaxCandidates);
+            p.cands = std::move(reordered);
+        }
+
         p.replaceLen = 0;
         return p;
     }
@@ -142,6 +167,11 @@ private:
     bool _fuzzy = true;
     // 音节 → 合法模糊变体（含自身，自身在首位）；加载后一次性预计算，热路径只查表。
     std::unordered_map<std::string, std::vector<std::string>> _fuzzyOf;
+
+    // 自学习用户词典：规范化拼音串 → 用户选过的词（按次数）。
+    struct UserPick { std::wstring word; int count; };
+    std::unordered_map<std::string, std::vector<UserPick>> _userDict;
+    bool _userDirty = false;
 
     // -----------------------------------------------------------------------
     // 加载
@@ -178,6 +208,7 @@ private:
         BuildIndexes();
         BuildSyllableSet();
         BuildFuzzyIndex();
+        LoadUserDict();
     }
 
     void BuildIndexes()
@@ -409,6 +440,97 @@ private:
         _fuzzyOf.clear();
         for (const auto& s : _syllables)
             _fuzzyOf.emplace(s, ComputeFuzzy(s));
+    }
+
+    // -----------------------------------------------------------------------
+    // 自学习用户词典（%APPDATA%\LingxiIme\userdict.txt，UTF-8）
+    // -----------------------------------------------------------------------
+    static std::string UserDictPath()
+    {
+        char buf[MAX_PATH] = {};
+        DWORD n = GetEnvironmentVariableA("APPDATA", buf, MAX_PATH);
+        if (n > 0 && n < MAX_PATH)
+        {
+            std::string dir = std::string(buf) + "\\LingxiIme";
+            CreateDirectoryA(dir.c_str(), NULL);
+            return dir + "\\userdict.txt";
+        }
+        return ExeDir() + "\\userdict.txt";
+    }
+
+    // 学习键：只保留小写字母（与音节切分规范化一致，空格/分隔符丢弃）。
+    static std::string NormKey(const std::string& raw)
+    {
+        std::string k;
+        k.reserve(raw.size());
+        for (char ch : raw)
+        {
+            char c = Lower(ch);
+            if (c >= 'a' && c <= 'z') k.push_back(c);
+        }
+        return k;
+    }
+
+    void LoadUserDict()
+    {
+        _userDict.clear();
+        std::string raw = ReadAll(UserDictPath());
+        if (raw.empty()) return;
+        for (auto& line : Split(raw, '\n'))
+        {
+            std::string l = line;
+            if (!l.empty() && l.back() == '\r') l.pop_back();
+            size_t t1 = l.find('\t');
+            if (t1 == std::string::npos) continue;
+            size_t t2 = l.find('\t', t1 + 1);
+            if (t2 == std::string::npos) continue;
+            std::wstring word = FromUtf8(l.substr(0, t1));
+            std::string key = l.substr(t1 + 1, t2 - t1 - 1);
+            int count = std::atoi(l.substr(t2 + 1).c_str());
+            if (!word.empty() && !key.empty() && count > 0)
+                _userDict[key].push_back({ word, count });
+        }
+        LX_LOG(L"py", L"用户词典加载: %zu 个拼音键", _userDict.size());
+    }
+
+    void SaveUserDict()
+    {
+        if (!_userDirty) return;
+        std::string content;
+        for (const auto& kv : _userDict)
+            for (const auto& up : kv.second)
+            {
+                content += ToUtf8(up.word);
+                content.push_back('\t');
+                content += kv.first;
+                content.push_back('\t');
+                content += std::to_string(up.count);
+                content.push_back('\n');
+            }
+        std::string path = UserDictPath();
+        HANDLE h = CreateFileA(path.c_str(), GENERIC_WRITE, 0, NULL,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE) { _userDirty = true; return; }
+        DWORD written = 0;
+        WriteFile(h, content.data(), (DWORD)content.size(), &written, NULL);
+        CloseHandle(h);
+        _userDirty = false;
+    }
+
+    // 用户选择反馈：该拼音串下，被选词计数 +1，落盘后下次同串置顶。
+    void Learn(const std::wstring& rawPinyin, const std::wstring& word) override
+    {
+        if (rawPinyin.empty() || word.empty()) return;
+        std::string key = NormKey(ToUtf8(rawPinyin));
+        if (key.empty()) return;
+        auto& vec = _userDict[key];
+        for (auto& up : vec)
+            if (up.word == word) { up.count++; _userDirty = true; SaveUserDict(); return; }
+        if (vec.size() >= 8) vec.pop_back(); // 每键最多 8 个偏好，控制体积
+        vec.push_back({ word, 1 });
+        _userDirty = true;
+        SaveUserDict();
+        LX_LOG(L"py", L"学习: '%hs' -> '%hs'", key.c_str(), ToUtf8(word).c_str());
     }
 
     // 模糊音：返回该完整音节的合法等价音节（自身在首位）。

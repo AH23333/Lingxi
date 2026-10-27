@@ -23,6 +23,9 @@ public:
     virtual ~IPredictor() = default;
     // context = 光标前的原始文本（≤300 字符）。要求快速返回（>300ms 会被放弃）。
     virtual Prediction Predict(const std::wstring& context) = 0;
+    // 用户选择反馈：rawPinyin=用户输入的原始拼音字母串，word=选中的词。
+    // 用于自学习/动态调频；默认空实现，仅拼音引擎覆盖。
+    virtual void Learn(const std::wstring& /*rawPinyin*/, const std::wstring& /*word*/) {}
 };
 
 // 词表引擎（永远可用）

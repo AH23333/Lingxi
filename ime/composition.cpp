@@ -579,6 +579,7 @@ bool CTextService::CommitChinesePunct(WPARAM wParam)
     {
         std::wstring hanzi;
         bool got = GetCandidate(0, hanzi);
+        if (got) NotifyPicked(0); // 标点前的首选汉字也作为选字反馈
         if (!_inlineComp)
         {
             std::wstring all = got ? hanzi : _pinyin;
@@ -689,7 +690,7 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
     case VK_TAB:
     {
         std::wstring hanzi;
-        if (GetCandidate(_pageStart, hanzi)) PinyinCommitHanzi(hanzi);
+        if (GetCandidate(_pageStart, hanzi)) { NotifyPicked(_pageStart); PinyinCommitHanzi(hanzi); }
         else                                 PinyinCommitRaw();
         return;
     }
@@ -698,7 +699,7 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         {
             std::wstring hanzi;
             uint32_t idx = _pageStart + (uint32_t)(wParam - L'1');
-            if (GetCandidate(idx, hanzi)) PinyinCommitHanzi(hanzi);
+            if (GetCandidate(idx, hanzi)) { NotifyPicked(idx); PinyinCommitHanzi(hanzi); }
             else                          PinyinCommitRaw();
             return;
         }
@@ -707,7 +708,7 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         // 未映射的其他键：提交汉字首选（原键随后放行），无候选则保留字母原文
         {
             std::wstring hanzi;
-            if (GetCandidate(0, hanzi)) PinyinCommitHanzi(hanzi);
+            if (GetCandidate(0, hanzi)) { NotifyPicked(0); PinyinCommitHanzi(hanzi); }
             else                        PinyinCommitRaw();
             ClearCandidates();
             SendHide();

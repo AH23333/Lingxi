@@ -20,7 +20,15 @@ bool PipeServer::Start(CandWindow* wnd, IPredictor* engine, IPredictor* pinyinEn
     _hStop = CreateEventW(NULL, TRUE, FALSE, NULL);
     _hQueueSem = CreateSemaphoreW(NULL, 0, 64, NULL);
 
-    _wnd->SetPickHandler([this](uint32_t ver, uint32_t idx) { SendPick(ver, idx); });
+    _wnd->SetPickHandler([this](uint32_t ver, uint32_t idx) {
+        // 鼠标点击：先转发给宿主上屏，再作为选字反馈喂给拼音引擎自学习
+        ClientCtx* a = nullptr;
+        EnterCriticalSection(&_cs);
+        a = _active;
+        LeaveCriticalSection(&_cs);
+        SendPick(ver, idx);
+        if (a) ApplyLearn(a, ver, idx);
+    });
 
     _hThread = CreateThread(NULL, 0, s_AcceptProc, this, 0, NULL);
     _hPredictThread = CreateThread(NULL, 0, s_PredictProc, this, 0, NULL);
@@ -185,6 +193,13 @@ void PipeServer::HandleMsg(ClientCtx* c, uint8_t type, const std::vector<uint8_t
             _wnd->SetPage(pg.ver, pg.pageStart);
         break;
     }
+    case MSG_PICKED:
+    {
+        MsgPick pk{}; // 复用 ver+index 结构
+        if (ReadPod(p, end, pk))
+            ApplyLearn(c, pk.ver, pk.index);
+        break;
+    }
     default:
         break;
     }
@@ -347,6 +362,15 @@ void PipeServer::PredictProc()
             _wnd->Show(e.caret, pred.cands, dark, e.ver);
         else
             _wnd->Hide();
+        // 记录最近一次拼音预测供选字反馈自学习（临界区保护，跨线程读取）
+        if (e.pinyin && !pred.cands.empty())
+        {
+            EnterCriticalSection(&_cs);
+            e.c->lastLearn.ver = e.ver;
+            e.c->lastLearn.raw = e.text;
+            e.c->lastLearn.cands = pred.cands;
+            LeaveCriticalSection(&_cs);
+        }
         SendCandidates(e.c, e.ver, pred);
     }
 }
@@ -375,6 +399,25 @@ void PipeServer::SendPick(uint32_t ver, uint32_t index)
     MsgPick m{ ver, index };
     WriteFrame(a->hPipe, MSG_PICK, &m, sizeof(m), 200);
     LX_LOG(L"ui", L"PICK ver=%u index=%u", ver, index);
+}
+
+// 选字反馈（键盘/鼠标）：按 ver 取最近一次拼音预测，用全局索引定位被选词，
+// 把（原始拼音串, 词）喂给拼音引擎做自学习。
+void PipeServer::ApplyLearn(ClientCtx* c, uint32_t ver, uint32_t index)
+{
+    std::wstring raw, word;
+    EnterCriticalSection(&_cs);
+    if (c && c->lastLearn.ver == ver && index < c->lastLearn.cands.size())
+    {
+        raw = c->lastLearn.raw;
+        word = c->lastLearn.cands[index];
+    }
+    LeaveCriticalSection(&_cs);
+    if (!raw.empty() && !word.empty() && _pinyinEngine)
+    {
+        _pinyinEngine->Learn(raw, word);
+        LX_LOG(L"pipe", L"自学习反馈 ver=%u idx=%u '%ls'", ver, index, word.c_str());
+    }
 }
 
 } // namespace lingxi
