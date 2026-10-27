@@ -23,6 +23,14 @@ constexpr LONG kCtxMaxChars = 300;          // 上下文窗口（光标前字符
 // WM_APP_LX_PICK 定义于 common/proto.h
 constexpr UINT WM_APP_LX_MODE = WM_APP + 2; // 封送窗口：消息泵空闲点安全检测拼音模式
 
+// Ctrl 或 Alt 按下：应用快捷键组合（Ctrl+C/V/F、Alt+字母等），TIP 永不拦截。
+// Shift/Caps 不在此列——它们另有中英混排语义（见 PinyinKeyEaten/HandlePinyinKey）。
+inline bool CtrlOrAltDown()
+{
+    return (GetKeyState(VK_CONTROL) & 0x8000) != 0 ||
+           (GetKeyState(VK_MENU) & 0x8000) != 0;
+}
+
 class CTextService :
     public ITfTextInputProcessorEx,
     public ITfThreadMgrEventSink,

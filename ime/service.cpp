@@ -607,10 +607,11 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LP
         return S_OK;
     }
     // 直通形态：候选可见时拦截确认键，其余一律放行
+    // （Ctrl/Alt 组合不拦截：候选可见时 Ctrl+1/Ctrl+Tab 等快捷键仍属应用）
     bool visible = CandidatesVisible();
     if (visible) // 逐键日志只记录候选交互期，避免真实使用时刷屏
         LX_LOG(L"key", L"OnTestKeyDown vk=%u visible=1", (uint32_t)wParam);
-    *pfEaten = (visible && IsSelectionKey(wParam)) ? TRUE : FALSE;
+    *pfEaten = (visible && !CtrlOrAltDown() && IsSelectionKey(wParam)) ? TRUE : FALSE;
     return S_OK;
 }
 
@@ -642,6 +643,9 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM
     }
     *pfEaten = FALSE;
     if (!CandidatesVisible()) return S_OK;
+    // Ctrl/Alt 组合键直通（同 OnTestKeyDown 的闸）：候选可见时的
+    // Ctrl+数字/TAB/Esc 仍是应用快捷键
+    if (CtrlOrAltDown()) return S_OK;
 
     if (wParam == VK_ESCAPE)
     {

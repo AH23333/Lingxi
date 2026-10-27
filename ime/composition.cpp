@@ -531,6 +531,10 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
 {
     // 临时英文模式（Shift 单击切换）：字母/标点一律放行，不进拼音
     if (!_pinyinMode || _tempEnglish) return false;
+    // Ctrl/Alt 组合键永远直通（应用快捷键：Ctrl+C/V/F、Ctrl+1..9、Alt+字母等）。
+    // 此前只看 wParam 字母值，Ctrl+C 在中文模式下被当拼音 'c' 吃掉——用户实测
+    // 报告"输入法无法使用快捷键"的根因。Shift/Caps 保留混排语义，不受此闸影响。
+    if (CtrlOrAltDown()) return false;
     // v 模式：首字母 v 后一串字母直通英文，v 模式内所有键放行（退出在
     // HandlePinyinKey 遇到非字母键时处理，TestKeyDown 不改状态）
     if (_vMode) return false;
@@ -652,6 +656,14 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
     *pfEaten = TRUE;
     LX_LOG(L"key", L"HandlePinyinKey vk=%u('0x%02X') active=%d pinyinLen=%u",
            (uint32_t)wParam, (uint32_t)wParam, (int)PinyinActive(), (uint32_t)_pinyin.size());
+
+    // 个别应用不走 TestKeyDown 直达这里：Ctrl/Alt 组合键同样必须放行
+    // （与 PinyinKeyEaten 的闸保持一致）
+    if (CtrlOrAltDown())
+    {
+        *pfEaten = FALSE;
+        return;
+    }
 
     // 中英混排：Shift/CapsLock + 字母 → 提交当前拼音（保留字母原文），大写字母放行
     bool shiftOrCaps = (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 1) != 0;
