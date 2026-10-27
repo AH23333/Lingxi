@@ -289,6 +289,7 @@ BOOL WINAPI DllMain(HINSTANCE hInstance, DWORD dwReason, LPVOID)
     case DLL_PROCESS_ATTACH:
         g_hInst = hInstance;
         DisableThreadLibraryCalls(hInstance);
+        lingxi::InitLogging(); // 按 LINGXI_LOG 环境变量开启热路径诊断日志
         break;
     case DLL_PROCESS_DETACH:
         break;

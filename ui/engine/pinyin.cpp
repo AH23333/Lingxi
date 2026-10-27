@@ -1,530 +1,824 @@
+// pinyin.cpp - M5 拼音引擎：字母串 → 汉字候选。
 //
-// M5 拼音转换引擎：原始拼音字母串 → 汉字词链候选。
-//
-// 数据：<exe目录>\data\zh_pinyin.txt（词<TAB>音节1 音节2 ...，全小写，按词频降序）。
-// 加载方式与 ngram.cpp 一致：GetModuleFileName(NULL) 拼 exe 目录，构造期一次性加载。
-//
-// Predict 流程（≤10ms；所有索引均在构造期预构建，Predict 阶段零全表扫描）：
-//   1. 过滤 context → 纯小写字母串（去空格等杂质，大写折小写）；
-//   2. 音节切分：DP 求前 3 条最优路径（费用 = 2*音节数，少者优，即优先长音节），
-//      允许末段为某音节的真前缀（残段，如 "q"），残段路径记 +1 罚分；
-//   3. 词链生成：对每条切分路径做贪心拼接——每步取后续 1..6 个音节拼成紧凑 key
-//      （如 "jintian"）查紧凑序列索引，最长匹配优先、桶内按词频序取词；
-//      DFS 带有界回溯，避免贪心跳进死路；末尾残段用"首音节分桶 + 线性过滤"
-//      匹配"首音节以残段开头"的词（残段恰为完整读音的桶优先）；
-//   4. 候选组装：最优整链 + 首词换 2/3 频词的替代链 + 仅首词候选，
-//      按序去重取前 5；一条链都拼不出来则该路径不产候选，全空则返回空。
-//
-// 质量定位（诚实占位）：贪心 + 首词替代，非全局 k-best；M5.5 可升级全局 DP。
+// 核心链路（R1 重构）：
+//   1) 音节切分：枚举多条切分路径，每条路径由「音节单元」组成——
+//      FULL（完整音节）、INITIAL（单字母简拼）、PARTIAL（末尾残段）。
+//      用 DP 每位置保留 top-K 路径，既保留精确切分，也保留「西安」这类
+//      多音节切分（xian 单音节 vs xi-an 双音节）。
+//   2) 词索引：词的完整音节序列 + 首字母串；紧凑串精确匹配、首字母串
+//      纯简拼匹配，混合/残段走「首音节 + 音节数」桶逐音节过滤。
+//   3) 词链 Viterbi：每条路径求最优词链（DpSuffix），跨路径汇总，
+//      按「覆盖率 + 词频 + 简拼/残段罚分」排序，输出整句与单词。
 //
 #include "predictor.h"
 
 #include <windows.h>
+
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdint>
-#include <fstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
-#include <utility>
 #include <vector>
+
+#include "../../common/log.h"
 
 namespace lingxi {
 
 namespace {
 
-constexpr size_t kMaxCands = 9;        // 候选上限（数字键 1-9 对应）
-constexpr size_t kMaxChainSpan = 6;    // 单词最多拼接的音节数
-constexpr size_t kMaxPaths = 3;        // 切分保留的最优路径数
-constexpr size_t kMaxLetters = 50;     // 参与切分的字母数上限（超出保留尾部）
-constexpr int kDfsBudget = 512;        // 词链 DFS 节点预算（有界回溯，远小于 10ms）
-constexpr size_t kOptsPerSpan = 4;     // 每个跨度最多取的候选词数（桶内按词频序）
-constexpr size_t kMaxOpts = 16;        // 每个位置的可选词上限
-constexpr size_t kMaxResidualOpts = 12; // 残段匹配的可选词上限
-
-inline bool IsLowerLetter(wchar_t ch) { return ch >= L'a' && ch <= L'z'; }
-
-inline bool IsCjkChar(wchar_t ch)
+// ---------------------------------------------------------------------------
+// 音节单元与切分路径
+// ---------------------------------------------------------------------------
+struct SyllUnit
 {
-    return (ch >= 0x4E00 && ch <= 0x9FFF) || (ch >= 0x3400 && ch <= 0x4DBF);
-}
-
-struct PyEntry
-{
-    std::wstring word; // 汉字词
-    uint32_t rank = 0; // 文件序 = 词频名次，越小越常用
+    enum Kind : uint8_t { FULL, INITIAL, PARTIAL };
+    Kind kind = FULL;
+    std::string text; // 小写
 };
 
-// 词链贪心的一个可选词
-struct WordOpt
-{
-    uint32_t span;  // 该词消耗的音节数（残段收尾恒为 1）
-    uint32_t entry; // _entries 下标
-};
-
-// 一条音节切分路径
 struct SegPath
 {
-    uint32_t cost = 0;        // 2*完整音节数 +（末段残段 ? 1 : 0）
-    bool partialTail = false; // 末音节是否残段
-    std::vector<std::wstring> sylls;
+    std::vector<SyllUnit> units;
+    int cost = 0;
 };
 
-class PinyinEngine : public IPredictor
+// ---------------------------------------------------------------------------
+// 词条
+// ---------------------------------------------------------------------------
+struct PyEntry
+{
+    std::wstring word;
+    std::vector<std::string> sylls;
+    int rank = 0;
+    std::string compact;  // 完整音节紧凑串
+    std::string initials; // 各音节首字母串
+};
+
+struct Candidate
+{
+    std::wstring word;
+    double cost = 0.0;
+    int covered = 0; // 覆盖的音节单元数
+    int units = 1;   // 该路径的总音节单元数
+    int words = 1;   // 词链词数（整词=1，越少越优）
+    int tier = 0;    // 切分路径层：0=最自然切分，越大越碎
+};
+
+// ---------------------------------------------------------------------------
+// 拼音引擎
+// ---------------------------------------------------------------------------
+class PinyinPredictor : public IPredictor
 {
 public:
-    PinyinEngine() { Load(); }
+    PinyinPredictor() { Load(); }
 
-    Prediction Predict(const std::wstring& ctx) override
+    Prediction Predict(const std::wstring& context) override
     {
-        Prediction pred;
-        std::wstring letters;
-        letters.reserve(ctx.size());
-        for (wchar_t ch : ctx)
+        Prediction p;
+        if (context.empty()) return p;
+        std::string raw = ToUtf8(context);
+        if (raw.empty()) return p;
+
+        std::vector<SegPath> paths = EnumeratePaths(raw);
+        if (paths.empty())
         {
-            if (ch >= L'A' && ch <= L'Z') ch = wchar_t(ch - L'A' + L'a');
-            if (IsLowerLetter(ch)) letters.push_back(ch);
+            LX_LOGV(L"py", L"input=%hs paths=0", raw.c_str());
+            return p;
         }
-        if (letters.empty() || _entries.empty()) return pred;
-        if (letters.size() > kMaxLetters)
-            letters = letters.substr(letters.size() - kMaxLetters);
+        for (const auto& pp : paths)
+        {
+            std::string desc;
+            for (const auto& u : pp.units)
+            {
+                desc += (u.kind == SyllUnit::FULL ? "F:" :
+                         u.kind == SyllUnit::INITIAL ? "I:" : "P:");
+                desc += u.text;
+                desc += " ";
+            }
+            LX_LOGV(L"py", L"path cost=%d %hs", pp.cost, desc.c_str());
+        }
 
-        std::vector<std::wstring> pool;
-        for (const SegPath& path : Segment(letters))
-            CollectPathCandidates(path, pool);
+        std::vector<Candidate> out = Generate(paths);
+        for (const auto& c : out)
+            LX_LOGV(L"py", L"cand cost=%.2f %hs", c.cost, ToUtf8(c.word).c_str());
 
-        // 按序去重，取前 5
+        // 去重（保序，已按优先级排序）
         std::unordered_set<std::wstring> seen;
-        for (const std::wstring& c : pool)
+        for (auto& c : out)
         {
-            if (c.empty()) continue;
-            if (!seen.insert(c).second) continue;
-            pred.cands.push_back(c);
-            if (pred.cands.size() >= kMaxCands) break;
+            if (c.word.empty() || seen.count(c.word)) continue;
+            seen.insert(c.word);
+            p.cands.push_back(c.word);
+            if (p.cands.size() >= 9) break;
         }
-        return pred; // replaceLen 恒 0：DLL 用组合串长度整体替换
+        p.replaceLen = 0;
+        return p;
     }
 
 private:
-    // ---------- 数据加载与索引 ----------
+    std::vector<PyEntry> _entries;
+    std::unordered_set<std::string> _syllables;
 
-    static std::wstring DataPath(const wchar_t* file)
-    {
-        wchar_t exePath[MAX_PATH] = L"";
-        if (GetModuleFileNameW(NULL, exePath, MAX_PATH) == 0) return L"";
-        wchar_t* slash = wcsrchr(exePath, L'\\');
-        if (!slash) return L"";
-        *slash = L'\0';
-        return std::wstring(exePath) + L"\\data\\" + file;
-    }
+    // 紧凑串（全 FULL）→ 词
+    std::unordered_map<std::string, std::vector<int>> _byCompact;
+    // 首字母串（全 INITIAL）→ 词
+    std::unordered_map<std::string, std::vector<int>> _byInitials;
+    // 全拼/简拼模式键 → 词（O(1) 精确匹配，覆盖全 FULL、全 INITIAL 及任意混合；
+    // 键含每音节段，天然区分音节数，xian 与 xi-an 不撞键）。
+    std::unordered_map<std::string, std::vector<int>> _byPattern;
+    // 首音节 → 音节数(1..10) → 词（混合/残段过滤）
+    std::unordered_map<std::string, std::vector<std::vector<int>>> _byFirstSyll;
+    // 首字母 → 音节数 → 词
+    std::unordered_map<std::string, std::vector<std::vector<int>>> _byFirstInit;
+    // 单音节 → 单字词（含多个同音字）
+    std::unordered_map<std::string, std::vector<int>> _charBySyll;
 
+    // -----------------------------------------------------------------------
+    // 加载
+    // -----------------------------------------------------------------------
     void Load()
     {
-        std::ifstream f(DataPath(L"zh_pinyin.txt"), std::ios::binary);
-        if (!f) return;
-        // 整文件一次读入（istreambuf_iterator 逐字符在 Debug CRT 下过慢）
-        f.seekg(0, std::ios::end);
-        std::streamoff sz = f.tellg();
-        if (sz <= 0) return;
-        f.seekg(0, std::ios::beg);
-        std::string raw((size_t)sz, '\0');
-        f.read(&raw[0], sz);
-        raw.resize((size_t)(f.gcount() > 0 ? f.gcount() : 0));
-        int wlen = MultiByteToWideChar(CP_UTF8, 0, raw.data(), (int)raw.size(), NULL, 0);
-        if (wlen <= 0) return;
-        std::wstring text(wlen, L'\0');
-        MultiByteToWideChar(CP_UTF8, 0, raw.data(), (int)raw.size(), &text[0], wlen);
+        std::string path = ExeDir() + "\\data\\zh_pinyin.txt";
+        std::string raw = ReadAll(path);
+        if (raw.empty()) return;
 
-        // 预留容量，避免 Debug CRT 下的反复扩容/重哈希
-        _entries.reserve(text.size() / 13 + 64);
-        _byCompact.reserve(text.size() / 13 + 64);
-        _byFirstSyll.reserve(512);
-        _syllSet.reserve(512);
-
-        uint32_t rank = 0;
-        size_t pos = 0;
-        const size_t n = text.size();
-        while (pos < n)
+        std::vector<std::string> lines = Split(raw, '\n');
+        for (auto& line : lines)
         {
-            size_t eol = text.find(L'\n', pos);
-            size_t end = (eol == std::wstring::npos) ? n : eol;
-            if (end > pos && text[end - 1] == L'\r') end--; // 去 \r
-            size_t tab = std::wstring::npos;
-            for (size_t k = pos; k < end; k++)
-            {
-                if (text[k] == L'\t') { tab = k; break; }
-            }
-            if (tab != std::wstring::npos &&
-                AddEntry(text.c_str() + pos, tab - pos, text.c_str() + tab + 1, end - tab - 1, rank))
-            {
-                rank++;
-            }
-            pos = (eol == std::wstring::npos) ? n : eol + 1;
+            std::string l = line;
+            if (!l.empty() && l.back() == '\r') l.pop_back();
+            if (l.empty()) continue;
+            size_t tab = l.find('\t');
+            if (tab == std::string::npos) continue;
+
+            std::wstring word = FromUtf8(l.substr(0, tab));
+            std::string py = l.substr(tab + 1);
+            std::vector<std::string> sylls = Split(py, ' ');
+            if (word.empty() || sylls.empty()) continue;
+
+            PyEntry e;
+            e.word = word;
+            e.rank = (int)_entries.size();
+            e.sylls = sylls;
+            e.compact = Concat(sylls);
+            e.initials = InitialsOf(sylls);
+            _entries.push_back(std::move(e));
         }
 
-        // 音节表按首字母分组，组内按长度降序（切分时优先尝试长音节）
-        for (const std::wstring& sy : _syllSet) _syllByFirst[sy[0]].push_back(sy);
-        for (auto& kv : _syllByFirst)
-        {
-            std::sort(kv.second.begin(), kv.second.end(),
-                      [](const std::wstring& a, const std::wstring& b) { return a.size() > b.size(); });
-        }
+        BuildIndexes();
+        BuildSyllableSet();
     }
 
-    bool AddEntry(const wchar_t* word, size_t wlen, const wchar_t* seq, size_t slen, uint32_t rank)
+    void BuildIndexes()
     {
-        if (wlen == 0 || wlen > 12) return false;
-        for (size_t k = 0; k < wlen; k++)
-            if (!IsCjkChar(word[k])) return false; // 纯汉字词
-
-        // 单趟扫音节：拼紧凑串 + 校验纯小写字母 + 收集音节表；
-        // 用可复用 scratch 查 _syllSet（命中时不产生新分配）
-        std::wstring compact;
-        compact.reserve(slen);
-        std::wstring scratch;
-        scratch.reserve(8);
-        std::wstring firstSyll;
-        uint32_t count = 0;
-        size_t k = 0;
-        while (k < slen)
+        for (int i = 0; i < (int)_entries.size(); i++)
         {
-            while (k < slen && seq[k] == L' ') k++; // 跳过空格（含连续空格）
-            size_t s = k;
-            while (k < slen && seq[k] != L' ')
+            const PyEntry& e = _entries[i];
+            if (e.sylls.empty()) continue;
+            int n = (int)e.sylls.size();
+
+            _byCompact[e.compact].push_back(i);
+            if (n <= 10) _byInitials[e.initials].push_back(i);
+
+            // 全拼/简拼模式组合：每音节取 FULL(=syll) 或 INITIAL(-首字母)，
+            // 共 2^n 个模式键，供任意混合拼音 O(1) 命中。n<=6 组合数有界。
+            if (n >= 1 && n <= 6)
             {
-                if (seq[k] < L'a' || seq[k] > L'z') return false; // 数据自检
-                k++;
+                int combos = 1 << n;
+                for (int mask = 0; mask < combos; mask++)
+                {
+                    std::string key;
+                    key.reserve(e.compact.size() + (size_t)n * 2);
+                    for (int k = 0; k < n; k++)
+                    {
+                        if (k) key.push_back('|');
+                        const std::string& sy = e.sylls[k];
+                        if (sy.empty()) continue;
+                        if (mask & (1 << k)) { key.push_back('='); key += sy; }
+                        else { key.push_back('-'); key.push_back(sy[0]); }
+                    }
+                    _byPattern[key].push_back(i);
+                }
             }
-            if (k > s)
+
+            // 单字
+            if (e.word.size() == 1 && n == 1)
+                _charBySyll[e.sylls[0]].push_back(i);
+
+            if (n >= 1 && n <= 10)
             {
-                if (count == 0) firstSyll.assign(seq + s, k - s);
-                compact.append(seq + s, k - s);
-                scratch.assign(seq + s, k - s);
-                _syllSet.insert(scratch);
-                count++;
-                if (count > 16) return false;
+                EnsureSyllBucket(_byFirstSyll[e.sylls[0]], n).push_back(i);
+                std::string init(1, e.sylls[0][0]);
+                EnsureSyllBucket(_byFirstInit[init], n).push_back(i);
             }
         }
-        if (count == 0) return false;
 
-        uint32_t idx = (uint32_t)_entries.size();
-        _entries.push_back({ std::wstring(word, wlen), rank });
-        _byCompact[std::move(compact)].push_back(idx);
-        _byFirstSyll[std::move(firstSyll)].push_back(idx); // 追加序 = 词频序，桶内天然升序
-        return true;
+        // 同键词按 rank 升序（加载即按词频序，保持稳定）
+        for (auto& kv : _byCompact) StableSortIdx(kv.second);
+        for (auto& kv : _byInitials) StableSortIdx(kv.second);
+        for (auto& kv : _byPattern) StableSortIdx(kv.second);
+        for (auto& kv : _charBySyll) StableSortIdx(kv.second);
     }
 
-    // ---------- 音节切分（DP，k 最优） ----------
-
-    static bool PathLess(const SegPath& a, const SegPath& b)
+    static std::vector<int>& EnsureSyllBucket(std::vector<std::vector<int>>& v, int n)
     {
-        if (a.cost != b.cost) return a.cost < b.cost;
-        // 确定性 tie-break：逐音节字典序，再比长度
-        size_t k = (std::min)(a.sylls.size(), b.sylls.size());
-        for (size_t i = 0; i < k; i++)
+        if ((int)v.size() <= n) v.resize(n + 1);
+        return v[n];
+    }
+    void StableSortIdx(std::vector<int>& v)
+    {
+        std::stable_sort(v.begin(), v.end(),
+                         [&](int a, int b) { return _entries[a].rank < _entries[b].rank; });
+    }
+
+    // 合法音节集合：数据中出现的单音节 + 常见音节兜底
+    void BuildSyllableSet()
+    {
+        for (const auto& e : _entries)
+            for (const auto& s : e.sylls)
+                if (s.size() <= 6) _syllables.insert(s);
+        static const char* kExtra[] = {
+            "a","ai","an","ang","ao","ba","bai","ban","bang","bao","bei","ben","beng","bi",
+            "bian","biao","bie","bin","bing","bo","bu","ca","cai","can","cang","cao","ce",
+            "cen","ceng","cha","chai","chan","chang","chao","che","chen","cheng","chi","chong",
+            "chou","chu","chua","chuai","chuan","chuang","chui","chun","chuo","ci","cong","cou",
+            "cu","cuan","cui","cun","cuo","da","dai","dan","dang","dao","de","dei","den","deng",
+            "di","dia","dian","diao","die","ding","diu","dong","dou","du","duan","dui","dun",
+            "duo","e","ei","en","er","fa","fan","fang","fei","fen","feng","fo","fou","fu","ga",
+            "gai","gan","gang","gao","ge","gei","gen","geng","gong","gou","gu","gua","guai",
+            "guan","guang","gui","gun","guo","ha","hai","han","hang","hao","he","hei","hen",
+            "heng","hm","hong","hou","hu","hua","huai","huan","huang","hui","hun","huo","ji",
+            "jia","jian","jiang","jiao","jie","jin","jing","jiong","jiu","ju","juan","jue",
+            "jun","ka","kai","kan","kang","kao","ke","ken","keng","kong","kou","ku","kua",
+            "kuai","kuan","kuang","kui","kun","kuo","la","lai","lan","lang","lao","le","lei",
+            "leng","li","lia","lian","liang","liao","lie","lin","ling","liu","long","lou","lu",
+            "lv","luan","lve","lun","luo","ma","mai","man","mang","mao","me","mei","men",
+            "meng","mi","mian","miao","mie","min","ming","miu","mo","mou","mu","na","nai",
+            "nan","nang","nao","ne","nei","nen","neng","ni","nian","niang","niao","nie","nin",
+            "ning","niu","nong","nou","nu","nv","nuan","nve","nun","nuo","o","ou","pa","pai",
+            "pan","pang","pao","pei","pen","peng","pi","pian","piao","pie","pin","ping","po",
+            "pou","pu","qi","qia","qian","qiang","qiao","qie","qin","qing","qiong","qiu","qu",
+            "quan","que","qun","ran","rang","rao","re","ren","reng","ri","rong","rou","ru",
+            "rua","ruan","rui","run","ruo","sa","sai","san","sang","sao","se","sen","seng",
+            "sha","shai","shan","shang","shao","she","shei","shen","sheng","shi","shou","shu",
+            "shua","shuai","shan","shuang","shui","shun","shuo","si","song","sou","su","suan",
+            "sui","sun","suo","ta","tai","tan","tang","tao","te","teng","ti","tian","tiao",
+            "tie","ting","tong","tou","tu","tuan","tui","tun","tuo","wa","wai","wan","wang",
+            "wei","wen","weng","wo","wu","xi","xia","xian","xiang","xiao","xie","xin","xing",
+            "xiong","xiu","xu","xuan","xue","xun","ya","yan","yang","yao","ye","yi","yin",
+            "ying","yo","yong","you","yu","yuan","yue","yun","za","zai","zan","zang","zao",
+            "ze","zei","zen","zeng","zha","zhai","zhan","zhang","zhao","zhe","zhei","zhen",
+            "zheng","zhi","zhong","zhou","zhu","zhua","zhuai","zhuan","zhuang","zhui","zhun",
+            "zhuo","zi","zong","zou","zu","zuan","zui","zun","zuo"
+        };
+        for (auto* s : kExtra) _syllables.insert(s);
+    }
+
+    // -----------------------------------------------------------------------
+    // 音节切分
+    // -----------------------------------------------------------------------
+    static constexpr int K_POS = 7;   // 每位置保留路径数
+    static constexpr int K_FINAL = 14; // 最终参与候选的路径数
+
+    std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
+    {
+        // 规范化：仅保留 a-z；撇号作为边界（空转移）
+        std::string in;
+        in.reserve(rawIn.size());
+        for (char ch : rawIn)
         {
-            int c = a.sylls[i].compare(b.sylls[i]);
-            if (c != 0) return c < 0;
+            char c = Lower(ch);
+            if (c >= 'a' && c <= 'z') in.push_back(c);
+            else if (ch == '\'' || ch == '\u2019') in.push_back('\'');
         }
-        return a.sylls.size() < b.sylls.size();
-    }
+        int n = (int)in.size();
 
-    // 插入并保持有序，截断到 kMaxPaths
-    static void InsertPath(std::vector<SegPath>& v, SegPath&& p)
-    {
-        size_t pos = 0;
-        while (pos < v.size() && PathLess(v[pos], p)) pos++;
-        if (pos >= kMaxPaths) return;
-        v.insert(v.begin() + pos, std::move(p));
-        if (v.size() > kMaxPaths) v.resize(kMaxPaths);
-    }
-
-    std::vector<SegPath> Segment(const std::wstring& s) const
-    {
-        const size_t n = s.size();
-        // dp[i]：覆盖 s[0..i) 的最优 k 条"完整音节"路径
         std::vector<std::vector<SegPath>> dp(n + 1);
-        dp[0].push_back(SegPath{});
-        for (size_t i = 0; i < n; i++)
+        dp[0].push_back(SegPath());
+
+        for (int i = 0; i < n; i++)
+        {
+            if (i + 1 <= n && in[i] == '\'')
+            {
+                // 边界：路径原样前推
+                dp[i + 1] = dp[i];
+                Prune(dp[i + 1]);
+                continue;
+            }
+            if (dp[i].empty()) continue;
+
+            // 枚举从 i 开始的完整音节
+            int bound = NextBoundaryOrEnd(in, i);
+            for (int L = 1; L <= 6 && i + L <= bound; L++)
+            {
+                std::string s = in.substr(i, L);
+                if (!_syllables.count(s)) continue;
+                Extend(dp, i, i + L, SyllUnit{ SyllUnit::FULL, s }, 2);
+            }
+            // 单字母简拼
+            if (in[i] >= 'a' && in[i] <= 'z')
+                Extend(dp, i, i + 1, SyllUnit{ SyllUnit::INITIAL, std::string(1, in[i]) }, 4);
+        }
+
+        // 收集完整路径 + 末尾残段路径
+        std::vector<SegPath> all;
+        if (!dp[n].empty())
+            for (const auto& p : dp[n]) all.push_back(p);
+
+        for (int i = 0; i < n; i++)
         {
             if (dp[i].empty()) continue;
-            auto it = _syllByFirst.find(s[i]);
-            if (it == _syllByFirst.end()) continue;
-            for (const std::wstring& sy : it->second) // 长度降序
+            int b = NextBoundaryOrEnd(in, i);
+            int rlen = b - i;
+            if (rlen <= 0 || rlen > 6) continue;
+            std::string r = in.substr(i, rlen);
+            if (r.empty() || r[0] == '\'') continue;
+            if (_syllables.count(r)) continue;       // 完整音节走完整路径
+            if (!IsSyllablePrefix(r)) continue;       // 必须是某音节前缀
+            for (const auto& p : dp[i])
             {
-                size_t len = sy.size();
-                if (i + len > n || s.compare(i, len, sy) != 0) continue;
-                for (const SegPath& p : dp[i])
-                {
-                    SegPath np = p;
-                    np.cost += 2;
-                    np.sylls.push_back(sy);
-                    InsertPath(dp[i + len], std::move(np));
-                }
+                SegPath np = p;
+                np.units.push_back(SyllUnit{ SyllUnit::PARTIAL, r });
+                np.cost += 3;
+                all.push_back(np);
             }
         }
 
-        std::vector<SegPath> all(std::move(dp[n]));
-        // 末段残段：s[j..n) 是某更长音节的真前缀（恰为完整音节时 dp[n] 已覆盖且无罚分）
-        for (size_t j = 0; j < n; j++)
-        {
-            if (dp[j].empty()) continue;
-            std::wstring tail = s.substr(j, n - j);
-            auto it = _syllByFirst.find(tail[0]);
-            if (it == _syllByFirst.end()) continue;
-            bool prefixOfLonger = false;
-            for (const std::wstring& sy : it->second)
-            {
-                if (sy.size() > tail.size() && sy.compare(0, tail.size(), tail) == 0)
-                {
-                    prefixOfLonger = true;
-                    break;
-                }
-            }
-            if (!prefixOfLonger) continue;
-            for (const SegPath& p : dp[j])
-            {
-                SegPath np = p;
-                np.cost += 3; // 2 + 残段罚分 1
-                np.sylls.push_back(tail);
-                np.partialTail = true;
-                InsertPath(all, std::move(np));
-            }
-        }
+        Prune(all);
+        if ((int)all.size() > K_FINAL) all.resize(K_FINAL);
         return all;
     }
 
-    // ---------- 词链生成（贪心 + 有界回溯） ----------
-
-    // 残段匹配：首音节分桶 + 线性过滤（避免全表扫描）。
-    // 桶键（完整音节）以残段开头即命中；桶内按词频序取头部；
-    // 首音节恰等于残段的词优先（残段也可能已是完整读音，如 "ha" 之于 "hai"）。
-    std::vector<WordOpt> ResidualOptions(const std::wstring& tail) const
+    void Extend(std::vector<std::vector<SegPath>>& dp, int from, int to,
+                SyllUnit u, int addCost)
     {
-        std::vector<WordOpt> opts;
-        auto exact = _byFirstSyll.find(tail);
-        if (exact != _byFirstSyll.end())
+        for (const auto& p : dp[from])
         {
-            size_t take = (std::min)(exact->second.size(), kOptsPerSpan);
-            for (size_t k = 0; k < take; k++) opts.push_back({ 1, exact->second[k] });
+            SegPath np = p;
+            np.units.push_back(u);
+            np.cost += addCost;
+            dp[to].push_back(np);
         }
-        size_t exactCount = opts.size();
-        for (const auto& kv : _byFirstSyll)
-        {
-            const std::wstring& sy = kv.first;
-            if (sy.size() <= tail.size() || sy.compare(0, tail.size(), tail) != 0) continue;
-            size_t take = (std::min)(kv.second.size(), size_t(2));
-            for (size_t k = 0; k < take; k++) opts.push_back({ 1, kv.second[k] });
-        }
-        // exact 段已按词频序；其余段合并后按词频序，exact 整体优先
-        std::stable_sort(opts.begin() + exactCount, opts.end(),
-                         [this](const WordOpt& a, const WordOpt& b)
-                         { return _entries[a.entry].rank < _entries[b.entry].rank; });
-        if (opts.size() > kMaxResidualOpts) opts.resize(kMaxResidualOpts);
-        return opts;
+        Prune(dp[to]);
     }
 
-    // 位置 i 的可选词：跨度降序（最长匹配优先），同跨度桶内按词频序
-    void BuildOptions(const std::vector<std::wstring>& sylls, size_t i, bool lastPartial,
-                      std::vector<WordOpt>& opts) const
+    static int NextBoundaryOrEnd(const std::string& in, int i)
     {
-        opts.clear();
-        const size_t n = sylls.size();
-        if (lastPartial && i + 1 == n)
-        {
-            opts = ResidualOptions(sylls[i]);
-            return;
-        }
-        size_t maxSpan = (std::min)(kMaxChainSpan, n - i);
-        for (size_t span = maxSpan; span >= 1; span--)
-        {
-            std::wstring key;
-            for (size_t k = i; k < i + span; k++) key += sylls[k];
-            auto it = _byCompact.find(key);
-            if (it == _byCompact.end()) continue;
-            size_t take = (std::min)(it->second.size(), kOptsPerSpan);
-            for (size_t k = 0; k < take; k++)
-                opts.push_back({ (uint32_t)span, it->second[k] });
-            if (opts.size() >= kMaxOpts) break;
-        }
-        if (opts.size() > kMaxOpts) opts.resize(kMaxOpts);
+        for (int j = i; j < (int)in.size(); j++)
+            if (in[j] == '\'') return j;
+        return (int)in.size();
     }
 
-    // DFS 找第一条能走通的词链（选项按质量降序 → 首个成功即最优贪心链）
-    bool DfsChain(const std::vector<std::wstring>& sylls, size_t i, bool lastPartial,
-                  std::vector<WordOpt>& scratch, std::vector<WordOpt>& chain, int& budget) const
+    bool IsSyllablePrefix(const std::string& r) const
     {
-        if (i == sylls.size()) return true;
-        if (budget-- <= 0) return false;
-        BuildOptions(sylls, i, lastPartial, scratch);
-        std::vector<WordOpt> opts(scratch); // 拷贝：递归会复用 scratch，避免迭代器失效
-        size_t mark = chain.size();
-        for (const WordOpt& o : opts)
-        {
-            chain.push_back(o);
-            if (DfsChain(sylls, i + o.span, lastPartial, scratch, chain, budget)) return true;
-            chain.resize(mark);
-        }
+        for (const auto& s : _syllables)
+            if (s.size() >= r.size() && s.compare(0, r.size(), r) == 0) return true;
         return false;
     }
 
-    std::wstring ChainText(const std::vector<WordOpt>& chain) const
+    static void Prune(std::vector<SegPath>& v)
     {
-        std::wstring t;
-        for (const WordOpt& o : chain) t += _entries[o.entry].word;
-        return t;
+        // 去重（相同单元序列）
+        std::unordered_set<std::string> keys;
+        std::vector<SegPath> uniq;
+        uniq.reserve(v.size());
+        for (auto& p : v)
+        {
+            std::string k;
+            for (auto& u : p.units)
+            {
+                k.push_back((char)u.kind);
+                k += u.text;
+                k.push_back('|');
+            }
+            if (keys.insert(k).second) uniq.push_back(p);
+        }
+        std::sort(uniq.begin(), uniq.end(),
+                  [](const SegPath& a, const SegPath& b) { return a.cost < b.cost; });
+        if ((int)uniq.size() > K_POS) uniq.resize(K_POS);
+        v.swap(uniq);
     }
 
-    // 词频加权 Viterbi：在音节序列上全局择优（代价 = Σ log(1+词频名次)，
-    // 名次越小越常用；多词链代价项更多，自然偏好少词/高频组合）。
-    struct DpNode
+    // -----------------------------------------------------------------------
+    // 词匹配
+    // -----------------------------------------------------------------------
+    struct WordMatch
     {
-        double cost = 0;
-        int prev = -1;      // 后继位置（WalkChain 用）
-        uint32_t entry = 0; // 本段词条
-        uint32_t span = 0;  // 消耗音节数
-        bool valid = false;
+        int idx;
+        double penalty;
     };
 
-    // 计算 [start, n) 的最优词链：dp[i] = 位置 i 选取的词 + 后继代价。
-    // 复用 BuildOptions（各跨度桶内词频序），每位置每跨度取头部若干。
-    void DpSuffix(const std::vector<std::wstring>& sylls, size_t start, bool lastPartial,
-                  std::vector<DpNode>& dp) const
+    // 词的 penalty：简拼在单字词中重罚（简拼通常为打词而非打单字），
+    // 残段轻罚。
+    double PenaltyFor(const std::vector<SyllUnit>& units, bool singleChar) const
     {
-        const size_t n = sylls.size();
-        dp.assign(n + 1, DpNode{});
-        dp[n].valid = true; // 终点
-        for (size_t i = n; i-- > start;)
+        double pen = 0.0;
+        for (const auto& u : units)
         {
-            std::vector<WordOpt> opts;
-            BuildOptions(sylls, i, lastPartial, opts);
-            for (const WordOpt& o : opts)
-            {
-                if (i + o.span > n) continue;
-                const DpNode& nxt = dp[i + o.span];
-                if (!nxt.valid) continue;
-                double c = std::log(1.0 + (double)_entries[o.entry].rank) + nxt.cost;
-                if (!dp[i].valid || c < dp[i].cost)
-                    dp[i] = { c, (int)(i + o.span), o.entry, o.span, true };
-            }
+            if (u.kind == SyllUnit::INITIAL) pen += singleChar ? 4.0 : 1.5;
+            else if (u.kind == SyllUnit::PARTIAL) pen += 2.0;
         }
+        return pen;
     }
+    // 词数成本：词链中每个词都加，倾向用更少（更长）的词。
+    static constexpr double kWordCountCost = 1.5;
 
-    static bool WalkChain(const std::vector<DpNode>& dp, size_t start, std::vector<WordOpt>& chain)
+    std::vector<WordMatch> MatchWords(const std::vector<SyllUnit>& units)
     {
-        if (start >= dp.size() || !dp[start].valid) return false;
-        size_t i = start;
-        while (i + 1 < dp.size())
+        std::vector<WordMatch> out;
+        if (units.empty()) return out;
+        int n = (int)units.size();
+        if (n > 10) return out;
+
+        auto add = [&](int ei) {
+            bool single = _entries[ei].word.size() == 1;
+            out.push_back({ ei, PenaltyFor(units, single) });
+        };
+
+        bool hasPartial = false;
+        for (const auto& u : units)
+            if (u.kind == SyllUnit::PARTIAL) { hasPartial = true; break; }
+
+        if (!hasPartial)
         {
-            const DpNode& nd = dp[i];
-            if (!nd.valid) return false;
-            chain.push_back({ nd.span, nd.entry });
-            i = (size_t)nd.prev;
-        }
-        return !chain.empty();
-    }
-
-    // 候选组装：Viterbi 最优整链 + 末字变体（最后一音节的其他高频字）+
-    // 首词替代链 + 仅首词；按序去重取前 9。
-    void CollectPathCandidates(const SegPath& path, std::vector<std::wstring>& pool) const
-    {
-        const std::vector<std::wstring>& sylls = path.sylls;
-        const size_t n = sylls.size();
-
-        std::vector<DpNode> dp;
-        DpSuffix(sylls, 0, path.partialTail, dp);
-
-        std::vector<WordOpt> chain;
-        if (!WalkChain(dp, 0, chain))
-        {
-            // 兑底：贪心 DFS（旧实现）
-            std::vector<WordOpt> scratch;
-            int budget = kDfsBudget;
-            if (DfsChain(sylls, 0, path.partialTail, scratch, chain, budget))
+            // 全拼/简拼模式键精确匹配（O(1)）；键含 n 段，命中词音节数天然相等，
+            // 同时统一支持全 FULL、全 INITIAL 与任意混合，避免线性扫描。
+            std::string key;
+            key.reserve(24);
+            for (int k = 0; k < n; k++)
             {
-                pool.push_back(ChainText(chain));
-                std::vector<WordOpt> firstOpts;
-                BuildOptions(sylls, 0, path.partialTail, firstOpts);
-                if (!firstOpts.empty()) pool.push_back(_entries[firstOpts[0].entry].word);
+                if (k) key.push_back('|');
+                const std::string& t = units[k].text;
+                if (t.empty()) return out;
+                if (units[k].kind == SyllUnit::FULL) { key.push_back('='); key += t; }
+                else { key.push_back('-'); key.push_back(t[0]); }
             }
-            else
-            {
-                std::vector<WordOpt> firstOpts;
-                BuildOptions(sylls, 0, path.partialTail, firstOpts);
-                if (!firstOpts.empty()) pool.push_back(_entries[firstOpts[0].entry].word);
-            }
-            return;
+            auto it = _byPattern.find(key);
+            if (it != _byPattern.end())
+                for (int i : it->second) add(i);
+            return out;
         }
 
-        std::wstring firstWord = _entries[chain[0].entry].word;
-        pool.push_back(ChainText(chain)); // 1) 全局最优整链
-
-        // 2) 末字变体：最后一音节的其他高频字（今天其 → 今天气/今天起/今天期…）。
-        //    条件：末词只覆盖最后一个音节（单字收尾）。
-        if (!chain.empty() && chain.back().span == 1)
+        // 含末尾 PARTIAL：首单元桶 + 逐音节过滤（仅残段路径触发，量小）
+        const SyllUnit& u0 = units[0];
+        if (u0.kind == SyllUnit::PARTIAL) return out; // 整串即残段：走残段单字
+        std::vector<int> bucket;
+        if (u0.kind == SyllUnit::FULL)
         {
-            std::vector<WordOpt> lastOpts;
-            BuildOptions(sylls, n - 1, path.partialTail, lastOpts);
-            std::wstring prefixText;
-            for (size_t k = 0; k + 1 < chain.size(); k++) prefixText += _entries[chain[k].entry].word;
-            int variants = 0;
-            std::wstring curLast = _entries[chain.back().entry].word;
-            for (const WordOpt& o : lastOpts)
-            {
-                const PyEntry& e = _entries[o.entry];
-                if (e.word == curLast) continue;
-                pool.push_back(prefixText + e.word);
-                if (++variants >= 3) break;
-            }
+            auto it = _byFirstSyll.find(u0.text);
+            if (it != _byFirstSyll.end() && (int)it->second.size() > n)
+                bucket = it->second[n];
         }
-
-        // 3) 首词替代链：换位置 0 的其他词，其余用 DP 最优补完
-        std::vector<WordOpt> firstOpts;
-        BuildOptions(sylls, 0, path.partialTail, firstOpts);
-        int alts = 0;
-        for (size_t k = 1; k < firstOpts.size() && alts < 2; k++)
+        else
         {
-            const PyEntry& e = _entries[firstOpts[k].entry];
-            if (e.word == firstWord) continue;
-            if (firstOpts[k].span >= n)
+            auto it = _byFirstInit.find(u0.text);
+            if (it != _byFirstInit.end() && (int)it->second.size() > n)
+                bucket = it->second[n];
+        }
+        for (int ei : bucket)
+        {
+            const PyEntry& e = _entries[ei];
+            if ((int)e.sylls.size() != n) continue;
+            bool ok = true;
+            for (int k = 1; k < n; k++)
             {
-                pool.push_back(e.word); // 单词覆盖全部音节
-            }
-            else
-            {
-                std::vector<DpNode> dp2;
-                DpSuffix(sylls, firstOpts[k].span, path.partialTail, dp2);
-                std::vector<WordOpt> rest;
-                if (!WalkChain(dp2, firstOpts[k].span, rest))
-                    pool.push_back(e.word);
-                else
+                const SyllUnit& u = units[k];
+                const std::string& s = e.sylls[k];
+                if (u.kind == SyllUnit::FULL)
                 {
-                    std::wstring alt = e.word;
-                    for (const WordOpt& o : rest) alt += _entries[o.entry].word;
-                    pool.push_back(std::move(alt));
+                    if (s != u.text) { ok = false; break; }
+                }
+                else if (u.kind == SyllUnit::INITIAL)
+                {
+                    if (s.empty() || s[0] != u.text[0]) { ok = false; break; }
+                }
+                else // PARTIAL（只在末尾）
+                {
+                    if (s.size() < u.text.size() ||
+                        s.compare(0, u.text.size(), u.text) != 0) { ok = false; break; }
                 }
             }
-            alts++;
+            if (ok) add(ei);
         }
-
-        // 4) 仅首词（部分输入/前缀场景有用；重复由去重消化）
-        if (chain.size() > 1) pool.push_back(std::move(firstWord));
+        return out;
     }
 
-    // ---------- 成员 ----------
-    std::vector<PyEntry> _entries;
-    std::unordered_map<std::wstring, std::vector<uint32_t>> _byCompact;    // 紧凑拼音 → 词条
-    std::unordered_map<std::wstring, std::vector<uint32_t>> _byFirstSyll;  // 首音节 → 词条（残段匹配用）
-    std::unordered_map<wchar_t, std::vector<std::wstring>> _syllByFirst;   // 首字母 → 音节（长度降序）
-    std::unordered_set<std::wstring> _syllSet;                             // 全部合法音节
+    // 残段前缀 → 单字（同音字按词频）
+    std::vector<int> MatchCharsByPrefix(const std::string& prefix)
+    {
+        std::vector<int> out;
+        for (const auto& kv : _charBySyll)
+        {
+            const std::string& s = kv.first;
+            if (s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0)
+                for (int i : kv.second) out.push_back(i);
+        }
+        std::stable_sort(out.begin(), out.end(),
+                         [&](int a, int b) { return _entries[a].rank < _entries[b].rank; });
+        return out;
+    }
+
+    // -----------------------------------------------------------------------
+    // 词链 Viterbi
+    // -----------------------------------------------------------------------
+    struct Node
+    {
+        bool valid = false;
+        double cost = 0.0;
+        int firstIdx = -1;
+        int firstSpan = 0;
+        int nWords = 0;
+    };
+
+    double WordCost(int idx) const
+    {
+        return std::log(1.0 + (double)_entries[idx].rank);
+    }
+
+    // -----------------------------------------------------------------------
+    // 候选生成
+    // -----------------------------------------------------------------------
+    std::vector<Candidate> Generate(const std::vector<SegPath>& paths)
+    {
+        std::vector<Candidate> all;
+        // 最自然切分（最长音节、最少简拼）的路径 cost 作为 tier 0 基准；
+        // 其余碎切分路径（如 nihao 拆成 ni-ha-o）整体降一层，避免其完整候选
+        // （"你好奥"之类）挤掉最优路径的单字备选。
+        int minPathCost = 1000000;
+        for (const auto& p : paths) minPathCost = (std::min)(minPathCost, p.cost);
+
+        for (const auto& path : paths)
+        {
+            const std::vector<SyllUnit>& units = path.units;
+            int n = (int)units.size();
+            if (n == 0) continue;
+
+            bool trailingPartial = units.back().kind == SyllUnit::PARTIAL;
+            int tier = (path.cost <= minPathCost) ? 0 : 1;
+            // 纯声母简拼路径（如 dh、xyzxyz）：简拼价值在于命中整词（dh→电话）。
+            // 长串纯声母若只能逐字单字硬拼（xyzxyz），视为英文/误触，不产出中文。
+            bool allInit = true;
+            for (const auto& u : units)
+                if (u.kind != SyllUnit::INITIAL) { allInit = false; break; }
+
+            // 纯声母简拼过长（≥4 个声母，或残段前缀≥3 个声母）几乎必为英文/误触，
+            // 即使能撞上罕见长词也整条丢弃（同时省掉该路径的 DP）。
+            if (allInit && n >= 4) continue;
+            int initHead = trailingPartial ? n - 1 : n;
+            if (trailingPartial)
+            {
+                bool prefixAllInit = true;
+                for (int k = 0; k < n - 1; k++)
+                    if (units[k].kind != SyllUnit::INITIAL) { prefixAllInit = false; break; }
+                if (prefixAllInit && initHead >= 3) continue;
+            }
+
+            // 收集候选并记录覆盖单元数、词数与切分层，供分层排序。
+            auto add = [&](std::wstring word, double cost, int covered, int words)
+            {
+                if (!word.empty())
+                    all.push_back({ std::move(word), cost, covered, n, words, tier });
+            };
+
+            // 匹配缓存：每条路径内 (i,span) 只做一次 MatchWords，避免 O(n^3) 重复
+            std::vector<std::vector<std::vector<WordMatch>>> mw(
+                n + 1, std::vector<std::vector<WordMatch>>(7));
+            std::vector<std::vector<unsigned char>> mwDone(
+                n + 1, std::vector<unsigned char>(7, 0));
+            auto getMatches = [&](int i, int span) -> const std::vector<WordMatch>& {
+                if (!mwDone[i][span])
+                {
+                    mwDone[i][span] = 1;
+                    std::vector<SyllUnit> sub(units.begin() + i, units.begin() + i + span);
+                    mw[i][span] = MatchWords(sub);
+                }
+                return mw[i][span];
+            };
+
+            // 一次反向 DP：d[i] = units[i..end) 的最优词链（结果可被回溯复用）
+            auto computeDp = [&](int end) {
+                std::vector<Node> d(end + 1);
+                d[end].valid = true;
+                for (int i = end - 1; i >= 0; i--)
+                {
+                    Node best;
+                    for (int span = 1; span <= 6 && i + span <= end; span++)
+                    {
+                        const std::vector<WordMatch>& ws = getMatches(i, span);
+                        if (ws.empty()) continue;
+                        const Node& nxt = d[i + span];
+                        if (!nxt.valid) continue;
+                        for (const auto& w : ws)
+                        {
+                            double c = WordCost(w.idx) + w.penalty + kWordCountCost + nxt.cost;
+                            if (!best.valid || c < best.cost)
+                                best = Node{ true, c, w.idx, span, 1 + nxt.nWords };
+                        }
+                    }
+                    d[i] = best;
+                }
+                return d;
+            };
+            // 沿已算好的 DP 回溯成词，O(词数)，不重复计算
+            auto reconstruct = [&](const std::vector<Node>& d, int end, int from) {
+                std::wstring s;
+                int i = from;
+                while (i < end)
+                {
+                    const Node& nd = d[i];
+                    if (!nd.valid || nd.firstIdx < 0) break;
+                    s += _entries[nd.firstIdx].word;
+                    i += nd.firstSpan;
+                }
+                return s;
+            };
+
+            std::vector<Node> dp = computeDp(n);
+
+            // 1) 整句最优链（覆盖全部 units）。纯声母简拼只接受"一个整词覆盖全部"，
+            // 不做逐字声母硬拼（重码率极高，且 xyzxyz 之类应判为英文）。
+            if (dp[0].valid && dp[0].firstIdx >= 0 &&
+                !(allInit && dp[0].nWords != 1))
+                add(reconstruct(dp, n, 0), dp[0].cost, n, dp[0].nWords);
+
+            // 2) 首词不同的整句变体（用于给出同拼音的其他整词）
+            for (int span = 1; span <= 4 && span <= n; span++)
+            {
+                const std::vector<WordMatch>& ws = getMatches(0, span);
+                int added = 0;
+                for (const auto& w : ws)
+                {
+                    if (added >= 3) break;
+                    if (w.idx == dp[0].firstIdx && span == dp[0].firstSpan) continue;
+                    if (span < n && !dp[span].valid) continue;
+                    std::wstring s = _entries[w.idx].word;
+                    double c = WordCost(w.idx) + w.penalty + kWordCountCost;
+                    int nwords = 1;
+                    if (span < n)
+                    {
+                        s += reconstruct(dp, n, span);
+                        c += dp[span].cost;
+                        nwords += dp[span].nWords;
+                    }
+                    if (allInit && nwords != 1) continue; // 纯简拼只给整词，不拼尾巴
+                    add(s, c, n, nwords);
+                    added++;
+                }
+            }
+
+            // 3) 单词 / 短语（从位置 0 起，覆盖前若干单元；未覆盖计罚分）。
+            // 纯简拼只保留覆盖全部或只差 1 个声母的前缀词（如 d→的、dh→电话）。
+            for (int span = 1; span <= 4 && span <= n; span++)
+            {
+                if (allInit && n - span > 1) continue;
+                const std::vector<WordMatch>& ws = getMatches(0, span);
+                int added = 0;
+                for (const auto& w : ws)
+                {
+                    if (added >= 4) break;
+                    double uncovered = (double)(n - span) * 8.0;
+                    double c = WordCost(w.idx) + w.penalty + kWordCountCost + uncovered;
+                    add(_entries[w.idx].word, c, span, 1);
+                    added++;
+                }
+            }
+
+            // 4) 末尾残段单字（头部 DP 只覆盖到 n-1，残段单独走前缀单字）
+            if (trailingPartial && n >= 1)
+            {
+                std::string prefix = units.back().text;
+                int hEnd = n - 1;
+                // 头部是否纯声母简拼（如 xyzxy + 残段 z）
+                bool prefixAllInit = true;
+                for (int k = 0; k < hEnd; k++)
+                    if (units[k].kind != SyllUnit::INITIAL) { prefixAllInit = false; break; }
+                std::wstring head;
+                double headCost = 0.0;
+                int headWords = 0;
+                bool headOk = true;
+                if (hEnd > 0)
+                {
+                    std::vector<Node> hdp = computeDp(hEnd);
+                    if (hdp[0].valid)
+                    {
+                        head = reconstruct(hdp, hEnd, 0);
+                        headCost = hdp[0].cost;
+                        headWords = hdp[0].nWords;
+                    }
+                    // 纯声母简拼头部（≥2 个声母）：必须由一个整词覆盖，
+                    // 否则属逐字硬拼（xyzxyz 这类），整体不输出。
+                    if (prefixAllInit && hEnd >= 2 &&
+                        !(hdp[0].valid && hdp[0].nWords == 1))
+                        headOk = false;
+                }
+                if (headOk)
+                {
+                    std::vector<int> chars = MatchCharsByPrefix(prefix);
+                    int added = 0;
+                    for (int ci : chars)
+                    {
+                        if (added >= 6) break;
+                        double c = headCost + WordCost(ci) + 2.0 + kWordCountCost;
+                        add(head + _entries[ci].word, c, n, headWords + 1);
+                        added++;
+                    }
+                }
+            }
+        }
+
+        // 分层排序：① 切分路径自然度（tier）→ ② 完整覆盖优先（未覆盖单元少）
+        // → ③ 整词/长词优先（词数少）→ ④ 词频高（cost 低）。
+        // 既保证完整拼音匹配的整词压过单字，又让最优切分的单字备选压过碎路径怪词。
+        std::stable_sort(all.begin(), all.end(),
+                         [](const Candidate& a, const Candidate& b)
+                         {
+                             if (a.tier != b.tier) return a.tier < b.tier;
+                             int ua = a.units - a.covered, ub = b.units - b.covered;
+                             if (ua != ub) return ua < ub;
+                             if (a.words != b.words) return a.words < b.words;
+                             return a.cost < b.cost;
+                         });
+        return all;
+    }
+
+    // -----------------------------------------------------------------------
+    // 工具
+    // -----------------------------------------------------------------------
+    static std::string Concat(const std::vector<std::string>& v)
+    {
+        std::string s;
+        for (const auto& x : v) s += x;
+        return s;
+    }
+    static std::string InitialsOf(const std::vector<std::string>& v)
+    {
+        std::string s;
+        for (const auto& x : v) if (!x.empty()) s.push_back(x[0]);
+        return s;
+    }
+    static std::vector<std::string> Split(const std::string& s, char sep)
+    {
+        std::vector<std::string> out;
+        size_t pos = 0;
+        while (pos <= s.size())
+        {
+            size_t f = s.find(sep, pos);
+            if (f == std::string::npos) { out.push_back(s.substr(pos)); break; }
+            out.push_back(s.substr(pos, f - pos));
+            pos = f + 1;
+        }
+        return out;
+    }
+    static char Lower(char c) { return c >= 'A' && c <= 'Z' ? char(c + 32) : c; }
+
+    static std::string ExeDir()
+    {
+        char buf[MAX_PATH] = {};
+        GetModuleFileNameA(nullptr, buf, MAX_PATH);
+        std::string p = buf;
+        size_t slash = p.find_last_of("\\/");
+        return slash == std::string::npos ? std::string() : p.substr(0, slash);
+    }
+    static std::string ReadAll(const std::string& path)
+    {
+        HANDLE h = CreateFileA(path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE) return {};
+        DWORD size = GetFileSize(h, NULL);
+        std::string s(size, '\0');
+        DWORD read = 0;
+        ReadFile(h, s.data(), size, &read, NULL);
+        CloseHandle(h);
+        s.resize(read);
+        return s;
+    }
+
+    static std::string ToUtf8(const std::wstring& w)
+    {
+        if (w.empty()) return {};
+        int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), NULL, 0, NULL, NULL);
+        std::string s(n, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), s.data(), n, NULL, NULL);
+        return s;
+    }
+    static std::wstring FromUtf8(const std::string& s)
+    {
+        if (s.empty()) return {};
+        int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), NULL, 0);
+        std::wstring w(n, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), w.data(), n);
+        return w;
+    }
 };
 
 } // namespace
 
 IPredictor* CreatePinyinPredictor()
 {
-    return new PinyinEngine();
+    return new PinyinPredictor();
 }
 
 } // namespace lingxi

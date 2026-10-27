@@ -70,6 +70,7 @@ static int ProbePinyin()
 
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
 {
+    lingxi::InitLogging(); // 按 LINGXI_LOG 环境变量开启热路径诊断日志
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
     if (argv && argc >= 2 && wcscmp(argv[1], L"--probe-llm") == 0)

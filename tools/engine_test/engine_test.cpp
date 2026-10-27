@@ -74,19 +74,27 @@ struct LatencyStats
 // 最大值取单次差分（受计时粒度限制，仅作参考）。
 static LatencyStats MeasureLatency(lingxi::IPredictor* p, const std::wstring& ctx, int runs)
 {
+    // 使用 QPC 高精度计时（GetTickCount64 精度约 15.6ms，无法测毫秒级）。
     LatencyStats st;
+    LARGE_INTEGER freq;
+    QueryPerformanceFrequency(&freq);
+    auto qpc = [&]() -> LONGLONG {
+        LARGE_INTEGER c;
+        QueryPerformanceCounter(&c);
+        return c.QuadPart;
+    };
     p->Predict(ctx); // 预热（首调走冷路径）
-    ULONGLONG t0 = GetTickCount64();
-    ULONGLONG maxDelta = 0;
+    LONGLONG t0 = qpc();
+    double maxMs = 0.0;
     for (int i = 0; i < runs; i++)
     {
-        ULONGLONG c0 = GetTickCount64();
+        LONGLONG c0 = qpc();
         p->Predict(ctx);
-        ULONGLONG d = GetTickCount64() - c0;
-        if (d > maxDelta) maxDelta = d;
+        double ms = (double)(qpc() - c0) * 1000.0 / (double)freq.QuadPart;
+        if (ms > maxMs) maxMs = ms;
     }
-    st.avgMs = (double)(GetTickCount64() - t0) / (double)runs;
-    st.maxMs = (double)maxDelta;
+    st.avgMs = (double)(qpc() - t0) * 1000.0 / (double)freq.QuadPart / (double)runs;
+    st.maxMs = maxMs;
     return st;
 }
 
