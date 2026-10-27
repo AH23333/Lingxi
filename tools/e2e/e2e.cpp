@@ -173,8 +173,13 @@ public:
     STDMETHODIMP AdviseSink(REFIID riid, IUnknown* punk, DWORD) override
     {
         if (!IsEqualIID(riid, IID_ITextStoreACPSink)) return E_INVALIDARG;
+        // 先 QI 到临时变量，成功才替换：QI 失败时不得悬挂指向已 Release 旧对象
+        ITextStoreACPSink* fresh = nullptr;
+        HRESULT hr = punk->QueryInterface(IID_ITextStoreACPSink, (void**)&fresh);
+        if (FAILED(hr)) return hr;
         if (_sink) _sink->Release();
-        return punk->QueryInterface(IID_ITextStoreACPSink, (void**)&_sink);
+        _sink = fresh;
+        return S_OK;
     }
     STDMETHODIMP UnadviseSink(IUnknown* punk) override
     {
@@ -246,7 +251,11 @@ public:
     }
     STDMETHODIMP SetText(DWORD, LONG acpStart, LONG acpEnd, const WCHAR* pchText, ULONG cch, TS_TEXTCHANGE* pChange) override
     {
+        // TSF 契约：越界位置返回 TS_E_INVALIDPOS，不得让 substr 抛异常穿透 COM 边界
+        if (acpStart < 0 || acpEnd < acpStart || acpStart > (LONG)_buf.size())
+            return TS_E_INVALIDPOS;
         if (acpEnd == -1) acpEnd = (LONG)_buf.size();
+        if (acpEnd > (LONG)_buf.size()) acpEnd = (LONG)_buf.size();
         _buf = _buf.substr(0, acpStart) + std::wstring(pchText, cch) + _buf.substr(acpEnd);
         if (pChange) { pChange->acpStart = acpStart; pChange->acpOldEnd = acpEnd; pChange->acpNewEnd = acpStart + (LONG)cch; }
         _sel.acpStart = _sel.acpEnd = acpStart + (LONG)cch;

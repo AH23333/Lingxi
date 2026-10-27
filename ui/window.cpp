@@ -70,7 +70,10 @@ void CandWindow::Shutdown()
     if (_font) { DeleteObject(_font); _font = nullptr; }
     if (_toastFont) { DeleteObject(_toastFont); _toastFont = nullptr; }
     if (_smallFont) { DeleteObject(_smallFont); _smallFont = nullptr; }
-    if (_csInit) { DeleteCriticalSection(&_cs); _csInit = false; }
+    // 刻意不 DeleteCriticalSection：PredictProc/client 线程可能仍在
+    // Show/Hide/EnterCriticalSection（Stop 有 2s 超时上限），进程随即退出，
+    // 此处删锁会让存活线程踩已删 CS —— 退出竞态崩溃（审计 P1）。泄漏无害。
+    _csInit = false;
 }
 
 // 按字号（DPI 缩放）重建三支字体；先删旧字体，避免 GDI 泄漏
