@@ -110,8 +110,9 @@
 - **症状A**：切语言后立刻打拼音，`StartComposition` 内 textinputframework.dll 读 `-1` 指针 AV
 - **症状B**：churn 后 CTF 可能弃用旧 TSF sink 而不通知合成 store；陈旧 sink 的 vtable 指向已释放内存 → 下次授锁时 **DEP（执行堆地址）**
 - **对策（产品侧）**：`HandlePinyinKeySEH` 全程 SEH 包裹组合键处理；异常时 `AbortCompositionState`（不 Release 可疑对象，只断开跟踪）并降级回直通。**TIP 的第一铁律：任何框架异常不能带崩宿主**
-- **对策（测试宿主侧）**：e2e 的 `TestStore::RequestLock` 同样 SEH 包裹（产品应用按契约自管 sink 生命周期，无此问题）
-- **未解项**：合成宿主在语言 churn 后拼音组合无法完整走通（字母能进组合但会被遏制降级）；拼音转换逻辑由 engine_test 9/9 背书，真实宿主表现待 Win+Space 手工验证
+- **对策（测试宿主侧）**：e2e/deep_test 的 `TestStore::RequestLock` 同样 SEH 包裹（产品应用按契约自管 sink 生命周期，无此问题）
+- **症状C（对照实验铁证，deep_test）**：同一合成宿主内切到**微软拼音**打字 → 同样只落一个字母、同样触发框架 AV（被遏制）；多轮 churn 后框架自身 fail-fast（0xC0000409，不可捕获）
+- **结论**：组合编辑在合成宿主（简化 ITextStoreACP + CUAS 路径）内对**所有输入法**（含系统输入法）都损坏——宿主限制，非灵犀 bug；灵犀与 MS 拼音行为等价是能拿到的最强验证。组合类断言只做 SMOKE 观察不计分（deep_test/e2e 同策略）
 
 ### 20. e2e 每 attempt 删日志文件 → DLL 句柄写已删除文件
 - **症状**：多 attempt 运行后日志里 DLL 行与 LingxiUI 行代际混杂、部分丢失
