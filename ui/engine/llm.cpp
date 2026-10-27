@@ -96,6 +96,7 @@ struct LlamaApi
     void (*log_set)(ggml_log_callback, void*) = nullptr;
     llama_memory_t (*get_memory)(const llama_context*) = nullptr;
     bool (*memory_seq_rm)(llama_memory_t, llama_seq_id, llama_pos, llama_pos) = nullptr;
+    void (*memory_clear)(llama_memory_t, bool) = nullptr;
 
     bool ok = false;
 
@@ -145,6 +146,7 @@ struct LlamaApi
             { "llama_log_set",               (void**)&log_set,             false },
             { "llama_get_memory",            (void**)&get_memory,          false },
             { "llama_memory_seq_rm",         (void**)&memory_seq_rm,       false },
+            { "llama_memory_clear",          (void**)&memory_clear,        false },
         };
         for (auto& b : binds)
         {
@@ -237,7 +239,7 @@ private:
         _vocab = _api.model_get_vocab(_model);
 
         llama_context_params cp = _api.context_default_params();
-        cp.n_ctx = 512;
+        cp.n_ctx = 1024; // 重排 prompt ≤300 + 生成；KV 增量复用，约 +6 MiB
         cp.n_batch = 256;
         SYSTEM_INFO si{};
         GetSystemInfo(&si);
@@ -289,18 +291,37 @@ private:
         //   4) prompt 完全相同 → 缩 1 个 token 重算末位 logits。
         // 数学上与全量重评估等价（greedy 输出不变），代价从全量 prefill 降到 delta。
         // 任意一步不对劲 → 回退全量（_hasPrev=false + 清 cache）。
+        // KV 不可信时彻底清空并回退全量重评估（common=0）
+        auto ResetKv = [&](llama_memory_t mem) {
+            _hasPrev = false;
+            if (mem && _api.memory_clear) _api.memory_clear(mem, true);
+            else if (mem && _api.memory_seq_rm) _api.memory_seq_rm(mem, 0, 0, -1);
+        };
+
         size_t common = 0;
         bool kvUsable = _api.get_memory && _api.memory_seq_rm;
         if (_hasPrev && kvUsable)
         {
             llama_memory_t mem = _api.get_memory(_ctx);
-            _api.memory_seq_rm(mem, 0, (llama_pos)_prevPrompt.size(), -1); // 弃生成尾部
-            while (common < _prevPrompt.size() && common < (size_t)n &&
-                   _prevPrompt[common] == tokens[common])
-                common++;
-            if (common == (size_t)n && n > 0) common = n - 1; // 完全相同 → 重算末位
-            if (common < _prevPrompt.size())
-                _api.memory_seq_rm(mem, 0, (llama_pos)common, -1); // 截分叉
+            // 1) 弃掉上次生成尾部；seq_rm 返回 false=部分删除失败 → KV 不可信
+            if (!_api.memory_seq_rm(mem, 0, (llama_pos)_prevPrompt.size(), -1))
+            {
+                ResetKv(mem);
+            }
+            else
+            {
+                while (common < _prevPrompt.size() && common < (size_t)n &&
+                       _prevPrompt[common] == tokens[common])
+                    common++;
+                if (common == (size_t)n && n > 0) common = n - 1; // 完全相同 → 重算末位
+                // 2) 截分叉；失败 → 全量重评估
+                if (common < _prevPrompt.size() &&
+                    !_api.memory_seq_rm(mem, 0, (llama_pos)common, -1))
+                {
+                    ResetKv(mem);
+                    common = 0;
+                }
+            }
         }
         else if (kvUsable)
         {
@@ -314,12 +335,19 @@ private:
                                 : _api.batch_get_one(tokens.data() + n - 1, 1);
         for (int step = 0; step < kMaxGenTokens; step++)
         {
-            if (_api.decode(_ctx, batch) != 0)
+            int rcDecode = _api.decode(_ctx, batch);
+            if (rcDecode != 0)
             {
-                // decode 失败：KV 状态不可信，下次全量重评估
+                // decode 失败（1=KV 槽不足，<0/2=其他错误）：KV 状态不可信，
+                // 彻底清空并标记下次全量重评估
+                LX_LOG(L"llm", L"decode 返回 %d，清空 KV", rcDecode);
+                if (_api.get_memory)
+                {
+                    llama_memory_t mem = _api.get_memory(_ctx);
+                    if (_api.memory_clear) _api.memory_clear(mem, true);
+                    else if (_api.memory_seq_rm) _api.memory_seq_rm(mem, 0, 0, -1);
+                }
                 _hasPrev = false;
-                if (_api.get_memory && _api.memory_seq_rm)
-                    _api.memory_seq_rm(_api.get_memory(_ctx), 0, 0, -1);
                 break;
             }
             float* logits = _api.get_logits_ith(_ctx, -1);
