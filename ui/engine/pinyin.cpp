@@ -19,6 +19,7 @@
 #include <cmath>
 #include <cstdint>
 #include <deque>
+#include <mutex>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -119,10 +120,15 @@ public:
         // 自学习置顶：用户在该拼音串下选过的词，按选择次数降序提到最前
         // （即使常规候选未生成，也补入，保证用户偏好可重现）；其余候选保序。
         std::string key = NormKey(raw);
-        auto uit = _userDict.find(key);
-        if (uit != _userDict.end() && !uit->second.empty())
+        // 仅在锁内做查找+拷出（微秒级）；排序与重排留在锁外，不占热路径预算。
+        std::vector<UserPick> ups;
         {
-            std::vector<UserPick> ups = uit->second;
+            std::lock_guard<std::mutex> lk(_udMtx);
+            auto uit = _userDict.find(key);
+            if (uit != _userDict.end()) ups = uit->second;
+        }
+        if (!ups.empty())
+        {
             std::stable_sort(ups.begin(), ups.end(),
                              [](const UserPick& a, const UserPick& b) {
                                  if (a.count != b.count) return a.count > b.count;
@@ -181,9 +187,12 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> _fuzzyOf;
 
     // 自学习用户词典：规范化拼音串 → 用户选过的词（按次数）。
+    // 三方并发访问：管道预测线程（Predict 读）、管道读线程（Learn 写）、
+    // UI 线程（设置界面清空/导入后 ReloadUserDict 重载）——全部经 _udMtx 串行化。
     struct UserPick { std::wstring word; int count; };
     std::unordered_map<std::string, std::vector<UserPick>> _userDict;
     bool _userDirty = false;
+    mutable std::mutex _udMtx;
 
     // -----------------------------------------------------------------------
     // 加载
@@ -504,6 +513,7 @@ private:
 
     void LoadUserDict()
     {
+        std::lock_guard<std::mutex> lk(_udMtx);
         _userDict.clear();
         std::string raw = ReadAll(UserDictPath());
         if (raw.empty()) return;
@@ -524,9 +534,34 @@ private:
         LX_LOG(L"py", L"用户词典加载: %zu 个拼音键", _userDict.size());
     }
 
-    void SaveUserDict()
+    // 原子落盘：先写 .tmp 再 MoveFileEx 替换。引擎（管道线程）与设置界面
+    // （UI 线程）是同一文件的两个写者，任何一方都不允许让对方读到半截文件。
+    static bool WriteFileAtomicA(const std::string& path, const std::string& content)
     {
-        if (!_userDirty) return;
+        std::string tmp = path + ".tmp";
+        HANDLE h = CreateFileA(tmp.c_str(), GENERIC_WRITE, 0, NULL,
+                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        DWORD written = 0;
+        BOOL ok = WriteFile(h, content.data(), (DWORD)content.size(), &written, NULL);
+        CloseHandle(h);
+        if (!ok || written != (DWORD)content.size())
+        {
+            DeleteFileA(tmp.c_str());
+            return false;
+        }
+        if (!MoveFileExA(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
+        {
+            DeleteFileA(tmp.c_str());
+            return false;
+        }
+        return true;
+    }
+
+    // 落盘（调用方必须已持有 _udMtx）。失败保持 _userDirty，下次学习时重试。
+    bool SaveUserDictLocked()
+    {
+        if (!_userDirty) return true;
         std::string content;
         for (const auto& kv : _userDict)
             for (const auto& up : kv.second)
@@ -538,14 +573,15 @@ private:
                 content += std::to_string(up.count);
                 content.push_back('\n');
             }
-        std::string path = UserDictPath();
-        HANDLE h = CreateFileA(path.c_str(), GENERIC_WRITE, 0, NULL,
-                               CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-        if (h == INVALID_HANDLE_VALUE) { _userDirty = true; return; }
-        DWORD written = 0;
-        WriteFile(h, content.data(), (DWORD)content.size(), &written, NULL);
-        CloseHandle(h);
+        if (!WriteFileAtomicA(UserDictPath(), content)) return false;
         _userDirty = false;
+        return true;
+    }
+
+    void SaveUserDict()
+    {
+        std::lock_guard<std::mutex> lk(_udMtx);
+        SaveUserDictLocked();
     }
 
     // 用户选择反馈：该拼音串下，被选词计数 +1，落盘后下次同串置顶。
@@ -554,13 +590,20 @@ private:
         if (rawPinyin.empty() || word.empty()) return;
         std::string key = NormKey(ToUtf8(rawPinyin));
         if (key.empty()) return;
-        auto& vec = _userDict[key];
-        for (auto& up : vec)
-            if (up.word == word) { up.count++; _userDirty = true; SaveUserDict(); return; }
-        if (vec.size() >= 8) vec.pop_back(); // 每键最多 8 个偏好，控制体积
-        vec.push_back({ word, 1 });
-        _userDirty = true;
-        SaveUserDict();
+        {
+            std::lock_guard<std::mutex> lk(_udMtx);
+            auto& vec = _userDict[key];
+            bool found = false;
+            for (auto& up : vec)
+                if (up.word == word) { up.count++; found = true; break; }
+            if (!found)
+            {
+                if (vec.size() >= 8) vec.pop_back(); // 每键最多 8 个偏好，控制体积
+                vec.push_back({ word, 1 });
+            }
+            _userDirty = true;
+            SaveUserDictLocked();
+        }
         LX_LOG(L"py", L"学习: '%hs' -> '%hs'", key.c_str(), ToUtf8(word).c_str());
     }
 

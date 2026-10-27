@@ -81,13 +81,27 @@ bool ReadFileBytes(const std::wstring& path, std::string& out)
 
 bool WriteFileBytes(const std::wstring& path, const std::string& data)
 {
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL,
+    // 原子写：先写 .tmp 再 MoveFileEx 替换。引擎（管道线程自学习落盘）与本
+    // 窗口（UI 线程清空/导入）是同一文件的两个写者，直写 CREATE_ALWAYS 撞车
+    // 会产生截断/半截文件；替换式写入保证读者永远看到完整内容。
+    std::wstring tmp = path + L".tmp";
+    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, NULL,
                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) return false;
     DWORD put = 0;
     BOOL ok = WriteFile(h, data.data(), (DWORD)data.size(), &put, NULL);
     CloseHandle(h);
-    return ok != FALSE && put == data.size();
+    if (!ok || put != (DWORD)data.size())
+    {
+        DeleteFileW(tmp.c_str());
+        return false;
+    }
+    if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
+    {
+        DeleteFileW(tmp.c_str());
+        return false;
+    }
+    return true;
 }
 
 struct UdEntry { std::wstring word; std::wstring key; int count; };
@@ -236,7 +250,13 @@ void RefreshUdList()
 // 写回条目并让引擎立即重新加载。
 void PersistUdEntries(const std::vector<UdEntry>& entries)
 {
-    WriteFileBytes(UserDictPathW(), SerializeUserDict(entries));
+    if (!WriteFileBytes(UserDictPathW(), SerializeUserDict(entries)))
+    {
+        // 静默丢数据比失败更糟：明示用户（文件被占用/无权限）。
+        MessageBoxW(g_hUserDict, L"用户词典写入失败（文件被占用或无权限），修改未保存。",
+                    L"灵犀输入法", MB_OK | MB_ICONWARNING);
+        return;
+    }
     if (g_reloadUserDict) g_reloadUserDict();
 }
 
