@@ -667,7 +667,8 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         }
         wchar_t ch0 = (wchar_t)((wParam >= L'A' && wParam <= L'Z') ? (wParam + 32) : wParam);
         // 小写 v（无 Shift/Caps）进入 v 模式：v 本身不上屏，后续字母直通英文
-        if (ch0 == L'v' && !shiftOrCaps)
+        // （设置关闭 v 模式时，v 作为普通字母走拼音）
+        if (ch0 == L'v' && !shiftOrCaps && LoadSettings().vMode)
         {
             _vMode = true;
             *pfEaten = TRUE;

@@ -17,6 +17,8 @@ struct Settings
     bool paused = false;          // 暂停预测：完全直通，不出任何候选（临时需要时用）
     bool cnPunct = true;          // 中文标点：中文模式下 . , / ; 等映射为全角标点
     bool fuzzyPinyin = true;      // 模糊音：z/zh、c/ch、s/sh、n/l、前/后鼻音互通（精确优先）
+    bool shiftToggle = true;      // 无拼音时单击 Shift 切换中/英文
+    bool vMode = true;            // v 模式：中文下首字母 v 直通英文
 };
 
 Settings LoadSettings();

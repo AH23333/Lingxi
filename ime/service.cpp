@@ -4,6 +4,7 @@
 #include "../common/proto.h"
 #include "../common/guids.h"
 #include "../common/log.h"
+#include "../common/settings.h"
 
 extern LONG g_cComponents;
 
@@ -663,7 +664,8 @@ STDMETHODIMP CTextService::OnKeyUp(ITfContext*, WPARAM wParam, LPARAM, BOOL* pfE
     // Shift 单击（未与其他键组合、按下前后均无拼音活动）：在中文/临时英文间切换
     if (wParam == VK_SHIFT && _shiftDown)
     {
-        if (!_shiftUsed && !_shiftWasActive && !PinyinActive() && _pinyinMode)
+        if (!_shiftUsed && !_shiftWasActive && !PinyinActive() && _pinyinMode &&
+            LoadSettings().shiftToggle)
         {
             _tempEnglish = !_tempEnglish;
             LX_LOG(L"key", L"Shift toggle -> tempEnglish=%d", (int)_tempEnglish);
