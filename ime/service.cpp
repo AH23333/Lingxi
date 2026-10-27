@@ -285,6 +285,9 @@ STDMETHODIMP CTextService::OnEndEdit(ITfContext* pContext, TfEditCookie ecReadOn
     // 用时间戳兜底，避免上屏后误弹上下文预测。
     if (_lastSelfInsertTick != 0 && GetTickCount64() - _lastSelfInsertTick < 400)
         return S_OK;
+    // 用户刚退格删除：删除过程中不弹上下文补全（中文输入法删除时不应弹候选）。
+    if (_lastBackspaceTick != 0 && GetTickCount64() - _lastBackspaceTick < 500)
+        return S_OK;
     if (!_fActivated)
         return S_OK;
     if (_pComposition)
@@ -417,6 +420,15 @@ void CTextService::InsertCandidate(uint32_t index)
         }
         text = _cands[index];
         LeaveCriticalSection(&_cs);
+    }
+
+    // 拼音输入中（点选候选 / 数字键 / 空格经 PICK 到达）：统一走拼音提交，
+    // 由其正确清空内存拼音串并结束拼音状态，避免上屏后 PinyinActive 残留。
+    if (PinyinActive())
+    {
+        LX_LOG(L"ime", L"上屏候选[%u] chars=%u", index, (uint32_t)text.size());
+        PinyinCommitHanzi(text);
+        return;
     }
 
     LX_LOG(L"ime", L"上屏候选[%u] chars=%u", index, (uint32_t)text.size());

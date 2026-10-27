@@ -559,6 +559,8 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
     {
         if (!IsLetterKey(wParam))
         {
+            if (wParam == VK_BACK)
+                _lastBackspaceTick = GetTickCount64(); // 退格删除：抑制随之而来的补全预测
             *pfEaten = FALSE;
             return;
         }

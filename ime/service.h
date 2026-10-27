@@ -139,6 +139,8 @@ private:
     // 自插入编辑会话在 Chromium 上常异步执行，其 OnEndEdit 晚于 _fSelfInsert 复位，
     // 用时间戳兜底抑制这一滞后回调，避免上屏后又误弹上下文预测。
     ULONGLONG _lastSelfInsertTick = 0;
+    // 最近一次退格放行时间：用户在删除文本而非请求补全，短期内抑制 OnEndEdit 预测。
+    ULONGLONG _lastBackspaceTick = 0;
 
     // 候选缓存（_cs 保护；读线程写、UI 线程读写）
     CRITICAL_SECTION _cs{};
