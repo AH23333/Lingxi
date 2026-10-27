@@ -71,7 +71,7 @@ def apply_overlay(base_lines):
     return merged
 
 
-def build_from_jieba(cap=80000):
+def build_from_jieba(cap=300000):
     """完整重建：jieba 词频排序 + pypinyin 转拼音，再叠加口语覆盖层。"""
     from pypinyin import lazy_pinyin, Style
 
@@ -120,10 +120,15 @@ def main():
     if "--overlay-only" in sys.argv:
         overlay_only()
         return
-    base_lines = build_from_jieba()
+    cap = 300000
+    for i, a in enumerate(sys.argv):
+        if a == "--cap" and i + 1 < len(sys.argv):
+            cap = int(sys.argv[i + 1])
+    base_lines = build_from_jieba(cap)
     merged = apply_overlay(base_lines)
     write_lines(merged)
-    print("zh_pinyin.txt: %d entries (jieba + spoken overlay)" % len(merged))
+    print("zh_pinyin.txt: %d entries (jieba cap=%d + spoken overlay)"
+          % (len(merged), cap))
 
 
 if __name__ == "__main__":

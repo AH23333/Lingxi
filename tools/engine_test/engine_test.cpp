@@ -15,6 +15,7 @@
 #include "../../common/punct.h"
 
 #include <windows.h>
+#include <psapi.h>
 #include <cstdio>
 #include <string>
 
@@ -172,6 +173,12 @@ int wmain()
         lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
         ULONGLONG loadMs = GetTickCount64() - t0;
         wprintf(L"[INFO] pinyin dict load: %llu ms\n", loadMs);
+        {
+            PROCESS_MEMORY_COUNTERS pmc{};
+            if (GetProcessMemoryInfo(GetCurrentProcess(), &pmc, sizeof(pmc)))
+                wprintf(L"[INFO] pinyin engine working set: %u KB\n",
+                        (unsigned)(pmc.WorkingSetSize / 1024));
+        }
         if (!py)
         {
             Report(false, "CreatePinyinPredictor");

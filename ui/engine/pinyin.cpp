@@ -18,6 +18,7 @@
 #include <array>
 #include <cmath>
 #include <cstdint>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -52,10 +53,8 @@ struct SegPath
 struct PyEntry
 {
     std::wstring word;
-    std::vector<std::string> sylls;
+    std::vector<const std::string*> sylls; // 指向音节池中的规范音节
     int rank = 0;
-    std::string compact;  // 完整音节紧凑串
-    std::string initials; // 各音节首字母串
 };
 
 struct Candidate
@@ -149,12 +148,25 @@ private:
     std::vector<PyEntry> _entries;
     std::unordered_set<std::string> _syllables;
 
-    // 紧凑串（全 FULL）→ 词
+    // 音节字符串池：entries 中重复出现的音节（如"jin"）只存一份，sylls 持指针。
+    // deque 保证元素地址稳定（插入不移动已有元素），配合 map 去重。
+    std::deque<std::string> _syllPool;
+    std::unordered_map<std::string, const std::string*> _syllIntern;
+    const std::string* InternSyll(const std::string& s)
+    {
+        auto it = _syllIntern.find(s);
+        if (it != _syllIntern.end()) return it->second;
+        _syllPool.push_back(s);
+        const std::string* p = &_syllPool.back();
+        _syllIntern.emplace(s, p);
+        return p;
+    }
+
+    // 全拼紧凑键（无分隔，如 "jintian"）→ 词：所有词，全拼查询 O(1) 命中。
     std::unordered_map<std::string, std::vector<int>> _byCompact;
-    // 首字母串（全 INITIAL）→ 词
-    std::unordered_map<std::string, std::vector<int>> _byInitials;
-    // 全拼/简拼模式键 → 词（O(1) 精确匹配，覆盖全 FULL、全 INITIAL 及任意混合；
-    // 键含每音节段，天然区分音节数，xian 与 xi-an 不撞键）。
+    // 简拼/混合模式键（至少含一个首字母段，如 "-j|-t"、"=jin|-t"）→ 词。
+    // 高频词（rank<kFullPatternRank）预生成全部 2^n-1 个非全拼模式；长尾词仅建
+    // 全简拼键（长尾几乎只走全拼），控制大词库下的索引体积。
     std::unordered_map<std::string, std::vector<int>> _byPattern;
     // 首音节 → 音节数(1..10) → 词（混合/残段过滤）
     std::unordered_map<std::string, std::vector<std::vector<int>>> _byFirstSyll;
@@ -199,9 +211,8 @@ private:
             PyEntry e;
             e.word = word;
             e.rank = (int)_entries.size();
-            e.sylls = sylls;
-            e.compact = Concat(sylls);
-            e.initials = InitialsOf(sylls);
+            e.sylls.reserve(sylls.size());
+            for (const auto& s : sylls) e.sylls.push_back(InternSyll(s));
             _entries.push_back(std::move(e));
         }
 
@@ -213,51 +224,69 @@ private:
 
     void BuildIndexes()
     {
+        // 预留容量，避免逐词插入时反复 rehash（降低内存峰值与加载时间）。
+        size_t M = _entries.size();
+        _byCompact.reserve(M + 64);
+        _byPattern.reserve(M * 3 / 4 + 64);
+        _byFirstSyll.reserve(512);
+        _byFirstInit.reserve(64);
+        _syllIntern.reserve(512);
+
         for (int i = 0; i < (int)_entries.size(); i++)
         {
             const PyEntry& e = _entries[i];
             if (e.sylls.empty()) continue;
             int n = (int)e.sylls.size();
 
-            _byCompact[e.compact].push_back(i);
-            if (n <= 10) _byInitials[e.initials].push_back(i);
+            // 全拼紧凑键（无分隔，如 "jintian"）：所有词都建，全拼 O(1) 命中。
+            std::string compact;
+            for (const std::string* ps : e.sylls) compact += *ps;
+            _byCompact[compact].push_back(i);
 
-            // 全拼/简拼模式组合：每音节取 FULL(=syll) 或 INITIAL(-首字母)，
-            // 共 2^n 个模式键，供任意混合拼音 O(1) 命中。n<=6 组合数有界。
+            // 按 mask 构造混合模式键：bit=1 取全拼(=syll)，bit=0 取首字母(-init)。
+            auto makePatternKey = [&](int mask) {
+                std::string key;
+                key.reserve(compact.size() + (size_t)n * 2);
+                for (int k = 0; k < n; k++)
+                {
+                    if (k) key.push_back('|');
+                    const std::string& sy = *e.sylls[k];
+                    if (mask & (1 << k)) { key.push_back('='); key += sy; }
+                    else { key.push_back('-'); key.push_back(sy[0]); }
+                }
+                return key;
+            };
+
+            // 简拼/混合模式（仅 n<=6，2^n 有界）：
+            //   高频词：除全拼外的全部 2^n-1 个混合模式（含全简拼 mask=0）；
+            //   长尾词：仅全简拼键（长尾几乎只走全拼，混合简拼需求极低）。
             if (n >= 1 && n <= 6)
             {
-                int combos = 1 << n;
-                for (int mask = 0; mask < combos; mask++)
+                if (i < kFullPatternRank)
                 {
-                    std::string key;
-                    key.reserve(e.compact.size() + (size_t)n * 2);
-                    for (int k = 0; k < n; k++)
-                    {
-                        if (k) key.push_back('|');
-                        const std::string& sy = e.sylls[k];
-                        if (sy.empty()) continue;
-                        if (mask & (1 << k)) { key.push_back('='); key += sy; }
-                        else { key.push_back('-'); key.push_back(sy[0]); }
-                    }
-                    _byPattern[key].push_back(i);
+                    for (int mask = 0; mask < (1 << n) - 1; mask++)
+                        _byPattern[makePatternKey(mask)].push_back(i);
+                }
+                else
+                {
+                    _byPattern[makePatternKey(0)].push_back(i);
                 }
             }
 
             // 单字
             if (e.word.size() == 1 && n == 1)
-                _charBySyll[e.sylls[0]].push_back(i);
+                _charBySyll[*e.sylls[0]].push_back(i);
 
             if (n >= 1 && n <= 10)
             {
-                EnsureSyllBucket(_byFirstSyll[e.sylls[0]], n).push_back(i);
-                std::string init(1, e.sylls[0][0]);
+                EnsureSyllBucket(_byFirstSyll[*e.sylls[0]], n).push_back(i);
+                std::string init(1, (*e.sylls[0])[0]);
                 EnsureSyllBucket(_byFirstInit[init], n).push_back(i);
             }
         }
 
         // 同键词按 rank 升序（加载即按词频序，保持稳定）
         for (auto& kv : _byCompact) StableSortIdx(kv.second);
-        for (auto& kv : _byInitials) StableSortIdx(kv.second);
         for (auto& kv : _byPattern) StableSortIdx(kv.second);
         for (auto& kv : _charBySyll) StableSortIdx(kv.second);
     }
@@ -277,8 +306,8 @@ private:
     void BuildSyllableSet()
     {
         for (const auto& e : _entries)
-            for (const auto& s : e.sylls)
-                if (s.size() <= 6) _syllables.insert(s);
+            for (const std::string* s : e.sylls)
+                if (s->size() <= 6) _syllables.insert(*s);
         static const char* kExtra[] = {
             "a","ai","an","ang","ao","ba","bai","ban","bang","bao","bei","ben","beng","bi",
             "bian","biao","bie","bin","bing","bo","bu","ca","cai","can","cang","cao","ce",
@@ -321,6 +350,8 @@ private:
     // -----------------------------------------------------------------------
     static constexpr int K_POS = 7;   // 每位置保留路径数
     static constexpr int K_FINAL = 14; // 最终参与候选的路径数
+    // rank 小于此值的高频词预生成全部混合简拼模式；长尾词仅全拼+全简拼。
+    static constexpr int kFullPatternRank = 50000;
 
     std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     {
@@ -652,26 +683,45 @@ private:
 
         if (!hasPartial)
         {
-            // 全拼/简拼模式键精确匹配（O(1)）；键含 n 段，命中词音节数天然相等，
-            // 同时统一支持全 FULL、全 INITIAL 与任意混合，避免线性扫描。
+            // 精确匹配（O(1)）：全 FULL 查紧凑全拼索引；含简拼查混合模式索引。
             bool allFull = true;
-            std::string key;
-            key.reserve(24);
+            std::string compact;
+            std::string pattern;
+            compact.reserve(24);
+            pattern.reserve(24);
             for (int k = 0; k < n; k++)
             {
-                if (k) key.push_back('|');
                 const std::string& t = units[k].text;
                 if (t.empty()) return out;
-                if (units[k].kind == SyllUnit::FULL) { key.push_back('='); key += t; }
-                else { allFull = false; key.push_back('-'); key.push_back(t[0]); }
+                if (units[k].kind == SyllUnit::FULL)
+                {
+                    compact += t;
+                    if (k) pattern.push_back('|');
+                    pattern.push_back('='); pattern += t;
+                }
+                else
+                {
+                    allFull = false;
+                    if (k) pattern.push_back('|');
+                    pattern.push_back('-'); pattern.push_back(t[0]);
+                }
             }
             std::unordered_set<int> exactEi;
-            auto it = _byPattern.find(key);
-            if (it != _byPattern.end())
-                for (int i : it->second) { add(i); exactEi.insert(i); }
+            if (allFull)
+            {
+                auto it = _byCompact.find(compact);
+                if (it != _byCompact.end())
+                    for (int i : it->second) { add(i); exactEi.insert(i); }
+            }
+            else
+            {
+                auto it = _byPattern.find(pattern);
+                if (it != _byPattern.end())
+                    for (int i : it->second) { add(i); exactEi.insert(i); }
+            }
 
             // 模糊音：全 FULL、短词（≤3 音节）。枚举每个音节的声母/韵母合法
-            // 变体组合，查同一模式索引；命中词按“模糊音节数”加罚，精确命中优先。
+            // 变体组合，查紧凑全拼索引；命中词按“模糊音节数”加罚，精确命中优先。
             if (_fuzzy && allFull && n <= K_FUZZY_MAX_SYLL)
             {
                 std::vector<std::vector<std::string>> var(n);
@@ -691,7 +741,7 @@ private:
                     for (size_t comb = 1; comb < total; comb++) // comb=0 即全自身（精确）
                     {
                         size_t t = comb;
-                        std::string fk;
+                        std::string fk; // 模糊紧凑全拼
                         fk.reserve(24);
                         int fuzzyCount = 0;
                         for (int k = 0; k < n; k++)
@@ -700,13 +750,11 @@ private:
                             t /= var[k].size();
                             const std::string& syl = var[k][pick];
                             if (syl != units[k].text) fuzzyCount++;
-                            if (k) fk.push_back('|');
-                            fk.push_back('=');
                             fk += syl;
                         }
                         if (fuzzyCount == 0) continue;
-                        auto fit = _byPattern.find(fk);
-                        if (fit == _byPattern.end()) continue;
+                        auto fit = _byCompact.find(fk);
+                        if (fit == _byCompact.end()) continue;
                         for (int ei : fit->second)
                         {
                             if (exactEi.count(ei)) continue;
@@ -751,7 +799,7 @@ private:
             for (int k = 1; k < n; k++)
             {
                 const SyllUnit& u = units[k];
-                const std::string& s = e.sylls[k];
+                const std::string& s = *e.sylls[k];
                 if (u.kind == SyllUnit::FULL)
                 {
                     if (s != u.text) { ok = false; break; }
@@ -1025,18 +1073,6 @@ private:
     // -----------------------------------------------------------------------
     // 工具
     // -----------------------------------------------------------------------
-    static std::string Concat(const std::vector<std::string>& v)
-    {
-        std::string s;
-        for (const auto& x : v) s += x;
-        return s;
-    }
-    static std::string InitialsOf(const std::vector<std::string>& v)
-    {
-        std::string s;
-        for (const auto& x : v) if (!x.empty()) s.push_back(x[0]);
-        return s;
-    }
     static std::vector<std::string> Split(const std::string& s, char sep)
     {
         std::vector<std::string> out;
