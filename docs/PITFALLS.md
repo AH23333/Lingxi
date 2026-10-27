@@ -91,10 +91,20 @@
 - **取证手段**：e2e 里注册 first-chance VEH，把 RIP/调用栈按“模块名+RVA”写文件，再用链接 map（`/MAP`）离线解析。没有符号时“崩在 ntdll 堆”这类信息完全无法定位
 - **正确做法**：文档约定挂在 **ITfInputProcessorProfiles 的 ITfSource**（进程级单例）。但实测即使 QI 已实现该 IID，CTF 仍返回 `CONNECT_E_CANNOTCONNECT`（0x80040202，内部另有约束）——最终方案是**彻底不用激活 sink**：改用按键路径的语言变化检查（`GetKeyboardLayout`）+ KeySink 前台切换/文档焦点/激活置脏，全部零 CTF 重入
 
-### 18. 按键分发内禁止调 GetActiveLanguageProfile
-- **症状**：拼音模式下候选窗不出现，SendCtx 的 caret rect 全是 (0,0,0,0)
-- **根因**：`ITfInputProcessorProfiles::GetActiveLanguageProfile` 在 CTF 按键分发（TestKeyDown/KeyDown 回调）内调用会触发**输入上下文栈重算**：多出一个 sandwich 文档、GetTextExt 失效、候选窗锚点丢失
-- **正确做法**：模式检测只用只读廉价信号——`ITfKeystrokeMgr::GetForeground`（是否我们的 TIP 在前台）+ `GetKeyboardLayout`（当前语言是否 zh-CN）。纯查询、无副作用，按键路径可安全调用
+### 18. TSF 查询的调用时机：按键分发/激活回调内是雷区，消息泵空闲点安全
+- **症状（初判过宽）**：拼音模式下候选窗不出现，SendCtx 的 caret rect 全是 (0,0,0,0)
+- **根因**：`GetActiveLanguageProfile` 在 CTF 按键分发（TestKeyDown/KeyDown 回调）内调用会触发**输入上下文栈重算**：多出一个 sandwich 文档、GetTextExt 失效、候选窗锚点丢失。激活回调（ActivateEx/OnActivated）内同理
+- **修正后的结论**：不是这个 API 不能用，而是**不能用在那两种回调窗口里**。正确姿势：脏标记触发 → `PostMessage` 到封送窗口 → 消息泵空闲点（WM_APP_LX_MODE）里安全查询。触发源：TIP 激活、文档焦点变化、KeySink 前台切换、语言 HKL 变化
+
+### 18b. 纯 TSF TIP 切换 profile 时线程 HKL 不变——GetKeyboardLayout 判不了语言 ⭐️（真实应用全不激活的根因）
+- **症状**：e2e 全绿，但**所有真实应用里 zh-CN profile 打字母出英文补全候选（jimmy），拼音模式从未激活**
+- **根因**：灵犀是纯 TSF TIP（无键盘布局绑定），用户通过 Win+Space 切到灵犀 zh-CN 时，`GetKeyboardLayout` 返回的语言**不会变**（仍停留原键盘布局）。用 `LOWORD(GetKeyboardLayout(0))==0x0804` 判拼音模式在真实应用里永远为假。e2e 里的 `SwitchLanguage` 用 `LoadKeyboardLayout("00000804")` 人为创建了真 HKL，把这个问题完全掩盖了
+- **正确做法**：用 `ITfInputProcessorProfiles::GetActiveLanguageProfile(CLSID_LingxiTextService)` 查**真实激活档案**（返回我们 TIP 当前激活的 profile GUID，zh-CN → 拼音模式）。外加 GetForeground（是否我们的 TIP 在前台）双保险。hkl/langid 只能当“可能变了”的触发信号，不能当判据
+
+### 18c. GetTextExt 空矩形要当失败处理
+- **症状**：候选窗不跟随光标（停在旧位置）
+- **根因**：部分应用/上下文（CUAS 宿主、过渡态）GetTextExt 返回成功但矩形全零，按成功处理会覆盖掉兜底
+- **正确做法**：GetTextExt 成功但 right<=left 且 bottom<=top 视为失败，逐级兑底：系统插入符（`GetGUIThreadInfo` 当前线程的 rcCaret，客户端坐标转屏幕）→ 零 rect 交由 UI 保持原位不跳动
 
 ### 19. 语言切换 churn 期：TSF 框架组合操作脆弱 + 陈旧 store sink DEP
 - **症状A**：切语言后立刻打拼音，`StartComposition` 内 textinputframework.dll 读 `-1` 指针 AV

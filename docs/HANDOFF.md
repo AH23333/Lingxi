@@ -9,8 +9,8 @@
 - **根因（三段式，详见 PITFALLS #17-#19）**：① 激活 sink 挂到 ITfThreadMgr 的 ITfSource（错误对象）→ 写坏 CTF 内部 sink 表 → 之后任意堆分配 AV（崩在 Deactivate→Send 只是接盘）；② 修掉后按键分发内调 GetActiveLanguageProfile 又触发输入上下文栈重算（候选窗锚点全零）；③ 语言切换 churn 中 TSF 框架组合操作自身脆弱（textinputframework 读 -1 / 陈旧 store sink DEP）。产品侧已全部防御：不用激活 sink（改键路径语言变化+置脏惰性检测）、组合键处理全程 SEH 包裹 + 异常安全复位降级直通
 - **git**：修复与加固已提交至 `6181df0`（M5 崩溃修复 / e2e 加固 / 构建锁文件修复三个提交）
 - **M4 直通+预测路径不受影响**：默认门控下 e2e 全绿
-- **门控已移除（commit `7a1dd6a`）**：zh-CN profile 默认拼音组合；`LINGXI_PINYIN=0` 可退回直通。e2e 默认即含拼音用例（诊断级），exit=0；`LINGXI_PINYIN=0` 跳过用例也 exit=0。engine_test 9/9 PASS
-- **下一步第一优先**：真实宿主手工验证拼音（Win+Space 切 zh-CN → 打 `jintian` → 空格出"今天"、数字选词、Esc 取消、Enter 保留字母），反馈体验问题（候选排序/组合编辑）后进入 M5 收尾
+- **真实应用反馈修复（commit `75bf6ee`）**：用户实测所有应用里 zh-CN 只有英文候选——根因是纯 TSF TIP 切 profile 时线程 HKL 不变，旧判据 `GetKeyboardLayout` 判语言永远为假（e2e 的 LoadKeyboardLayout 伪造掩盖了）。已改 `GetActiveLanguageProfile` 真值 + 封送窗口消息泵空闲点检测（修正 PITFALLS #18 过宽结论）；另：候选 5→9、GetTextExt 空矩形兑底。e2e 全绿（tests 1-5 直通判定正确、test 6 拼音组合进入）
+- **下一步第一优先**：用户实测确认拼音激活与候选窗跟随；随后 M6 设置界面（用户明确需要，候选数量/模式/热键）与 M5 收尾（LLM 重排、长串分词）
 - **遗留待办**：合成宿主内拼音组合在语言 churn 后无法完整走通（TSF 框架过渡态，已遏制不崩宿主）；若需彻底验证可重启电脑后空闲时跑 e2e
 
 ## 一、项目一句话
