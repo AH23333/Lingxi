@@ -23,6 +23,8 @@ struct Settings
     bool shuangpin = false;       // 小鹤双拼：每音节两键（声母键+韵母键）
     bool symbolHotkey = true;    // 全局热键 Ctrl+Shift+B 调出符号面板（独占该组合键）
     bool traditionalOutput = false; // 繁体输出：候选简体→繁体（字符级映射）
+    bool llmRerank = true;         // LLM 拼音候选重排：按上文重排 top-8（慢/超时自动回退）
+    uint32_t skinIndex = 0;        // 候选窗配色：0 蓝 1 青 2 紫 3 绿 4 橙
 };
 
 Settings LoadSettings();

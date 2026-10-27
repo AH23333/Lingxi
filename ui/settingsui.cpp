@@ -165,11 +165,13 @@ constexpr int IDC_BTN_USERDICT = 111;
 constexpr int IDC_CHK_SHUANGPIN = 112;
 constexpr int IDC_CHK_SYMBOLHOTKEY = 113;
 constexpr int IDC_CHK_TRADITIONAL = 114;
+constexpr int IDC_CMB_SKIN = 115;
 
 HWND g_hMain = nullptr;    // 隐藏消息窗口（托盘宿主）
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
 HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
-     g_hCmbDark = nullptr, g_hCmbFontSize = nullptr, g_hChkCnPunct = nullptr, g_hChkFuzzy = nullptr,
+     g_hCmbDark = nullptr, g_hCmbFontSize = nullptr, g_hCmbSkin = nullptr,
+     g_hChkCnPunct = nullptr, g_hChkFuzzy = nullptr,
      g_hChkShiftToggle = nullptr, g_hChkVMode = nullptr,
      g_hChkShuangpin = nullptr, g_hChkSymbolHotkey = nullptr, g_hChkTraditional = nullptr;
 HFONT g_hFont = nullptr;
@@ -202,6 +204,7 @@ void LoadToControls()
     for (int i = 0; i < 8; i++)
         if (kFontSizes[i] == s.candidateFontSize) fsSel = i;
     ComboBox_SetCurSel(g_hCmbFontSize, fsSel);
+    ComboBox_SetCurSel(g_hCmbSkin, (int)s.skinIndex);
     ComboBox_SetCurSel(g_hCmbDark, (int)s.darkMode);
     g_updating = false;
 }
@@ -228,6 +231,8 @@ void SaveFromControls()
     static const uint32_t kFontSizesSave[] = {12, 14, 16, 18, 20, 24, 28, 32};
     int fsIdx = ComboBox_GetCurSel(g_hCmbFontSize);
     if (fsIdx >= 0 && fsIdx < 8) s.candidateFontSize = kFontSizesSave[fsIdx];
+    int skinSel = ComboBox_GetCurSel(g_hCmbSkin);
+    if (skinSel >= 0 && skinSel <= 4) s.skinIndex = (uint32_t)skinSel;
     int sel = ComboBox_GetCurSel(g_hCmbDark);
     if (sel >= 0) s.darkMode = (uint32_t)sel;
     SaveSettings(s);
@@ -450,6 +455,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             return 0;
         case IDC_CMB_DARK:
         case IDC_CMB_FONTSIZE:
+        case IDC_CMB_SKIN:
             if (HIWORD(wParam) == CBN_SELCHANGE) SaveFromControls();
             return 0;
         case IDC_BTN_USERDICT:
@@ -552,6 +558,16 @@ void CreateSettingsWindow(HINSTANCE hInst)
         _snwprintf_s(b, _TRUNCATE, L"%u", z);
         ComboBox_AddString(g_hCmbFontSize, b);
     }
+    y += rowH + MulDiv(6, scale, 96);
+
+    // 界面配色（候选窗强调色，即时生效）
+    mkStatic(L"界面配色", 0);
+    g_hCmbSkin = CreateWindowExW(0, L"COMBOBOX", L"",
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+                                 x, y, MulDiv(100, scale, 96), rowH * 6,
+                                 g_hSettings, (HMENU)(INT_PTR)IDC_CMB_SKIN, hInst, NULL);
+    for (const wchar_t* s : {L"蓝色", L"青色", L"紫色", L"绿色", L"橙色"})
+        ComboBox_AddString(g_hCmbSkin, s);
     y += rowH + MulDiv(6, scale, 96);
 
     // 用户词典管理：查看/删除/清空/导入导出已学习词条

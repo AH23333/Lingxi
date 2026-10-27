@@ -48,6 +48,8 @@ Settings LoadSettings()
     if (GetDword(hKey, L"Shuangpin", v)) s.shuangpin = v != 0;
     if (GetDword(hKey, L"SymbolHotkey", v)) s.symbolHotkey = v != 0;
     if (GetDword(hKey, L"Traditional", v)) s.traditionalOutput = v != 0;
+    if (GetDword(hKey, L"LlmRerank", v)) s.llmRerank = v != 0;
+    if (GetDword(hKey, L"SkinIndex", v) && v <= 4) s.skinIndex = v;
 
     RegCloseKey(hKey);
     return s;
@@ -73,6 +75,8 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"Shuangpin", s.shuangpin ? 1 : 0);
     SetDword(hKey, L"SymbolHotkey", s.symbolHotkey ? 1 : 0);
     SetDword(hKey, L"Traditional", s.traditionalOutput ? 1 : 0);
+    SetDword(hKey, L"LlmRerank", s.llmRerank ? 1 : 0);
+    SetDword(hKey, L"SkinIndex", s.skinIndex);
 
     RegCloseKey(hKey);
 }

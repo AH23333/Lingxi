@@ -10,6 +10,21 @@ namespace lingxi {
 
 static const wchar_t kCandWndClass[] = L"LingxiCandidateWnd";
 
+// 皮肤：候选窗强调色（首行底色 / 中英 toast 底色）+ 浅色主题 hover 底色。
+// 深浅主题的 bg/fg/border 保持主题分支不变；深色 hover 恒为中性灰。
+struct SkinDef
+{
+    COLORREF accent;     // 首行底色 / toast 底色（白字，需够深）
+    COLORREF hoverLight; // 浅色主题 hover 行底色（强调色的高亮度变体）
+};
+static constexpr SkinDef kSkins[] = {
+    { RGB(0, 120, 215),  RGB(224, 238, 252) }, // 0 蓝（默认）
+    { RGB(0, 150, 136),  RGB(220, 245, 240) }, // 1 青
+    { RGB(124, 77, 255), RGB(237, 231, 255) }, // 2 紫
+    { RGB(46, 125, 50),  RGB(224, 245, 226) }, // 3 绿
+    { RGB(230, 81, 0),   RGB(255, 236, 224) }, // 4 橙
+};
+
 // 编译时间戳：候选窗右下角可见，用于区分各应用加载的新旧版 DLL
 // （TSF 已加载的 DLL 重建后旧进程不换新，必须重启应用）
 #define LX_WSTR2(x) L##x
@@ -45,6 +60,7 @@ bool CandWindow::Init(HINSTANCE hInst)
     SetWindowLongPtrW(_hwnd, GWLP_USERDATA, (LONG_PTR)this);
 
     RebuildFonts(LoadSettings().candidateFontSize);
+    ApplySkin(LoadSettings().skinIndex);
     return true;
 }
 
@@ -89,6 +105,16 @@ void CandWindow::RebuildFonts(uint32_t fontSize)
     _smallFont = CreateFontW(smallH, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                              DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                              CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
+}
+
+// 应用皮肤（强调色 + 浅色 hover 底色）；越界回退默认蓝
+void CandWindow::ApplySkin(uint32_t idx)
+{
+    if (idx >= ARRAYSIZE(kSkins)) idx = 0;
+    _skinIndex = idx;
+    _accent = kSkins[idx].accent;
+    _hoverLight = kSkins[idx].hoverLight;
+    LX_LOG(L"ui", L"ApplySkin skin=%u", idx);
 }
 
 void CandWindow::LayoutMetrics(int* itemH, int* pad)
@@ -178,6 +204,8 @@ void CandWindow::Show(const RECT& caretScreen, const std::vector<std::wstring>& 
     if (!_hwnd) return;
     if (uint32_t fs = LoadSettings().candidateFontSize; fs != _fontSize)
         RebuildFonts(fs); // 字号设置变化即时生效
+    if (uint32_t sk = LoadSettings().skinIndex; sk != _skinIndex)
+        ApplySkin(sk); // 皮肤设置变化即时生效
     EnterCriticalSection(&_cs);
     _caret = caretScreen;
     _cands = cands;
@@ -269,7 +297,7 @@ void CandWindow::OnPaint()
     if (toast)
     {
         COLORREF bg = toastEn ? (dark ? RGB(60, 60, 60) : RGB(250, 250, 250))
-                             : RGB(0, 120, 215);
+                             : _accent;
         HBRUSH hb = CreateSolidBrush(bg);
         FillRect(hdc, &rc, hb);
         DeleteObject(hb);
@@ -309,7 +337,7 @@ void CandWindow::OnPaint()
     COLORREF bg = dark ? RGB(43, 43, 43) : RGB(250, 250, 250);
     COLORREF fg = dark ? RGB(222, 222, 222) : RGB(32, 32, 32);
     COLORREF border = dark ? RGB(80, 80, 80) : RGB(200, 200, 200);
-    COLORREF accent = RGB(0, 120, 215);
+    COLORREF accent = _accent;
 
     HBRUSH hBg = CreateSolidBrush(bg);
     FillRect(hdc, &rc, hBg);
@@ -337,7 +365,7 @@ void CandWindow::OnPaint()
         }
         else if ((int)row == hoverRow)
         {
-            COLORREF hoverBg = dark ? RGB(64, 64, 64) : RGB(224, 238, 252);
+            COLORREF hoverBg = dark ? RGB(64, 64, 64) : _hoverLight;
             HBRUSH hHover = CreateSolidBrush(hoverBg);
             FillRect(hdc, &rowR, hHover);
             DeleteObject(hHover);
