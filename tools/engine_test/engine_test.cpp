@@ -355,6 +355,25 @@ int wmain()
                 lingxi::SaveSettings(s0); // 恢复，避免污染后续测试
             }
 
+            // P4c2. 双拼 üe 走词典拼写 lve/nve：vjlt(zhan-lve) 含"战略"
+            // （回归：T 键曾一律转 "ue"，与词典 lve 拼写错位 → 高频词出错误词链）
+            {
+                lingxi::Settings s0 = lingxi::LoadSettings();
+                lingxi::Settings s1 = s0;
+                s1.shuangpin = true;
+                lingxi::SaveSettings(s1);
+                lingxi::Prediction r = py->Predict(L"vjlt");
+                bool ok = false;
+                for (const auto& c : r.cands)
+                    if (c.find(L"战略") != std::wstring::npos) { ok = true; break; }
+                wchar_t detail[192];
+                _snwprintf_s(detail, _TRUNCATE, L"first='%ls' cands=%zu",
+                             r.cands.empty() ? L"" : r.cands[0].c_str(),
+                             r.cands.size());
+                Report(ok, "pinyin: shuangpin vjlt -> *战略*", detail);
+                lingxi::SaveSettings(s0);
+            }
+
             // P4d. 繁体输出：开启 Traditional 后，"diannao" 首候选为"電腦"
             {
                 lingxi::Settings s0 = lingxi::LoadSettings();

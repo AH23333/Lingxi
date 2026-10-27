@@ -58,7 +58,7 @@ std::string SpFinal(char c, const std::string& initial)
     case 'q': return "iu";
     case 'w': return "ei";
     case 'e': return "e";
-    case 't': return "ue";
+    case 't': return (initial == "n" || initial == "l") ? "ve" : "ue";
     case 'y': return "un";
     case 'u': return "u";
     case 'i': return "i";
@@ -107,11 +107,21 @@ bool SpZeroFinal(char c1, char c2, std::string& out)
 // 双拼串 → 全拼串；奇数长度时末尾单字符按声母（含零声母首字母）作残段。
 std::string ShuangpinToQuanpin(const std::string& sp)
 {
+    // 输入卫生：小写化并只保留 a-z（与 NormKey 同口径）。大写对（JV）会让
+    // 韵母键查表落空、撇号/空格参与两两配对会造成音节错位（ni hao→酿奥）。
+    std::string in;
+    in.reserve(sp.size());
+    for (char ch : sp)
+    {
+        char c = (ch >= 'A' && ch <= 'Z') ? (char)(ch + 32) : ch;
+        if (c >= 'a' && c <= 'z') in.push_back(c);
+    }
+
     std::string out;
     size_t i = 0;
-    for (; i + 1 < sp.size(); i += 2)
+    for (; i + 1 < in.size(); i += 2)
     {
-        char c1 = sp[i], c2 = sp[i + 1];
+        char c1 = in[i], c2 = in[i + 1];
         std::string syll;
         if (c1 == 'a' || c1 == 'o' || c1 == 'e')
             SpZeroFinal(c1, c2, syll);
@@ -122,7 +132,7 @@ std::string ShuangpinToQuanpin(const std::string& sp)
         }
         out += syll;
     }
-    if (i < sp.size()) out += SpInitial(sp[i]); // 残段
+    if (i < in.size()) out += SpInitial(in[i]); // 残段
     return out;
 }
 
@@ -223,7 +233,8 @@ public:
             if (auto uit = _userDict.find(key); uit != _userDict.end())
                 ups = uit->second;
             // 简拼/缩写：当前输入串作为首字母串（如 mm）匹配用户词
-            if (auto iit = _userByInit.find(raw); iit != _userByInit.end())
+            // （键规范化与 _userDict 同口径，撇号/空格不参与查找）
+            if (auto iit = _userByInit.find(NormKey(raw)); iit != _userByInit.end())
             {
                 for (const auto& ip : iit->second)
                 {
@@ -794,7 +805,11 @@ private:
     void Learn(const std::wstring& rawPinyin, const std::wstring& word) override
     {
         if (rawPinyin.empty() || word.empty()) return;
-        std::string key = NormKey(ToUtf8(rawPinyin));
+        std::string key = ToUtf8(rawPinyin);
+        // 双拼模式下 rawPinyin 是双拼串，而 Predict 以转换后的全拼串查键——
+        // 不做同一转换，学习键与查询键永不相交，双拼下学习完全失效
+        if (LoadSettings().shuangpin) key = ShuangpinToQuanpin(key);
+        key = NormKey(key);
         if (key.empty()) return;
         {
             std::lock_guard<std::mutex> lk(_udMtx);
@@ -804,7 +819,15 @@ private:
                 if (up.word == word) { up.count++; found = true; break; }
             if (!found)
             {
-                if (vec.size() >= 8) vec.pop_back(); // 每键最多 8 个偏好，控制体积
+                if (vec.size() >= 8)
+                {
+                    // 每键最多 8 个偏好：淘汰计数最小者（保留最常用），
+                    // 而非最近添加的
+                    size_t victim = 0;
+                    for (size_t k = 1; k < vec.size(); k++)
+                        if (vec[k].count < vec[victim].count) victim = k;
+                    vec.erase(vec.begin() + victim);
+                }
                 vec.push_back({ word, 1 });
             }
             _userDirty = true;
@@ -1358,6 +1381,7 @@ private:
                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
         if (h == INVALID_HANDLE_VALUE) return {};
         DWORD size = GetFileSize(h, NULL);
+        if (size == INVALID_FILE_SIZE) { CloseHandle(h); return {}; } // 防 4GB 误申请
         std::string s(size, '\0');
         DWORD read = 0;
         ReadFile(h, s.data(), size, &read, NULL);
