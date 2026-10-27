@@ -33,6 +33,100 @@ namespace lingxi {
 namespace {
 
 // ---------------------------------------------------------------------------
+// 小鹤双拼 → 全拼（Predict 入口前转换，后续逻辑完全复用全拼）
+// 键位依据：shuangpin.xyz 小鹤方案（zh→V ch→I sh→U）。
+// ---------------------------------------------------------------------------
+std::string SpInitial(char c)
+{
+    if (c == 'v') return "zh";
+    if (c == 'i') return "ch";
+    if (c == 'u') return "sh";
+    return std::string(1, c);
+}
+
+// 韵母键 + 已解析声母 → 全拼韵母；歧义键按声母消解。
+std::string SpFinal(char c, const std::string& initial)
+{
+    auto is = [&](std::initializer_list<const char*> set)
+    {
+        for (const char* s : set)
+            if (initial == s) return true;
+        return false;
+    };
+    switch (c)
+    {
+    case 'q': return "iu";
+    case 'w': return "ei";
+    case 'e': return "e";
+    case 't': return "ue";
+    case 'y': return "un";
+    case 'u': return "u";
+    case 'i': return "i";
+    case 'p': return "ie";
+    case 'a': return "a";
+    case 'd': return "ai";
+    case 'f': return "en";
+    case 'g': return "eng";
+    case 'h': return "ang";
+    case 'j': return "an";
+    case 'z': return "ou";
+    case 'c': return "ao";
+    case 'b': return "in";
+    case 'n': return "iao";
+    case 'm': return "ian";
+    case 'r': return "uan"; // 声母 + R 只能是 uan；er 走零声母
+    case 'o': return is({"b", "p", "m", "f"}) ? "o" : "uo";
+    case 's': return is({"j", "q", "x"}) ? "iong" : "ong";
+    case 'k': return is({"g", "k", "h", "zh", "ch", "sh"}) ? "uai" : "ing";
+    case 'l': return is({"g", "k", "h", "zh", "ch", "sh"}) ? "uang" : "iang";
+    case 'x': return is({"g", "k", "h", "zh", "ch", "sh"}) ? "ua" : "ia";
+    case 'v':
+        if (is({"j", "q", "x"})) return "u"; // ju/qu/xu
+        if (is({"n", "l"})) return "v";      // nv/lv
+        return "ui";
+    }
+    return "";
+}
+
+// 零声母音节 (c1,c2) → 全拼韵母。
+bool SpZeroFinal(char c1, char c2, std::string& out)
+{
+    if (c1 == c2 && (c1 == 'a' || c1 == 'o' || c1 == 'e'))
+    { out = std::string(1, c1); return true; } // 啊/哦/额
+    const char* pairs[][2] = {
+        {"ai", "ai"}, {"ei", "ei"}, {"ao", "ao"}, {"ou", "ou"},
+        {"an", "an"}, {"en", "en"}, {"er", "er"}, {"ah", "ang"},
+        {"eg", "eng"}};
+    std::string key(1, c1);
+    key.push_back(c2);
+    for (auto& pr : pairs)
+        if (key == pr[0]) { out = pr[1]; return true; }
+    return false;
+}
+
+// 双拼串 → 全拼串；奇数长度时末尾单字符按声母（含零声母首字母）作残段。
+std::string ShuangpinToQuanpin(const std::string& sp)
+{
+    std::string out;
+    size_t i = 0;
+    for (; i + 1 < sp.size(); i += 2)
+    {
+        char c1 = sp[i], c2 = sp[i + 1];
+        std::string syll;
+        if (c1 == 'a' || c1 == 'o' || c1 == 'e')
+            SpZeroFinal(c1, c2, syll);
+        if (syll.empty())
+        {
+            std::string initial = SpInitial(c1);
+            syll = initial + SpFinal(c2, initial);
+        }
+        out += syll;
+    }
+    if (i < sp.size()) out += SpInitial(sp[i]); // 残段
+    return out;
+}
+
+// ---------------------------------------------------------------------------
 // 音节单元与切分路径
 // ---------------------------------------------------------------------------
 struct SyllUnit
@@ -80,9 +174,11 @@ public:
     {
         Prediction p;
         if (context.empty()) return p;
-        _fuzzy = LoadSettings().fuzzyPinyin; // 开关实时生效
+        Settings st = LoadSettings();
+        _fuzzy = st.fuzzyPinyin; // 开关实时生效
         std::string raw = ToUtf8(context);
         if (raw.empty()) return p;
+        if (st.shuangpin) raw = ShuangpinToQuanpin(raw); // 双拼→全拼
 
         std::vector<SegPath> paths = EnumeratePaths(raw);
         if (paths.empty())

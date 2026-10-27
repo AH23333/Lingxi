@@ -44,6 +44,7 @@ Settings LoadSettings()
     if (GetDword(hKey, L"FuzzyPinyin", v)) s.fuzzyPinyin = v != 0;
     if (GetDword(hKey, L"ShiftToggle", v)) s.shiftToggle = v != 0;
     if (GetDword(hKey, L"VMode", v)) s.vMode = v != 0;
+    if (GetDword(hKey, L"Shuangpin", v)) s.shuangpin = v != 0;
 
     RegCloseKey(hKey);
     return s;
@@ -65,6 +66,7 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"FuzzyPinyin", s.fuzzyPinyin ? 1 : 0);
     SetDword(hKey, L"ShiftToggle", s.shiftToggle ? 1 : 0);
     SetDword(hKey, L"VMode", s.vMode ? 1 : 0);
+    SetDword(hKey, L"Shuangpin", s.shuangpin ? 1 : 0);
 
     RegCloseKey(hKey);
 }

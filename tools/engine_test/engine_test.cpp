@@ -14,6 +14,7 @@
 #include "../../common/proto.h"
 #include "../../common/punct.h"
 #include "../../common/log.h"
+#include "../../common/settings.h"
 
 #include <windows.h>
 #include <psapi.h>
@@ -334,6 +335,24 @@ int wmain()
                 wchar_t detail[64];
                 _snwprintf_s(detail, _TRUNCATE, L"cands=%zu", r.cands.size());
                 Report(r.cands.empty(), "pinyin: xyzxyz -> empty", detail);
+            }
+
+            // P4c. 小鹤双拼：开启 Shuangpin 后，"jbtm"(jin-tian) 含"今天"
+            {
+                lingxi::Settings s0 = lingxi::LoadSettings();
+                lingxi::Settings s1 = s0;
+                s1.shuangpin = true;
+                lingxi::SaveSettings(s1);
+                lingxi::Prediction r = py->Predict(L"jbtm");
+                bool ok = false;
+                for (const auto& c : r.cands)
+                    if (c.compare(0, 2, L"今天") == 0) { ok = true; break; }
+                wchar_t detail[192];
+                _snwprintf_s(detail, _TRUNCATE, L"first='%ls' cands=%zu",
+                             r.cands.empty() ? L"" : r.cands[0].c_str(),
+                             r.cands.size());
+                Report(ok, "pinyin: shuangpin jbtm -> 今天*", detail);
+                lingxi::SaveSettings(s0); // 恢复，避免污染后续测试
             }
 
             // P4b. 高频口语词（口语覆盖层）：首候选必须精确命中
