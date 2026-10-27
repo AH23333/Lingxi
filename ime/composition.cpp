@@ -52,6 +52,47 @@ static bool GetFocusContext(ITfThreadMgr* pTm, ITfContext** ppCtx)
     return SUCCEEDED(hr) && *ppCtx;
 }
 
+// 安全取光标矩形。Chromium 上对"写会话里产生的 composition range"在另一个
+// 读会话里调用 GetTextExt 会触发框架内部 AV（0xC0000005）。这里：
+//   1) 优先用当前读会话 GetSelection 得到的插入点 range（与 ec 同会话，最安全）；
+//   2) 整段 SEH 包裹，任何宿主 AV 都退化为"无矩形"（候选窗降级到系统插入符）。
+// 注意：本函数只用 POD 与 COM 裸指针（手动 Release），无 C++ 展开对象，可用 __try。
+static HRESULT SafeGetTextExt(ITfContextView* pView, ITfContext* pCtx, TfEditCookie ec,
+                              ITfRange* pCompRange, RECT* prc)
+{
+    __try
+    {
+        ITfRange* pRange = nullptr;
+        TF_SELECTION tfSel{};
+        ULONG fetched = 0;
+        HRESULT hs = pCtx->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &tfSel, &fetched);
+        if (SUCCEEDED(hs) && fetched == 1 && tfSel.range)
+        {
+            pRange = tfSel.range; // 由我们 Release
+        }
+        else if (pCompRange)
+        {
+            pRange = pCompRange; // 不 AddRef，仅本函数内同步使用
+        }
+        if (!pRange) return E_FAIL;
+
+        BOOL clipped = FALSE;
+        RECT r{};
+        HRESULT he = pView->GetTextExt(ec, pRange, &r, &clipped);
+        if (tfSel.range) tfSel.range->Release();
+        if (SUCCEEDED(he))
+        {
+            if (r.right > r.left || r.bottom > r.top) { *prc = r; }
+            return S_OK;
+        }
+        return he;
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        return E_UNEXPECTED;
+    }
+}
+
 static bool IsLetterKey(WPARAM wParam)
 {
     return (wParam >= L'a' && wParam <= L'z') || (wParam >= L'A' && wParam <= L'Z');
@@ -198,11 +239,13 @@ void CTextService::PinyinStart(wchar_t ch)
         return S_OK;
     };
     auto* pSession = new CPinyinEditSession(this, pCtx, task);
-    RequestSessionEx(pCtx, _tfClientId, pSession, TF_ES_READWRITE);
+    HRESULT hrs = RequestSessionEx(pCtx, _tfClientId, pSession, TF_ES_READWRITE);
+    if (FAILED(hrs))
+        LX_LOG(L"ime", L"启动组合会话失败 0x%08X", hrs);
     pSession->Release();
     pCtx->Release();
     _fSelfInsert = FALSE;
-    SendPinyinCtx();
+    if (_pComposition) SendPinyinCtx();
 }
 
 void CTextService::PinyinAppend(wchar_t ch)
@@ -334,15 +377,19 @@ void CTextService::SendPinyinCtx()
     {
         if (!_compRange) return E_FAIL;
         ITfContextView* pView = nullptr;
-        if (SUCCEEDED(pCtxSession->GetActiveView(&pView)) && pView)
+        HRESULT hv = pCtxSession->GetActiveView(&pView);
+        if (SUCCEEDED(hv) && pView)
         {
-            BOOL clipped = FALSE;
             RECT rcText{};
-            if (SUCCEEDED(pView->GetTextExt(ec, _compRange, &rcText, &clipped)) &&
-                (rcText.right > rcText.left || rcText.bottom > rcText.top))
+            HRESULT he = SafeGetTextExt(pView, pCtxSession, ec, _compRange, &rcText);
+            if (SUCCEEDED(he))
             {
                 rc = rcText;
                 hasRect = true;
+            }
+            else if (he == E_UNEXPECTED)
+            {
+                LX_LOG(L"ime", L"GetTextExt 宿主异常，已降级系统插入符");
             }
             pView->Release();
         }
@@ -425,15 +472,16 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         return;
     }
 
+    wchar_t ch = (wchar_t)((wParam >= L'A' && wParam <= L'Z') ? (wParam + 32) : wParam);
     if (!_pComposition)
     {
-        PinyinStart((wchar_t)(wParam >= L'A' && wParam <= L'Z') ? wParam + 32 : wParam); // 键盘判定已保证是字母
+        PinyinStart(ch); // 键盘判定已保证是字母
         return;
     }
 
     if (IsLetterKey(wParam))
     {
-        PinyinAppend((wchar_t)(wParam >= L'A' && wParam <= L'Z') ? wParam + 32 : wParam);
+        PinyinAppend(ch);
         return;
     }
     switch (wParam)
@@ -482,16 +530,50 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
 
 // ==================== ITfCompositionSink ====================
 
+// 崩溃恢复内层（含 C++ 对象，可能再次触发宿主 AV，外层必须 SEH 包裹）。
+// 结束宿主里的悬挂组合并释放本次组合持有的引用。
+void CTextService::AbortHostCompositionInner(ITfRange* pRange, ITfComposition* pComp)
+{
+    if (pComp)
+    {
+        ITfContext* pCtx = nullptr;
+        if (GetFocusContext(_pThreadMgr, &pCtx))
+        {
+            // 写会话：删字母 + EndComposition，把宿主拉回非组合态。
+            auto* pSession = new CAbortCompositionSession(this, pCtx, pRange, pComp);
+            RequestSessionEx(pCtx, _tfClientId, pSession, TF_ES_READWRITE);
+            pSession->Release();
+            pCtx->Release();
+        }
+    }
+    if (pRange) { pRange->Release(); }
+    if (pComp) { pComp->Release(); }
+}
+
 void CTextService::AbortCompositionState()
 {
-    // 组合操作中发生框架级异常：对象状态可疑，不 Release（交给框架/进程清理），
-    // 只断开跟踪并降级直通，避免后续键继续在坏状态上操作。
+    // 先取出并断开成员，避免后续键在坏状态上重入。
+    ITfRange* pRange = _compRange;
+    ITfComposition* pComp = _pComposition;
     _compRange = nullptr;
     _pComposition = nullptr;
     _pinyin.clear();
     _fSelfInsert = FALSE;
     _pinyinMode = false; // 降级：下次焦点/激活事件重置脏标记后可重新启用
     _modeDirty.store(true);
+    ClearCandidates();
+
+    // 关键：必须在宿主中结束悬挂组合，否则 Chromium 会永久停留在组合态，
+    // 污染同一 TSF 上下文里的其他输入法（现象：切到微软拼音也无法输入/退格）。
+    __try
+    {
+        AbortHostCompositionInner(pRange, pComp);
+    }
+    __except (EXCEPTION_EXECUTE_HANDLER)
+    {
+        LX_LOG(L"ime", L"结束悬挂组合再次异常，宿主可能需切换焦点恢复");
+        // 引用不再 Release（对象已损坏），交给框架/进程清理；进程内状态已断开。
+    }
 }
 
 STDMETHODIMP CTextService::OnCompositionTerminated(TfEditCookie ecWrite, ITfComposition* pComposition)

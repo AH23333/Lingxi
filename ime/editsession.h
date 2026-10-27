@@ -84,4 +84,35 @@ private:
     uint32_t _deleteLen;
 };
 
+// 崩溃恢复：删掉已插入的组合字母并在宿主中结束悬挂组合。
+// 用于 HandlePinyinKeySEH 捕获宿主 AV 后，把 Chromium 等宿主的 TSF 上下文
+// 从"组合态"拉回正常，避免污染同一上下文里的其他输入法（如微软拼音）。
+class CAbortCompositionSession : public CEditSessionBase
+{
+public:
+    CAbortCompositionSession(CTextService* pSvc, ITfContext* pCtx,
+                             ITfRange* pRange, ITfComposition* pComp)
+        : CEditSessionBase(pSvc, pCtx), _pRange(pRange), _pComp(pComp)
+    {
+        if (_pRange) _pRange->AddRef();
+        if (_pComp) _pComp->AddRef();
+    }
+    ~CAbortCompositionSession()
+    {
+        if (_pRange) _pRange->Release();
+        if (_pComp) _pComp->Release();
+    }
+    STDMETHOD(DoEditSession)(TfEditCookie ec) override
+    {
+        HRESULT hr = S_OK;
+        if (_pRange) _pRange->SetText(ec, 0, L"", 0); // 清空已插入的组合字母
+        if (_pComp) hr = _pComp->EndComposition(ec);  // 真正结束宿主组合
+        return hr;
+    }
+
+private:
+    ITfRange* _pRange;
+    ITfComposition* _pComp;
+};
+
 } // namespace lingxi

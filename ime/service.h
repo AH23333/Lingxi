@@ -87,7 +87,8 @@ public:
     void InsertCandidate(uint32_t index);
     void ClearCandidates();
     void SendHide();
-    void AbortCompositionState(); // 组合操作异常后安全复位（不释放可疑对象）
+    void AbortCompositionState(); // 组合操作异常后安全复位，并在宿主结束悬挂组合
+    void AbortHostCompositionInner(ITfRange* pRange, ITfComposition* pComp); // SEH 内层 C++ 实现
 
     // ---- M5 拼音模式（zh-CN profile 激活时启用）----
     void DetectPinyinMode();
