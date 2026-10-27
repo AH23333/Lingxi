@@ -12,6 +12,7 @@
 //
 #include "predictor.h"
 #include "../../common/proto.h"
+#include "../../common/punct.h"
 
 #include <windows.h>
 #include <cstdio>
@@ -326,6 +327,61 @@ int wmain()
                     _snwprintf_s(detail, _TRUNCATE, L"total=%zu cur=%u d=%+d -> %u (expect %u)",
                                  cs.total, cs.cur, cs.delta, got, cs.expect);
                     Report(got == cs.expect, "NextPageStart paging boundary", detail);
+                }
+            }
+
+            // P7. 中文标点映射（纯函数，不依赖引擎）
+            {
+                struct PCase { WPARAM vk; bool shift; int n; wchar_t first; };
+                const PCase cases[] = {
+                    {VK_OEM_PERIOD, false, 1, L'\u3002'}, // . → 。
+                    {VK_OEM_PERIOD, true,  1, L'\u300B'}, // Shift+. → 》
+                    {VK_OEM_COMMA,  false, 1, L'\uFF0C'}, // , → ，
+                    {VK_OEM_COMMA,  true,  1, L'\u300A'}, // Shift+, → 《
+                    {VK_OEM_2,      false, 1, L'\u3001'}, // / → 、
+                    {VK_OEM_2,      true,  1, L'\uFF1F'}, // Shift+/ → ？
+                    {VK_OEM_1,      false, 1, L'\uFF1B'}, // ; → ；
+                    {VK_OEM_1,      true,  1, L'\uFF1A'}, // Shift+; → ：
+                    {VK_OEM_5,      false, 1, L'\u3001'}, // \ → 、
+                    {VK_OEM_3,      false, 1, L'\u00B7'}, // ` → ·
+                    {VK_OEM_4,      false, 1, L'\u3010'}, // [ → 【
+                    {VK_OEM_6,      false, 1, L'\u3011'}, // ] → 】
+                    {L'1',          false, 0, 0},         // 数字 1 不映射（选词）
+                    {L'1',          true,  1, L'\uFF01'}, // Shift+1 → ！
+                    {L'9',          true,  1, L'\uFF08'}, // Shift+9 → （
+                    {L'0',          true,  1, L'\uFF09'}, // Shift+0 → ）
+                    {L'4',          true,  1, L'\uFFE5'}, // Shift+4 → ￥
+                    {L'6',          true,  2, L'\u2026'}, // Shift+6 → ……
+                    {VK_OEM_MINUS,  false, 0, 0},         // 无 Shift - 保留（翻页）
+                    {VK_OEM_MINUS,  true,  2, L'\u2014'}, // Shift+- → ——
+                    {VK_OEM_PLUS,   false, 0, 0},         // 无 Shift = 保留（翻页）
+                    {VK_OEM_PLUS,   true,  1, L'\uFF0B'}, // Shift+= → ＋
+                };
+                for (const auto& cs : cases)
+                {
+                    wchar_t out[3] = {0,0,0};
+                    bool dq = false, sq = false;
+                    int n = lingxi::MapChinesePunct(cs.vk, cs.shift, dq, sq, out);
+                    wchar_t detail[96];
+                    _snwprintf_s(detail, _TRUNCATE, L"vk=0x%X shift=%d n=%d first=U+%04X",
+                                 (unsigned)cs.vk, (int)cs.shift, n, (unsigned)out[0]);
+                    Report(n == cs.n && (n == 0 || out[0] == cs.first),
+                           "Chinese punct mapping", detail);
+                }
+                // 成对引号：依次 “ ” ‘ ’
+                {
+                    wchar_t out[3];
+                    bool dq = false, sq = false;
+                    lingxi::MapChinesePunct(VK_OEM_7, true, dq, sq, out);
+                    bool o1 = out[0] == L'\u201C'; // “
+                    lingxi::MapChinesePunct(VK_OEM_7, true, dq, sq, out);
+                    bool o2 = out[0] == L'\u201D'; // ”
+                    lingxi::MapChinesePunct(VK_OEM_7, false, dq, sq, out);
+                    bool o3 = out[0] == L'\u2018'; // ‘
+                    lingxi::MapChinesePunct(VK_OEM_7, false, dq, sq, out);
+                    bool o4 = out[0] == L'\u2019'; // ’
+                    Report(o1 && o2 && o3 && o4, "Chinese paired quotes “ ” ‘ ’",
+                           o1 && o2 && o3 && o4 ? L"OK" : L"mismatch");
                 }
             }
 

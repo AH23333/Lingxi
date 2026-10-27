@@ -90,6 +90,9 @@ public:
     // 候选翻页：delta=+1 下一页 / -1 上一页（仅拼音模式；更新 _pageStart 并通知 UI）
     void PageCandidates(int delta);
     void SendPage();
+    // 中文标点：判定该键是否映射为中文标点；映射并上屏（拼音活动时先提交首选）
+    bool IsChinesePunctKey(WPARAM wParam);
+    bool CommitChinesePunct(WPARAM wParam);
     void AbortCompositionState(); // 组合操作异常后安全复位，并在宿主结束悬挂组合
     void AbortHostCompositionInner(ITfRange* pRange, ITfComposition* pComp); // SEH 内层 C++ 实现
 
@@ -153,6 +156,8 @@ private:
     uint32_t _verCands = 0;    // 候选对应的版本
     uint32_t _replaceLen = 0;  // 上屏前需删除的光标前字符数
     uint32_t _pageStart = 0;   // 拼音候选当前页首个候选的全局索引（0/9/18...）
+    bool _cnDqOpen = false;    // 中文双引号配对开合（“…”）
+    bool _cnSqOpen = false;    // 中文单引号配对开合（‘…’）
     bool _fActivated = false;
 
     HWND _hwndMarshal = nullptr; // 隐藏封送窗口（宿主 UI 线程）

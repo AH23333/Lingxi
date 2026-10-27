@@ -13,6 +13,7 @@
 #include "../common/guids.h"
 #include "../common/log.h"
 #include "../common/settings.h"
+#include "../common/punct.h"
 
 #include <functional>
 
@@ -508,7 +509,6 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
             // 输入中的 Shift+字母：也要吃（HandlePinyinKey 会先提交原文再放行）
             return true;
         }
-        if (shiftOrCaps && IsLetterKey(wParam)) return true; // 同上（不可达，防御）
         switch (wParam)
         {
         case VK_BACK: case VK_ESCAPE: case VK_RETURN:
@@ -516,21 +516,24 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
             return true;
         case VK_PRIOR: case VK_NEXT: // PageUp/PageDown：输入中翻页（吃）
             return CandidatesVisible();
-        case VK_OEM_MINUS: case VK_OEM_PLUS: // - / =：仅在有多页时作翻页，否则当标点
-        {
-            bool multi = false;
-            EnterCriticalSection(&_cs);
-            multi = _cands.size() > kPageSize && _verCands == _verSent;
-            LeaveCriticalSection(&_cs);
-            return multi;
+        case VK_OEM_MINUS: case VK_OEM_PLUS: // -/=：Shift 出破折号/＋；无 Shift 多页翻页
+            if (shiftOrCaps) return IsChinesePunctKey(wParam);
+            {
+                bool multi = false;
+                EnterCriticalSection(&_cs);
+                multi = _cands.size() > kPageSize && _verCands == _verSent;
+                LeaveCriticalSection(&_cs);
+                return multi;
+            }
         }
-        }
-        if (wParam >= L'1' && wParam <= L'9') return CandidatesVisible();
-        return false; // 标点等：提交后放行
+        if (wParam >= L'1' && wParam <= L'9' && !shiftOrCaps)
+            return CandidatesVisible(); // 无 Shift 数字 = 当前页选词
+        return IsChinesePunctKey(wParam); // 其余标点（含 Shift 数字 ！？（）等）
     }
-    // 未开始输入：Shift/Caps 下的字母直通，普通字母启动拼音
+    // 未开始输入：Shift/Caps 下的字母直通，普通字母启动拼音，中文标点转换
     if (shiftOrCaps && IsLetterKey(wParam)) return false;
-    return IsLetterKey(wParam);
+    if (IsLetterKey(wParam)) return true;
+    return IsChinesePunctKey(wParam);
 }
 
 bool CTextService::GetCandidate(uint32_t index, std::wstring& out)
@@ -541,6 +544,72 @@ bool CTextService::GetCandidate(uint32_t index, std::wstring& out)
     if (ok) out = _cands[index];
     LeaveCriticalSection(&_cs);
     return ok;
+}
+
+bool CTextService::IsChinesePunctKey(WPARAM wParam)
+{
+    if (!LoadSettings().cnPunct) return false;
+    bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    wchar_t out[3];
+    bool dq = false, sq = false;
+    return MapChinesePunct(wParam, shift, dq, sq, out) > 0;
+}
+
+bool CTextService::CommitChinesePunct(WPARAM wParam)
+{
+    if (!LoadSettings().cnPunct) return false;
+    bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    wchar_t out[3];
+    int n = 0;
+    if (_csInit)
+    {
+        EnterCriticalSection(&_cs);
+        n = MapChinesePunct(wParam, shift, _cnDqOpen, _cnSqOpen, out);
+        LeaveCriticalSection(&_cs);
+    }
+    if (n <= 0) return false;
+
+    std::wstring punct(out, n);
+
+    // 拼音活动：
+    //  无组合模式（默认）：把“首选汉字 + 标点”合并为一次插入，避免两个异步
+    //    编辑会话在 Chromium 上出现光标/顺序竞态；无候选时保留字母原文。
+    //  内联组合模式：先结束组合上屏汉字，再插标点。
+    if (PinyinActive())
+    {
+        std::wstring hanzi;
+        bool got = GetCandidate(0, hanzi);
+        if (!_inlineComp)
+        {
+            std::wstring all = got ? hanzi : _pinyin;
+            all += punct;
+            _fSelfInsert = TRUE;
+            InsertTextAtSelection(all);
+            _fSelfInsert = FALSE;
+            PinyinResetNoInline();
+        }
+        else
+        {
+            if (got) PinyinCommitHanzi(hanzi);
+            else     PinyinCommitRaw();
+            ClearCandidates();
+            SendHide();
+            _fSelfInsert = TRUE;
+            InsertTextAtSelection(punct);
+            _fSelfInsert = FALSE;
+        }
+        LX_LOG(L"ime", L"中文标点 vk=%u shift=%d -> %u chars (含首选)",
+               (uint32_t)wParam, (int)shift, n);
+        return true;
+    }
+
+    // 非拼音活动：直接上屏标点
+    _fSelfInsert = TRUE;
+    InsertTextAtSelection(punct);
+    _fSelfInsert = FALSE;
+    LX_LOG(L"ime", L"中文标点 vk=%u shift=%d -> %u chars",
+           (uint32_t)wParam, (int)shift, n);
+    return true;
 }
 
 void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pfEaten)
@@ -563,14 +632,15 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         return;
     }
 
-    // 非活动态：只有字母键才启动拼音；退格/标点/数字等一切非字母键直接放行，
-    // 绝不能吞掉退格（否则已上屏文字无法删除）或把控制字符当拼音。
+    // 非活动态：字母键启动拼音；退格等控制键放行；中文标点转换并上屏；
+    // 其余非字母键放行（绝不能吞掉退格，否则已上屏文字无法删除）。
     if (!PinyinActive())
     {
         if (!IsLetterKey(wParam))
         {
             if (wParam == VK_BACK)
                 _lastBackspaceTick = GetTickCount64(); // 退格删除：抑制随之而来的补全预测
+            if (CommitChinesePunct(wParam)) return;    // 中文标点（已上屏，吃掉）
             *pfEaten = FALSE;
             return;
         }
@@ -600,13 +670,19 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         ClearCandidates();
         SendHide();
         return;
-    // 翻页：PageDown / = 下一页，PageUp / - 上一页
+    // 翻页：PageDown 下一页、PageUp 上一页；=/− 无 Shift 翻页、Shift 出 ＋/——
     case VK_NEXT:
-    case VK_OEM_PLUS:
         PageCandidates(+1);
         return;
     case VK_PRIOR:
+        PageCandidates(-1);
+        return;
+    case VK_OEM_PLUS:
+        if (shiftOrCaps && CommitChinesePunct(wParam)) return;
+        PageCandidates(+1);
+        return;
     case VK_OEM_MINUS:
+        if (shiftOrCaps && CommitChinesePunct(wParam)) return;
         PageCandidates(-1);
         return;
     case VK_SPACE:
@@ -618,7 +694,7 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         return;
     }
     default:
-        if (wParam >= L'1' && wParam <= L'9')
+        if (wParam >= L'1' && wParam <= L'9' && !shiftOrCaps)
         {
             std::wstring hanzi;
             uint32_t idx = _pageStart + (uint32_t)(wParam - L'1');
@@ -626,7 +702,9 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
             else                          PinyinCommitRaw();
             return;
         }
-        // 标点/其他：优先提交汉字首选（标点随后放行），无候选则保留字母原文
+        // 中文标点（。，？！（）等）：提交首选汉字后上屏标点
+        if (CommitChinesePunct(wParam)) return;
+        // 未映射的其他键：提交汉字首选（原键随后放行），无候选则保留字母原文
         {
             std::wstring hanzi;
             if (GetCandidate(0, hanzi)) PinyinCommitHanzi(hanzi);

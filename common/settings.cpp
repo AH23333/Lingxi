@@ -40,6 +40,7 @@ Settings LoadSettings()
     if (GetDword(hKey, L"DarkMode", v) && v <= 2) s.darkMode = v;
     if (GetDword(hKey, L"EnCompletion", v)) s.enCompletion = v != 0;
     if (GetDword(hKey, L"Paused", v)) s.paused = v != 0;
+    if (GetDword(hKey, L"CnPunct", v)) s.cnPunct = v != 0;
 
     RegCloseKey(hKey);
     return s;
@@ -57,6 +58,7 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"DarkMode", s.darkMode);
     SetDword(hKey, L"EnCompletion", s.enCompletion ? 1 : 0);
     SetDword(hKey, L"Paused", s.paused ? 1 : 0);
+    SetDword(hKey, L"CnPunct", s.cnPunct ? 1 : 0);
 
     RegCloseKey(hKey);
 }
