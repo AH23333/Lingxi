@@ -2,6 +2,7 @@
 
 #include "../common/proto.h"
 #include "../common/pipe_util.h"
+#include "../common/settings.h"
 #include "../common/log.h"
 
 namespace lingxi {
@@ -294,14 +295,28 @@ void PipeServer::PredictProc()
 
         if (!e.c || !e.c->alive) continue; // 客户端已断开，结果作废
 
+        // 用户设置（每次请求实时读取，µs 级注册表查询）
+        Settings st = LoadSettings();
+        if (!e.pinyin && !st.enCompletion)
+        {
+            // 英文逐键补全关闭：纯英文上下文不出候选（中文上下文续写保留）
+            bool asciiOnly = true;
+            for (wchar_t ch : e.text)
+                if (ch > 0x7F) { asciiOnly = false; break; }
+            if (asciiOnly) pred.cands.clear();
+        }
+        if (pred.cands.size() > st.candidateCount)
+            pred.cands.resize(st.candidateCount);
+
         {
             EnterCriticalSection(&_cs);
             _active = e.c;
             e.c->active = true;
             LeaveCriticalSection(&_cs);
         }
+        bool dark = (st.darkMode == 0) ? e.dark : (st.darkMode == 2);
         if (!pred.cands.empty())
-            _wnd->Show(e.caret, pred.cands, e.dark, e.ver);
+            _wnd->Show(e.caret, pred.cands, dark, e.ver);
         else
             _wnd->Hide();
         SendCandidates(e.c, e.ver, pred);

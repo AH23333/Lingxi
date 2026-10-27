@@ -128,7 +128,8 @@ private:
     DWORD _tmSinkCookie = TF_INVALID_COOKIE;
     DWORD _tfSinkCookie = TF_INVALID_COOKIE;
     DWORD _editSinkCookie = TF_INVALID_COOKIE;
-    LANGID _lastLangid = 0; // 按键路径语言变化检测（替代 CTF 上不可连接的激活 sink）
+    LANGID _lastLangid = 0; // 按键路径语言变化检测
+    bool _cachedPinyinEnabled = true; // 按键路径设置开关变化检测（托盘/设置页改动即时生效）
     ITfContext* _pEditSinkCtx = nullptr; // 持有引用
     BOOL _fSelfInsert = FALSE;           // 自己上屏引发的编辑，忽略其 OnEndEdit
 

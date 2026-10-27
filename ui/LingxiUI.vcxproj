@@ -58,6 +58,7 @@
     <ClCompile Include="main.cpp" />
     <ClCompile Include="window.cpp" />
     <ClCompile Include="pipeserver.cpp" />
+    <ClCompile Include="settingsui.cpp" />
     <ClCompile Include="engine\ngram.cpp" />
     <ClCompile Include="engine\llm.cpp" />
     <ClCompile Include="engine\pinyin.cpp" />
@@ -65,7 +66,11 @@
   <ItemGroup>
     <ClInclude Include="window.h" />
     <ClInclude Include="pipeserver.h" />
+    <ClInclude Include="settingsui.h" />
     <ClInclude Include="engine\predictor.h" />
+  </ItemGroup>
+  <ItemGroup>
+    <ResourceCompile Include="app.rc" />
   </ItemGroup>
   <ItemGroup>
     <ProjectReference Include="..\common\common.vcxproj" />

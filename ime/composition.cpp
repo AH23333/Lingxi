@@ -12,6 +12,7 @@
 #include "../common/proto.h"
 #include "../common/guids.h"
 #include "../common/log.h"
+#include "../common/settings.h"
 
 #include <functional>
 
@@ -74,13 +75,21 @@ BOOL DetectPinyinModeSEH(CTextService* svc)
     }
 }
 
-// 按键路径入口：语言变化（若发生）→ 投递延迟检测；检测本身绝不在按键分发内执行。
+// 按键路径入口：语言变化或设置开关变化（若发生）→ 投递延迟检测；
+// 检测本身绝不在按键分发内执行。两个探测都是 µs 级只读查询。
 void CTextService::MaybeRedetectPinyinMode()
 {
     LANGID cur = LOWORD((UINT_PTR)GetKeyboardLayout(0));
     if (cur != _lastLangid)
     {
         _lastLangid = cur;
+        RequestModeDetect();
+        return;
+    }
+    Settings st = LoadSettings(); // 托盘/设置页的开关改动即时生效
+    if (st.pinyinEnabled != _cachedPinyinEnabled)
+    {
+        _cachedPinyinEnabled = st.pinyinEnabled;
         RequestModeDetect();
     }
 }
@@ -114,16 +123,14 @@ void HandlePinyinKeySEH(CTextService* svc, ITfContext* pContext, WPARAM wParam, 
 
 void CTextService::DetectPinyinMode()
 {
-    // 拼音模式 = 前台键盘 TIP 是我们 && 我们 TIP 的激活档案是 zh-CN。
+    // 拼音模式 = 前台键盘 TIP 是我们 && 我们 TIP 的激活档案是 zh-CN && 设置未关闭。
     // ⚠️ 两个铁律（PITFALLS #17/#18）：
     //   a) 本函数只在封送窗口消息（消息泵空闲点）里跑，绝不在按键分发或激活回调内；
     //   b) 判据用 GetActiveLanguageProfile 的真实激活档案——纯 TSF TIP 切换
-    //      profile 时线程 HKL 不变，GetKeyboardLayout 判不了语言（e2e 曾用
-    //      LoadKeyboardLayout 伪造 HKL 掩盖了这一点，导致真实应用全不激活）。
-    // 默认启用；LINGXI_PINYIN=0 可退回纯直通（zh-CN 不再进组合）。
+    //      profile 时线程 HKL 不变，GetKeyboardLayout 判不了语言。
+    // 开关读用户设置（托盘/设置页，HKCU\Software\LingxiIme），实时生效。
     bool py = false;
-    wchar_t flag[8] = L"";
-    bool disabled = GetEnvironmentVariableW(L"LINGXI_PINYIN", flag, 8) > 0 && flag[0] == L'0';
+    bool disabled = !LoadSettings().pinyinEnabled;
     if (!disabled && _pThreadMgr)
     {
         ITfKeystrokeMgr* pKm = nullptr;

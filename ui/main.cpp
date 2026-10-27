@@ -7,6 +7,7 @@
 
 #include "window.h"
 #include "pipeserver.h"
+#include "settingsui.h"
 #include "engine/predictor.h"
 #include "../common/log.h"
 
@@ -87,6 +88,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     if (hReady) SetEvent(hReady); // 管道服务已监听；句柄随进程存活，不主动关
 
     LX_LOG(L"ui", L"LingxiUI 启动完成");
+    lingxi::InitTrayAndSettings(hInst); // 托盘 + 设置入口（右下角）
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0)

@@ -48,12 +48,14 @@
   <ItemGroup>
     <ClCompile Include="guids.cpp" />
     <ClCompile Include="pipe_util.cpp" />
+    <ClCompile Include="settings.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="guids.h" />
     <ClInclude Include="log.h" />
     <ClInclude Include="proto.h" />
     <ClInclude Include="pipe_util.h" />
+    <ClInclude Include="settings.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
