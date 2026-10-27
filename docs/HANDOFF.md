@@ -37,12 +37,12 @@ Windows 端 TSF 系统级 AI 输入法（代号灵犀）：两进程架构（Ime
 cd /d D:\Visual Studio Code\Something\LingxiIme
 tools\build.cmd                 :: 全量构建（含词表/llama 运行时/模型的 robocopy 就位）
 bin\Debug\engine_test.exe       :: 引擎+拼音单测，应 9/9 PASS
-bin\Debug\e2e.exe               :: 端到端回归，exit=0（机器空闲时跑更稳）
-set LINGXI_PINYIN=1 && bin\Debug\e2e.exe   :: 拼音链路回归（组合用例为诊断级 WARN，不阻塞）
+bin\Debug\e2e.exe               :: 端到端回归，exit=0（机器空闲时跑更稳；拼音用例已默认含在内）
 bin\Debug\LingxiUI.exe --probe-llm   :: LLM 诊断（看 %TEMP%\lingxi-ime.log 的 [llm] 行）
+bin\Debug\LingxiUI.exe --probe-pinyin :: 拼音候选诊断（[pinyin] 行，常见输入首选/候选列表）
 ```
 
-- 注册状态：已注册（HKLM，管理员完成）。`tools\imecheck.ps1` 可验证。**重建 DLL 不需要重新注册**（注册表指向固定路径；build.cmd 用随机后缀改名旧产物避开锁）
+- 注册状态：已注册（HKLM，管理员完成）。`tools\imecheck.ps1` 可验证。**重建 DLL 不需要重新注册，但已运行的应用会继续用旧版 DLL**（CTF 加载后改名不换新）——验证新行为前先重启目标应用或注销重登
 - 日志：设 `LINGXI_LOG=1` → `%TEMP%\lingxi-ime.log`（**UTF-16LE**）。注意：e2e 每 attempt 删日志文件，DLL 缓存句柄会写已删除文件（代际混杂，取证用 VEH 崩溃文件 + stdout）
 - 测试注意：用户正在用机器时 ctfmon 会反复抢前台（TIP 去激活/重激活 churn），e2e 会受干扰——重试壳 + 就绪等待已缓解，理想是空闲时跑；偶发首断言 fail-fast 属预期
 - **git 规矩（用户要求）**：小步提交、每步验证、提交信息中文。仓库在 LingxiIme/ 内，`core.autocrlf=false`，`* -text`

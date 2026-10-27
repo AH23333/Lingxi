@@ -24,6 +24,31 @@ static int ProbeLlm()
     return 0;
 }
 
+// 拼音引擎诊断：常见输入的首选/候选列表写入日志（%TEMP%\lingxi-ime.log）
+static int ProbePinyin()
+{
+    LX_LOG(L"pinyin", L"probe: 开始");
+    lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
+    LX_LOG(L"pinyin", L"probe: 引擎已加载");
+    const wchar_t* inputs[] = { L"jintian", L"jintianqi", L"nihao", L"zhidao", L"ni hao", L"moran" };
+    for (const wchar_t* in : inputs)
+    {
+        uint64_t t0 = GetTickCount64();
+        lingxi::Prediction pred = py->Predict(in);
+        std::wstring joined;
+        for (size_t k = 0; k < pred.cands.size(); k++)
+        {
+            if (k) joined += L" | ";
+            joined += pred.cands[k];
+        }
+        LX_LOG(L"pinyin", L"probe '%ls' -> [%ls] (%u cands, %llu ms)",
+               in, joined.c_str(), (uint32_t)pred.cands.size(),
+               (unsigned long long)(GetTickCount64() - t0));
+    }
+    delete py;
+    return 0;
+}
+
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
 {
     int argc = 0;
@@ -31,6 +56,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     if (argv && argc >= 2 && wcscmp(argv[1], L"--probe-llm") == 0)
     {
         int rc = ProbeLlm();
+        LocalFree(argv);
+        return rc;
+    }
+    if (argv && argc >= 2 && wcscmp(argv[1], L"--probe-pinyin") == 0)
+    {
+        int rc = ProbePinyin();
         LocalFree(argv);
         return rc;
     }
