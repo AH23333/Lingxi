@@ -218,42 +218,58 @@ static BOOL RegisterCategories()
     return SUCCEEDED(hr);
 }
 
-static void UnregisterProfiles()
+// 返回 S_OK 或失败 HRESULT：CTF 的 Unregister 只写 HKLM，无管理员必失败
+// （PITFALLS #4）——失败必须向上传播，否则 regsvr32 /u 报"Done"造成假成功，
+// 残留的 TIP/Category 键配合已删的 CLSID 会形成"幽灵输入法"。
+static HRESULT UnregisterProfiles()
 {
     HRESULT hrInit = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    HRESULT hr = S_OK;
     ITfInputProcessorProfiles* pProfiles = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, NULL, CLSCTX_INPROC_SERVER,
                                    IID_ITfInputProcessorProfiles, (void**)&pProfiles)))
     {
-        pProfiles->Unregister(CLSID_LingxiTextService);
+        hr = pProfiles->Unregister(CLSID_LingxiTextService);
+        if (FAILED(hr))
+            LX_LOG(L"reg", L"InputProcessorProfiles::Unregister: 0x%08X（无管理员时预期失败）", hr);
         pProfiles->Release();
     }
     if (SUCCEEDED(hrInit)) CoUninitialize();
+    return hr;
 }
 
-static void UnregisterCategories()
+static HRESULT UnregisterCategories()
 {
     HRESULT hrInit = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
+    HRESULT hr = S_OK;
     ITfCategoryMgr* pCat = nullptr;
     if (SUCCEEDED(CoCreateInstance(CLSID_TF_CategoryMgr, NULL, CLSCTX_INPROC_SERVER,
                                    IID_ITfCategoryMgr, (void**)&pCat)))
     {
-        pCat->UnregisterCategory(CLSID_LingxiTextService,
-                                 GUID_TFCAT_TIP_KEYBOARD,
-                                 CLSID_LingxiTextService);
+        hr = pCat->UnregisterCategory(CLSID_LingxiTextService,
+                                      GUID_TFCAT_TIP_KEYBOARD,
+                                      CLSID_LingxiTextService);
+        if (FAILED(hr))
+            LX_LOG(L"reg", L"UnregisterCategory: 0x%08X（无管理员时预期失败）", hr);
         pCat->Release();
     }
     if (SUCCEEDED(hrInit)) CoUninitialize();
+    return hr;
 }
 
-static void UnregisterServer()
+// 删除 COM CLSID 键。返回 ERROR_SUCCESS 表示至少一侧删除成功。
+static LSTATUS UnregisterServer()
 {
     wchar_t clsidStr[64];
     GuidToString(CLSID_LingxiTextService, clsidStr);
     wchar_t sub[96];
     _snwprintf_s(sub, _TRUNCATE, L"Software\\Classes\\CLSID\\%s", clsidStr);
-    RegDeleteTreeW(HKEY_LOCAL_MACHINE, sub);
-    RegDeleteTreeW(HKEY_CURRENT_USER, sub);
+    LSTATUS rc1 = RegDeleteTreeW(HKEY_LOCAL_MACHINE, sub);
+    LSTATUS rc2 = RegDeleteTreeW(HKEY_CURRENT_USER, sub);
+    if (rc1 == ERROR_SUCCESS || rc2 == ERROR_SUCCESS) return ERROR_SUCCESS;
+    // 两侧键都不存在 = 本就未注册，幂等视为成功
+    if (rc1 == ERROR_FILE_NOT_FOUND && rc2 == ERROR_FILE_NOT_FOUND) return ERROR_SUCCESS;
+    return rc1 != ERROR_FILE_NOT_FOUND ? rc1 : rc2;
 }
 
 STDAPI DllRegisterServer()
@@ -273,11 +289,16 @@ STDAPI DllRegisterServer()
 
 STDAPI DllUnregisterServer()
 {
-    UnregisterCategories();
-    UnregisterProfiles();
-    UnregisterServer();
-    LX_LOG(L"reg", L"DllUnregisterServer 完成");
-    return S_OK;
+    // 任一 CTF 注销失败 → SELFREG_E_CLASS：让 regsvr32 /u 显式报错，
+    // 提醒用户以管理员重跑，而不是假 "Done" 留下幽灵 TIP 键。
+    HRESULT hrCat = UnregisterCategories();
+    HRESULT hrProf = UnregisterProfiles();
+    LSTATUS rcSrv = UnregisterServer();
+    LX_LOG(L"reg", L"DllUnregisterServer: cat=0x%08X profiles=0x%08X server=%ld",
+           (uint32_t)hrCat, (uint32_t)hrProf, (long)rcSrv);
+    if (SUCCEEDED(hrCat) && SUCCEEDED(hrProf) && rcSrv == ERROR_SUCCESS)
+        return S_OK;
+    return SELFREG_E_CLASS;
 }
 
 // ==================== DllMain ====================
