@@ -124,7 +124,10 @@ void PipeServer::ClientProc(ClientCtx* c)
     {
         uint8_t type = 0;
         std::vector<uint8_t> body;
-        if (!ReadFrame(c->hPipe, _hStop, type, body)) break;
+        bool rf = ReadFrame(c->hPipe, _hStop, type, body);
+        LX_LOG(L"client", L"ReadFrame pipe=%p ok=%d type=%u body=%u",
+               c->hPipe, (int)rf, (uint32_t)type, (uint32_t)body.size());
+        if (!rf) break;
         HandleMsg(c, type, body);
     }
 
@@ -209,6 +212,9 @@ void PipeServer::HandleCtx(ClientCtx* c, const std::vector<uint8_t>& body)
     std::wstring text;
     if (!ReadStr(p, end, text)) return;
 
+    LX_LOG(L"pipe", L"CTX ver=%u chars=%u flags=%u",
+           m.ver, (uint32_t)text.size(), (uint32_t)m.flags);
+
     if (text.empty())
     {
         bool mine = false;
@@ -288,10 +294,14 @@ void PipeServer::PredictProc()
 
         // 预测期间不持任何锁（引擎可能耗时 300ms）
         // 拼音模式走专用引擎（组合字母串→汉字），否则走上下文降级链
+        uint64_t tPred = GetTickCount64();
         Prediction pred = (e.pinyin && _pinyinEngine)
                               ? _pinyinEngine->Predict(e.text)
                               : _engine->Predict(e.text);
         if (WaitForSingleObject(_hStop, 0) != WAIT_TIMEOUT) break;
+        LX_LOG(L"pipe", L"预测 ver=%u pinyin=%d 耗时=%llums -> %u 候选",
+               e.ver, (int)e.pinyin, (unsigned long long)(GetTickCount64() - tPred),
+               (uint32_t)pred.cands.size());
 
         if (!e.c || !e.c->alive) continue; // 客户端已断开，结果作废
 
@@ -313,6 +323,9 @@ void PipeServer::PredictProc()
         }
         if (pred.cands.size() > st.candidateCount)
             pred.cands.resize(st.candidateCount);
+        LX_LOG(L"pipe", L"裁剪后候选=%u paused=%d enComp=%d count=%u",
+               (uint32_t)pred.cands.size(), (int)st.paused, (int)st.enCompletion,
+               (uint32_t)st.candidateCount);
 
         {
             EnterCriticalSection(&_cs);

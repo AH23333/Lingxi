@@ -94,6 +94,8 @@ struct LlamaApi
     void (*free_ctx)(llama_context*) = nullptr;
     void (*free_model)(llama_model*) = nullptr;
     void (*log_set)(ggml_log_callback, void*) = nullptr;
+    llama_memory_t (*get_memory)(const llama_context*) = nullptr;
+    bool (*memory_seq_rm)(llama_memory_t, llama_seq_id, llama_pos, llama_pos) = nullptr;
 
     bool ok = false;
 
@@ -141,6 +143,8 @@ struct LlamaApi
             { "llama_free",                  (void**)&free_ctx,            true },
             { "llama_model_free",            (void**)&free_model,          true },
             { "llama_log_set",               (void**)&log_set,             false },
+            { "llama_get_memory",            (void**)&get_memory,          false },
+            { "llama_memory_seq_rm",         (void**)&memory_seq_rm,       false },
         };
         for (auto& b : binds)
         {
@@ -253,6 +257,8 @@ private:
 
     Prediction Generate(const std::wstring& context)
     {
+        // M4.5：KV cache 增量复用需串行化（预热线程与预测线程共用 _ctx）
+        std::lock_guard<std::mutex> lock(_genMutex);
         Prediction pred;
 
         // Qwen chat 模板；上下文取尾部 200 字符防超窗
@@ -275,14 +281,49 @@ private:
             n = (int)kPromptMaxTokens;
         }
 
+        // ---- M4.5 KV 增量复用 ----
+        // 打字是追加型操作：新 prompt 与上次通常共享长前缀。策略：
+        //   1) 先弃掉上次生成的尾部（KV 只留上次 prompt）；
+        //   2) 求公共前缀 common，截掉分叉部分；
+        //   3) 只 decode tokens[common..n)（位置由 llama_decode 自动跟踪）；
+        //   4) prompt 完全相同 → 缩 1 个 token 重算末位 logits。
+        // 数学上与全量重评估等价（greedy 输出不变），代价从全量 prefill 降到 delta。
+        // 任意一步不对劲 → 回退全量（_hasPrev=false + 清 cache）。
+        size_t common = 0;
+        bool kvUsable = _api.get_memory && _api.memory_seq_rm;
+        if (_hasPrev && kvUsable)
+        {
+            llama_memory_t mem = _api.get_memory(_ctx);
+            _api.memory_seq_rm(mem, 0, (llama_pos)_prevPrompt.size(), -1); // 弃生成尾部
+            while (common < _prevPrompt.size() && common < (size_t)n &&
+                   _prevPrompt[common] == tokens[common])
+                common++;
+            if (common == (size_t)n && n > 0) common = n - 1; // 完全相同 → 重算末位
+            if (common < _prevPrompt.size())
+                _api.memory_seq_rm(mem, 0, (llama_pos)common, -1); // 截分叉
+        }
+        else if (kvUsable)
+        {
+            _api.get_memory(_ctx); // 首次：ctx 新建即空，无需处理
+        }
+
         std::string outUtf8;
         uint64_t t0 = GetTickCount64();
-        llama_batch batch = _api.batch_get_one(tokens.data(), n);
+        llama_batch batch = (common < (size_t)n)
+                                ? _api.batch_get_one(tokens.data() + common, n - (int)common)
+                                : _api.batch_get_one(tokens.data() + n - 1, 1);
         for (int step = 0; step < kMaxGenTokens; step++)
         {
-            if (_api.decode(_ctx, batch) != 0) break;
+            if (_api.decode(_ctx, batch) != 0)
+            {
+                // decode 失败：KV 状态不可信，下次全量重评估
+                _hasPrev = false;
+                if (_api.get_memory && _api.memory_seq_rm)
+                    _api.memory_seq_rm(_api.get_memory(_ctx), 0, 0, -1);
+                break;
+            }
             float* logits = _api.get_logits_ith(_ctx, -1);
-            if (!logits) break;
+            if (!logits) { _hasPrev = false; break; }
             int32_t nv = _api.vocab_n_tokens(_vocab);
             int best = 0;
             for (int32_t v = 1; v < nv; v++)
@@ -294,6 +335,13 @@ private:
             if (np > 0) outUtf8.append(piece, np);
             if (GetTickCount64() - t0 > kBudgetMs) break;
             batch = _api.batch_get_one((llama_token*)&best, 1);
+        }
+
+        // 保存 prompt 状态供下次增量（生成尾部由下次入口统一弃掉）
+        if (n > 0)
+        {
+            _prevPrompt.assign(tokens.begin(), tokens.begin() + n);
+            _hasPrev = true;
         }
 
         std::wstring cont = Utf8ToWide(outUtf8.data(), (int)outUtf8.size());
@@ -361,6 +409,11 @@ private:
     bool _ready = false;
     bool _failed = false;
     std::once_flag _initFlag;
+
+    // M4.5 KV 增量复用状态（_genMutex 保护）
+    std::mutex _genMutex;
+    std::vector<llama_token> _prevPrompt;
+    bool _hasPrev = false;
 };
 
 } // namespace

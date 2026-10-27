@@ -16,11 +16,29 @@ static int ProbeLlm()
     uint64_t t0 = GetTickCount64();
     LX_LOG(L"llm", L"probe: 开始");
     lingxi::IPredictor* llm = lingxi::CreateLlmPredictor();
-    lingxi::Prediction pred = llm->Predict(L"今天天气不错，");
+    lingxi::Prediction pred = llm->Predict(L"今天天气");
     LX_LOG(L"llm", L"probe: %u 候选, 耗时 %llu ms",
            (uint32_t)pred.cands.size(), (unsigned long long)(GetTickCount64() - t0));
     for (auto& c : pred.cands)
         LX_LOG(L"llm", L"probe cand: %ls", c.c_str());
+
+    // ---- M4.5 KV 增量复用验证：追加/相同 prompt 的延迟应显著低于首次 ----
+    auto timed = [&](const wchar_t* ctx) {
+        uint64_t t = GetTickCount64();
+        lingxi::Prediction p = llm->Predict(ctx);
+        uint64_t ms = GetTickCount64() - t;
+        LX_LOG(L"llm", L"probe incr '%ls' -> %u cands, 首选'%ls', %llu ms",
+               ctx, (uint32_t)p.cands.size(),
+               p.cands.empty() ? L"" : p.cands[0].c_str(), (unsigned long long)ms);
+        return p;
+    };
+    timed(L"今天天气不错");                          // 追加型增量
+    lingxi::Prediction a = timed(L"今天天气不错，");   // 追加型增量
+    lingxi::Prediction b = timed(L"今天天气不错，");   // 完全相同（1-token 重算路径）
+    if (!a.cands.empty() && !b.cands.empty() && a.cands[0] == b.cands[0])
+        LX_LOG(L"llm", L"probe incr 一致性: OK（相同 prompt 首选一致）");
+    else
+        LX_LOG(L"llm", L"probe incr 一致性: MISMATCH（增量路径有误，需排查）");
     delete llm;
     return 0;
 }
@@ -67,6 +85,16 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
         return rc;
     }
     if (argv) LocalFree(argv);
+
+    // 早期单实例：任何窗口/引擎/LLM 加载前先占命名 Mutex，重复实例立即退出。
+    // 旧方案靠 pipe 的 FILE_FLAG_FIRST_PIPE_INSTANCE 检测，时机太晚——重复实例
+    // 已完整加载 LLM、创建托盘后才退出，造成资源浪费与多实例竞争。
+    HANDLE hSingleton = CreateMutexW(NULL, TRUE, L"Local\\LingxiImeSingleton");
+    if (!hSingleton || GetLastError() == ERROR_ALREADY_EXISTS)
+    {
+        if (hSingleton) CloseHandle(hSingleton);
+        return 0;
+    }
 
     // 就绪信号：进程启动即创建未触发事件，管道服务监听后置信号。
     // e2e 等此事件替代盲等（冷启动 LLM 加载可达数秒，管道未就绪时 CTX 被丢弃）。
