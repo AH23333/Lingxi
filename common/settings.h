@@ -21,6 +21,7 @@ struct Settings
     bool vMode = true;            // v 模式：中文下首字母 v 直通英文
     bool shuangpin =false;       // 小鹤双拼：每音节两键（声母键+韵母键）
     bool symbolHotkey = true;    // 全局热键 Ctrl+Shift+B 调出符号面板（独占该组合键）
+    bool traditionalOutput = false; // 繁体输出：候选简体→繁体（字符级映射）
 };
 
 Settings LoadSettings();

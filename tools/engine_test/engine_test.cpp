@@ -355,6 +355,22 @@ int wmain()
                 lingxi::SaveSettings(s0); // 恢复，避免污染后续测试
             }
 
+            // P4d. 繁体输出：开启 Traditional 后，"diannao" 首候选为"電腦"
+            {
+                lingxi::Settings s0 = lingxi::LoadSettings();
+                lingxi::Settings s1 = s0;
+                s1.traditionalOutput = true;
+                lingxi::SaveSettings(s1);
+                lingxi::Prediction r = py->Predict(L"diannao");
+                bool ok = !r.cands.empty() && r.cands[0] == L"電腦";
+                wchar_t detail[192];
+                _snwprintf_s(detail, _TRUNCATE, L"first='%ls' cands=%zu",
+                             r.cands.empty() ? L"" : r.cands[0].c_str(),
+                             r.cands.size());
+                Report(ok, "pinyin: traditional diannao -> 電腦", detail);
+                lingxi::SaveSettings(s0); // 恢复，避免污染后续测试
+            }
+
             // P4b. 高频口语词（口语覆盖层）：首候选必须精确命中
             {
                 struct Case { const wchar_t* in; const wchar_t* expect; };

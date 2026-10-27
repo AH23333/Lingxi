@@ -242,6 +242,9 @@ public:
             p.cands = std::move(reordered);
         }
 
+        if (st.traditionalOutput)
+            for (auto& w : p.cands) w = ToTraditional(w);
+
         p.replaceLen = 0;
         return p;
     }
@@ -290,6 +293,9 @@ private:
     bool _userDirty = false;
     mutable std::mutex _udMtx;
 
+    // 简体→繁体字符映射（Unicode 码点，正确处理扩展区代理对）
+    std::unordered_map<uint32_t, uint32_t> _st2t;
+
     // -----------------------------------------------------------------------
     // 加载
     // -----------------------------------------------------------------------
@@ -325,6 +331,72 @@ private:
         BuildSyllableSet();
         BuildFuzzyIndex();
         LoadUserDict();
+        LoadTraditionalMap();
+    }
+
+    // 加载简体→繁体字符映射（data/st2t.txt，每行「简\t繁」，单字码点）
+    void LoadTraditionalMap()
+    {
+        std::string raw = ReadAll(ExeDir() + "\\data\\st2t.txt");
+        if (raw.empty()) return;
+        for (auto& line : Split(raw, '\n'))
+        {
+            std::string l = line;
+            if (!l.empty() && l.back() == '\r') l.pop_back();
+            size_t tab = l.find('\t');
+            if (tab == std::string::npos) continue;
+            std::wstring k = FromUtf8(l.substr(0, tab));
+            std::wstring v = FromUtf8(l.substr(tab + 1));
+            uint32_t cpK = FirstCodePoint(k);
+            uint32_t cpV = FirstCodePoint(v);
+            if (cpK != 0xFFFFFFFF && cpV != 0xFFFFFFFF) _st2t[cpK] = cpV;
+        }
+    }
+
+    // 取 UTF-16 串首个 Unicode 码点（处理代理对）；空串返回 0xFFFFFFFF
+    static uint32_t FirstCodePoint(const std::wstring& s)
+    {
+        if (s.empty()) return 0xFFFFFFFF;
+        uint32_t c = (uint32_t)(uint16_t)s[0];
+        if (c >= 0xD800 && c <= 0xDBFF && s.size() >= 2)
+        {
+            uint32_t lo = (uint32_t)(uint16_t)s[1];
+            c = 0x10000 + ((c - 0xD800) << 10) + (lo - 0xDC00);
+        }
+        return c;
+    }
+
+    // 简体串→繁体串：逐码点查表，无映射则保留原字
+    std::wstring ToTraditional(const std::wstring& s)
+    {
+        if (_st2t.empty()) return s;
+        std::wstring out;
+        out.reserve(s.size());
+        for (size_t i = 0; i < s.size();)
+        {
+            uint32_t cp = (uint32_t)(uint16_t)s[i];
+            size_t step = 1;
+            if (cp >= 0xD800 && cp <= 0xDBFF && i + 1 < s.size())
+            {
+                uint32_t lo = (uint32_t)(uint16_t)s[i + 1];
+                cp = 0x10000 + ((cp - 0xD800) << 10) + (lo - 0xDC00);
+                step = 2;
+            }
+            auto it = _st2t.find(cp);
+            uint32_t mapped = (it != _st2t.end()) ? it->second : cp;
+            if (mapped > 0xFFFF)
+            {
+                mapped -= 0x10000;
+                out.push_back((wchar_t)(0xD800 + (mapped >> 10)));
+                out.push_back((wchar_t)(0xDC00 + (mapped & 0x3FF)));
+            }
+            else
+            {
+                out.push_back((wchar_t)mapped);
+            }
+            i += step;
+        }
+        return out;
     }
 
     void BuildIndexes()
