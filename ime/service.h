@@ -21,6 +21,7 @@ namespace lingxi {
 
 constexpr LONG kCtxMaxChars = 300;          // 上下文窗口（光标前字符数）
 // WM_APP_LX_PICK 定义于 common/proto.h
+constexpr UINT WM_APP_LX_MODE = WM_APP + 2; // 封送窗口：消息泵空闲点安全检测拼音模式
 
 class CTextService :
     public ITfTextInputProcessorEx,
@@ -142,10 +143,11 @@ private:
 
     HWND _hwndMarshal = nullptr; // 隐藏封送窗口（宿主 UI 线程）
     static LRESULT CALLBACK MarshalWndProc(HWND, UINT, WPARAM, LPARAM);
-    void MaybeRedetectPinyinMode(); // 按键路径入口：语言变化/脏标记 → 惰性检测
+    void RequestModeDetect();       // 置脏 + 投递封送消息（消息泵空闲点检测）
+    void MaybeRedetectPinyinMode(); // 按键路径：语言变化 → RequestModeDetect
 
-    // 拼音模式：语言/TIP 前台/焦点变化只置 _modeDirty，实际检测延迟到
-    // 按键路径（宿主 UI 线程、远离 CTF 激活回调窗口）——见 PITFALLS 启动崩溃条目
+    // 拼音模式：激活/焦点/TIP 前台/语言变化只投递封送消息，实际检测在消息泵
+    // 空闲点执行（远离 CTF 激活回调与按键分发——见 PITFALLS #17/#18）
     bool _pinyinMode = false;
     std::atomic<bool> _modeDirty{ false }; // 语言/前台/焦点变化置位，按键路径执行检测
     bool _fInPinyinEdit = false;  // 组合编辑会话执行中（抑制 OnEndEdit 自激发）

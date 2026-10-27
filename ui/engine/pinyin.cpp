@@ -33,7 +33,7 @@ namespace lingxi {
 
 namespace {
 
-constexpr size_t kMaxCands = 5;        // 候选上限
+constexpr size_t kMaxCands = 9;        // 候选上限（数字键 1-9 对应）
 constexpr size_t kMaxChainSpan = 6;    // 单词最多拼接的音节数
 constexpr size_t kMaxPaths = 3;        // 切分保留的最优路径数
 constexpr size_t kMaxLetters = 50;     // 参与切分的字母数上限（超出保留尾部）

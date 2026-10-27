@@ -13,7 +13,7 @@ namespace lingxi {
 
 namespace {
 
-constexpr size_t kMaxCands = 5;
+constexpr size_t kMaxCands = 9;
 
 bool IsWordChar(wchar_t ch)
 {

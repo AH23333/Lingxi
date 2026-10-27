@@ -40,7 +40,7 @@ namespace {
 
 constexpr int kMaxGenTokens = 24;
 constexpr uint64_t kBudgetMs = 300;
-constexpr size_t kMaxCands = 5;
+constexpr size_t kMaxCands = 9;
 constexpr size_t kPromptMaxTokens = 384;
 
 std::wstring ExeDir()

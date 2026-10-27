@@ -42,7 +42,8 @@ STDMETHODIMP CReadSession::DoEditSession(TfEditCookie ec)
         {
             BOOL clipped = FALSE;
             RECT rcText{};
-            if (SUCCEEDED(pView->GetTextExt(ec, pBack, &rcText, &clipped)))
+            if (SUCCEEDED(pView->GetTextExt(ec, pBack, &rcText, &clipped)) &&
+                (rcText.right > rcText.left || rcText.bottom > rcText.top))
             {
                 rc = rcText;
                 hasRect = true;

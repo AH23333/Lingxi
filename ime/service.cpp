@@ -116,9 +116,8 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* pThreadMgr, TfClientId tid, 
     }
 
     _fActivated = true;
-    // 拼音模式：激活期只置脏标记，首次按键时在宿主 UI 线程上检测
-    //（绝不在激活回调窗口内调 TSF 查询，也无需 MTA 线程——见 PITFALLS 启动崩溃条目）
-    _modeDirty.store(true);
+    // 拼音模式：投递封送消息，在消息泵空闲点安全检测（绝不肏 CTF 回调窗口内）
+    RequestModeDetect();
     _pipe.Start(this, _hwndMarshal);
     _pipe.Send(MSG_ACTIVATE, NULL, 0);
     return S_OK;
@@ -164,10 +163,9 @@ bool CTextService::InitSinks()
     if (FAILED(_pThreadMgr->QueryInterface(IID_ITfSource, (void**)&pSrc))) return false;
     HRESULT hr1 = pSrc->AdviseSink(IID_ITfThreadMgrEventSink, (ITfThreadMgrEventSink*)this, &_tmSinkCookie);
     HRESULT hr2 = pSrc->AdviseSink(IID_ITfThreadFocusSink, (ITfThreadFocusSink*)this, &_tfSinkCookie);
-    // profile/语言切换的重判不再用 CTF 激活 sink：它在 ITfInputProcessorProfiles
-    // 上始终 CONNECT_E_CANNOTCONNECT（QI 已实现仍被拒，CTF 内部另有约束），且
-    // 全局单例上的 sink 注册正是当初堆损坏崩溃的事故面。改用廉价只读信号：
-    // 按键路径的语言变化检查 + KeySink 前台切换置脏（见 MaybeRedetectPinyinMode）。
+    // profile/语言切换的重判：置脏 + 投递封送消息，在消息泵空闲点安全检测。
+    // 判据用 GetActiveLanguageProfile（真实激活档案）——纯 TSF TIP 切换 profile
+    // 时线程 HKL 不变，不能用 GetKeyboardLayout 判语言（见 PITFALLS #17/#18）。
     pSrc->Release();
 
     ITfKeystrokeMgr* pKm = nullptr;
@@ -246,7 +244,7 @@ STDMETHODIMP CTextService::OnSetFocus(ITfDocumentMgr* pdimFocus, ITfDocumentMgr*
     // 注意参数顺序：SDK 中第一参数是"获得焦点"的文档，第二参数是"失去焦点"的。
     // 挂错方向会导致焦点切换后编辑 sink 停留在旧文档上，预测从此失灵。
     LX_LOG(L"ime", L"OnSetFocus got=%p prev=%p", pdimFocus, pdimPrevFocus);
-    _modeDirty.store(true); // 焦点变化后重判拼音/直通模式（按键路径惰性执行）
+    RequestModeDetect(); // 焦点变化后重判拼音/直通模式（消息泵空闲点执行）
     InitTextEditSink(pdimFocus);
     if (pdimFocus)
     {
@@ -483,14 +481,14 @@ STDMETHODIMP CTextService::OnSetFocus(BOOL fForeground)
 {
     _fForeground = fForeground;
     // TIP 前台切换（含同语言内切换到其他输入法）：重判拼音/直通模式
-    _modeDirty.store(true);
+    RequestModeDetect();
     LX_LOG(L"ime", L"KeySink OnSetFocus foreground=%d", fForeground);
     return S_OK;
 }
 
 STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM lParam, BOOL* pfEaten)
 {
-    // 惰性模式检测：语言变化/前台切换/激活只置脏标记，这里首次用到才查
+    // 语言变化（若发生）→ 投递延迟检测；检测本身绝不在按键分发内执行（PITFALLS #18）
     MaybeRedetectPinyinMode();
 
     // 拼音模式优先（字母进组合、组合态拦截编辑键）
@@ -565,6 +563,14 @@ LRESULT CALLBACK CTextService::MarshalWndProc(HWND hwnd, UINT msg, WPARAM wParam
         auto* svc = (CTextService*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
         if (svc)
             svc->HandlePickFromUI((uint32_t)lParam, (uint32_t)wParam); // ver, index
+        return 0;
+    }
+    if (msg == WM_APP_LX_MODE)
+    {
+        auto* svc = (CTextService*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+        // 消息泵空闲点：此处调 GetActiveLanguageProfile 远离按键分发与激活回调
+        if (svc && svc->_modeDirty.exchange(false))
+            DetectPinyinModeSEH(svc);
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wParam, lParam);

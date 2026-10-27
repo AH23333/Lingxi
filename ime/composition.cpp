@@ -74,18 +74,24 @@ BOOL DetectPinyinModeSEH(CTextService* svc)
     }
 }
 
-// 按键路径入口：语言变化（GetKeyboardLayout，纯 user32 查询）或脏标记 → 惰性检测。
-// 全部信号零 CTF 重入；GetForeground 仅在真正检测时调用一次。
+// 按键路径入口：语言变化（若发生）→ 投递延迟检测；检测本身绝不在按键分发内执行。
 void CTextService::MaybeRedetectPinyinMode()
 {
     LANGID cur = LOWORD((UINT_PTR)GetKeyboardLayout(0));
     if (cur != _lastLangid)
     {
         _lastLangid = cur;
-        _modeDirty.store(true);
+        RequestModeDetect();
     }
-    if (_modeDirty.exchange(false))
-        DetectPinyinModeSEH(this);
+}
+
+// 置脏 + 投递封送消息：检测在消息泵空闲点执行（WM_APP_LX_MODE），
+// 远离 CTF 激活回调窗口与按键分发（两者的 TSF 查询都出过事故，见 PITFALLS #17/#18）
+void CTextService::RequestModeDetect()
+{
+    _modeDirty.store(true);
+    if (_hwndMarshal)
+        PostMessageW(_hwndMarshal, WM_APP_LX_MODE, 0, 0);
 }
 
 // SEH 包裹拼音组合键处理：组合编辑会话同步跑在 CTF/TSF 框架内部，
@@ -108,11 +114,12 @@ void HandlePinyinKeySEH(CTextService* svc, ITfContext* pContext, WPARAM wParam, 
 
 void CTextService::DetectPinyinMode()
 {
-    // 拼音模式 = 前台键盘 TIP 是我们 && 当前输入语言是中文（zh-CN profile）。
-    // 全部用只读查询（GetForeground + GetKeyboardLayout）：
-    // ⚠️ 不要在按键路径上调 GetActiveLanguageProfile —— 它会触发 CTF 输入
-    // 上下文重算（实测：按键分发内调用导致 sandwich 上下文重建、GetTextExt
-    // 失效、候选窗锚点丢失，见 PITFALLS）。
+    // 拼音模式 = 前台键盘 TIP 是我们 && 我们 TIP 的激活档案是 zh-CN。
+    // ⚠️ 两个铁律（PITFALLS #17/#18）：
+    //   a) 本函数只在封送窗口消息（消息泵空闲点）里跑，绝不在按键分发或激活回调内；
+    //   b) 判据用 GetActiveLanguageProfile 的真实激活档案——纯 TSF TIP 切换
+    //      profile 时线程 HKL 不变，GetKeyboardLayout 判不了语言（e2e 曾用
+    //      LoadKeyboardLayout 伪造 HKL 掩盖了这一点，导致真实应用全不激活）。
     // 默认启用；LINGXI_PINYIN=0 可退回纯直通（zh-CN 不再进组合）。
     bool py = false;
     wchar_t flag[8] = L"";
@@ -121,16 +128,29 @@ void CTextService::DetectPinyinMode()
     {
         ITfKeystrokeMgr* pKm = nullptr;
         CLSID fg{};
-        if (SUCCEEDED(_pThreadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKm)))
+        bool weForeground = SUCCEEDED(_pThreadMgr->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKm)) &&
+                            SUCCEEDED(pKm->GetForeground(&fg)) && IsEqualCLSID(fg, CLSID_LingxiTextService);
+        if (pKm) pKm->Release();
+        if (weForeground)
         {
-            if (SUCCEEDED(pKm->GetForeground(&fg)) && IsEqualCLSID(fg, CLSID_LingxiTextService))
-                py = (LOWORD((UINT_PTR)GetKeyboardLayout(0)) == 0x0804);
-            pKm->Release();
+            ITfInputProcessorProfiles* pProfiles = nullptr;
+            if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, NULL, CLSCTX_INPROC_SERVER,
+                                           IID_ITfInputProcessorProfiles, (void**)&pProfiles)))
+            {
+                LANGID lang = 0;
+                GUID guidProfile{};
+                if (SUCCEEDED(pProfiles->GetActiveLanguageProfile(CLSID_LingxiTextService,
+                                                                  &lang, &guidProfile)) &&
+                    IsEqualGUID(guidProfile, GUID_LingxiProfile_zhCN))
+                {
+                    py = true;
+                }
+                pProfiles->Release();
+            }
         }
     }
     if (py != _pinyinMode)
-        LX_LOG(L"ime", L"拼音模式: %d (lang=0x%04X)", (int)py,
-               (unsigned)LOWORD((UINT_PTR)GetKeyboardLayout(0))); // 仅变化时记录
+        LX_LOG(L"ime", L"拼音模式: %d", (int)py); // 仅变化时记录
     _pinyinMode = py;
 }
 
@@ -301,15 +321,22 @@ void CTextService::SendPinyinCtx()
     if (!GetFocusContext(_pThreadMgr, &pCtx)) return;
 
     RECT rc{};
+    bool hasRect = false;
     ITfContext* pCtxSession = pCtx;
-    auto task = [this, pCtxSession, &rc](TfEditCookie ec) -> HRESULT
+    auto task = [this, pCtxSession, &rc, &hasRect](TfEditCookie ec) -> HRESULT
     {
         if (!_compRange) return E_FAIL;
         ITfContextView* pView = nullptr;
         if (SUCCEEDED(pCtxSession->GetActiveView(&pView)) && pView)
         {
             BOOL clipped = FALSE;
-            pView->GetTextExt(ec, _compRange, &rc, &clipped);
+            RECT rcText{};
+            if (SUCCEEDED(pView->GetTextExt(ec, _compRange, &rcText, &clipped)) &&
+                (rcText.right > rcText.left || rcText.bottom > rcText.top))
+            {
+                rc = rcText;
+                hasRect = true;
+            }
             pView->Release();
         }
         return S_OK;
@@ -318,6 +345,18 @@ void CTextService::SendPinyinCtx()
     RequestSessionEx(pCtx, _tfClientId, pSession, TF_ES_READ);
     pSession->Release();
     pCtx->Release();
+
+    if (!hasRect)
+    {
+        // 降级：系统插入符（自绘光标应用可能拿不到，保持零 rect 由 UI 保持原位）
+        GUITHREADINFO gti{ sizeof(gti) };
+        if (GetGUIThreadInfo(GetCurrentThreadId(), &gti) && gti.hwndCaret)
+        {
+            POINT pt = { gti.rcCaret.left, gti.rcCaret.bottom };
+            ClientToScreen(gti.hwndCaret, &pt);
+            rc = { pt.x, pt.y, pt.x, pt.y };
+        }
+    }
 
     SendCtx(_pinyin, rc, CTX_F_PINYIN);
 }
