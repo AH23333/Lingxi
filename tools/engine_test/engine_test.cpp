@@ -640,6 +640,23 @@ int wmain()
                     delete py2;
                 }
 
+                // 真正新词（不在基础库）：学习后应能整串重现
+                py->Learn(L"miaomiao", L"喵喵");
+                lingxi::Prediction r3 = py->Predict(L"miaomiao");
+                bool newWordAppears = false;
+                for (const auto& c : r3.cands)
+                    if (c == L"喵喵") { newWordAppears = true; break; }
+                Report(newWordAppears, "learn: brand-new word '喵喵' appears",
+                       r3.cands.empty() ? L"<none>" : r3.cands[0].c_str());
+
+                // 简拼：输入 mm 应能调出"喵喵"（用户词支持缩写）
+                lingxi::Prediction r4 = py->Predict(L"mm");
+                bool abbreviated = false;
+                for (const auto& c : r4.cands)
+                    if (c == L"喵喵") { abbreviated = true; break; }
+                Report(abbreviated, "learn: abbreviated 'mm' -> '喵喵'",
+                       r4.cands.empty() ? L"<none>" : r4.cands[0].c_str());
+
                 // 恢复原有词典（无则删除测试文件）
                 if (existed)
                 {

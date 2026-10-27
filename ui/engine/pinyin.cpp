@@ -220,8 +220,19 @@ public:
         std::vector<UserPick> ups;
         {
             std::lock_guard<std::mutex> lk(_udMtx);
-            auto uit = _userDict.find(key);
-            if (uit != _userDict.end()) ups = uit->second;
+            if (auto uit = _userDict.find(key); uit != _userDict.end())
+                ups = uit->second;
+            // 简拼/缩写：当前输入串作为首字母串（如 mm）匹配用户词
+            if (auto iit = _userByInit.find(raw); iit != _userByInit.end())
+            {
+                for (const auto& ip : iit->second)
+                {
+                    bool dup = false;
+                    for (const auto& u : ups)
+                        if (u.word == ip.word) { dup = true; break; }
+                    if (!dup) ups.push_back({ ip.word, ip.count });
+                }
+            }
         }
         if (!ups.empty())
         {
@@ -290,6 +301,9 @@ private:
     // UI 线程（设置界面清空/导入后 ReloadUserDict 重载）——全部经 _udMtx 串行化。
     struct UserPick { std::wstring word; int count; };
     std::unordered_map<std::string, std::vector<UserPick>> _userDict;
+    // 用户词简拼索引：首字母串（如 "mm"）→ 用户词（含全拼键与次数）
+    struct UserInitPick { std::wstring word; int count; std::string fullKey; };
+    std::unordered_map<std::string, std::vector<UserInitPick>> _userByInit;
     bool _userDirty = false;
     mutable std::mutex _udMtx;
 
@@ -699,7 +713,31 @@ private:
             if (!word.empty() && !key.empty() && count > 0)
                 _userDict[key].push_back({ word, count });
         }
-        LX_LOG(L"py", L"用户词典加载: %zu 个拼音键", _userDict.size());
+        BuildUserInitIndex();
+        LX_LOG(L"py", L"用户词典加载: %zu 个拼音键, %zu 个简拼键",
+               _userDict.size(), _userByInit.size());
+    }
+
+    // 构建用户词简拼索引（调用方持 _udMtx）：全拼键切出音节，取首字母串
+    void BuildUserInitIndex()
+    {
+        _userByInit.clear();
+        for (const auto& kv : _userDict)
+        {
+            const std::string& fullKey = kv.first;
+            std::vector<SegPath> sp = EnumeratePaths(fullKey);
+            if (sp.empty()) continue;
+            const SegPath* best = &sp[0]; // 最自然切分（cost 最小）
+            for (const auto& p : sp)
+                if (p.cost < best->cost) best = &p;
+            std::string init;
+            for (const auto& u : best->units)
+                if (!u.text.empty()) init.push_back(u.text[0]);
+            if (init.empty()) continue;
+            auto& vec = _userByInit[init];
+            for (const auto& up : kv.second)
+                vec.push_back({ up.word, up.count, fullKey });
+        }
     }
 
     // 原子落盘：先写 .tmp 再 MoveFileEx 替换。引擎（管道线程）与设置界面
@@ -771,6 +809,7 @@ private:
             }
             _userDirty = true;
             SaveUserDictLocked();
+            BuildUserInitIndex(); // 新词即时可通过简拼调出
         }
         LX_LOG(L"py", L"学习: '%hs' -> '%hs'", key.c_str(), ToUtf8(word).c_str());
     }
