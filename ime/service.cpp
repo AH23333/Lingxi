@@ -281,6 +281,10 @@ STDMETHODIMP CTextService::OnEndEdit(ITfContext* pContext, TfEditCookie ecReadOn
     LX_LOG(L"ime", L"OnEndEdit ctx=%p self=%d", (void*)pContext, (int)_fSelfInsert);
     if (_fSelfInsert)
         return S_OK; // 自己上屏引发的编辑，避免自激发
+    // Chromium 异步执行自插入会话：OnEndEdit 在 _fSelfInsert 复位后才到达，
+    // 用时间戳兜底，避免上屏后误弹上下文预测。
+    if (_lastSelfInsertTick != 0 && GetTickCount64() - _lastSelfInsertTick < 400)
+        return S_OK;
     if (!_fActivated)
         return S_OK;
     if (_pComposition)
@@ -444,6 +448,7 @@ bool CTextService::InsertTextAtSelection(const std::wstring& text)
     pDoc->Release();
     if (FAILED(hr) || !pCtx) return false;
 
+    _lastSelfInsertTick = GetTickCount64(); // 兜底抑制 Chromium 异步自插入的滞后 OnEndEdit
     CInsertSession* pSession = new CInsertSession(this, pCtx, text);
     HRESULT hrSession = RequestSession(pCtx, _tfClientId, pSession, TF_ES_READWRITE);
     pSession->Release();
@@ -480,6 +485,13 @@ static bool IsSelectionKey(WPARAM wParam)
 STDMETHODIMP CTextService::OnSetFocus(BOOL fForeground)
 {
     _fForeground = fForeground;
+    if (!fForeground)
+    {
+        // 失焦：取消进行中的拼音、隐藏候选窗，避免拼音串/候选跨窗口残留。
+        if (PinyinActive()) PinyinCancel();
+        ClearCandidates();
+        SendHide();
+    }
     // TIP 前台切换（含同语言内切换到其他输入法）：重判拼音/直通模式
     RequestModeDetect();
     LX_LOG(L"ime", L"KeySink OnSetFocus foreground=%d", fForeground);

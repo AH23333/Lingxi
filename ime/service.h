@@ -136,6 +136,9 @@ private:
     bool _cachedPinyinEnabled = true; // 按键路径设置开关变化检测（托盘/设置页改动即时生效）
     ITfContext* _pEditSinkCtx = nullptr; // 持有引用
     BOOL _fSelfInsert = FALSE;           // 自己上屏引发的编辑，忽略其 OnEndEdit
+    // 自插入编辑会话在 Chromium 上常异步执行，其 OnEndEdit 晚于 _fSelfInsert 复位，
+    // 用时间戳兜底抑制这一滞后回调，避免上屏后又误弹上下文预测。
+    ULONGLONG _lastSelfInsertTick = 0;
 
     // 候选缓存（_cs 保护；读线程写、UI 线程读写）
     CRITICAL_SECTION _cs{};

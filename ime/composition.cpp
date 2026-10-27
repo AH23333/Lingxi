@@ -214,6 +214,7 @@ void CTextService::PinyinStart(wchar_t ch)
     {
         _pinyin.clear();
         _pinyin += ch;
+        LX_LOG(L"key", L"Start(no-inline) ch=%lc", (wint_t)ch);
         ClearCandidates();
         SendPinyinCtx();
         return;
@@ -265,6 +266,7 @@ void CTextService::PinyinAppend(wchar_t ch)
     {
         // 无组合模式：仅更新内存拼音串并刷新候选窗。
         _pinyin += ch;
+        LX_LOG(L"key", L"Append(no-inline) ch=%lc len=%u", (wint_t)ch, (uint32_t)_pinyin.size());
         SendPinyinCtx();
         return;
     }
@@ -291,9 +293,11 @@ void CTextService::PinyinShrink()
 {
     if (!_inlineComp)
     {
+        LX_LOG(L"key", L"Shrink(no-inline) before len=%u", (uint32_t)_pinyin.size());
         if (_pinyin.empty()) return;
         _pinyin.pop_back();
-        if (_pinyin.empty()) { PinyinCancel(); return; }
+        if (_pinyin.empty()) { LX_LOG(L"key", L"Shrink -> Cancel"); PinyinCancel(); return; }
+        LX_LOG(L"key", L"Shrink after len=%u", (uint32_t)_pinyin.size());
         SendPinyinCtx();
         return;
     }
@@ -532,6 +536,8 @@ bool CTextService::GetCandidate(uint32_t index, std::wstring& out)
 void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pfEaten)
 {
     *pfEaten = TRUE;
+    LX_LOG(L"key", L"HandlePinyinKey vk=%u('0x%02X') active=%d pinyinLen=%u",
+           (uint32_t)wParam, (uint32_t)wParam, (int)PinyinActive(), (uint32_t)_pinyin.size());
 
     // 中英混排：Shift/CapsLock + 字母 → 提交当前拼音（保留字母原文），大写字母放行
     bool shiftOrCaps = (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 1) != 0;
@@ -547,15 +553,23 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         return;
     }
 
-    wchar_t ch = (wchar_t)((wParam >= L'A' && wParam <= L'Z') ? (wParam + 32) : wParam);
+    // 非活动态：只有字母键才启动拼音；退格/标点/数字等一切非字母键直接放行，
+    // 绝不能吞掉退格（否则已上屏文字无法删除）或把控制字符当拼音。
     if (!PinyinActive())
     {
-        PinyinStart(ch); // 键盘判定已保证是字母
+        if (!IsLetterKey(wParam))
+        {
+            *pfEaten = FALSE;
+            return;
+        }
+        wchar_t ch0 = (wchar_t)((wParam >= L'A' && wParam <= L'Z') ? (wParam + 32) : wParam);
+        PinyinStart(ch0);
         return;
     }
 
     if (IsLetterKey(wParam))
     {
+        wchar_t ch = (wchar_t)((wParam >= L'A' && wParam <= L'Z') ? (wParam + 32) : wParam);
         PinyinAppend(ch);
         return;
     }
