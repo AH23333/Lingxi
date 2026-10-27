@@ -8,7 +8,11 @@
 #include "settingsui.h"
 
 #include <shellapi.h>
+#include <commdlg.h>
 #include <windowsx.h>
+#include <string>
+#include <vector>
+#include <functional>
 
 #include "../common/log.h"
 #include "../common/settings.h"
@@ -19,7 +23,118 @@ namespace {
 
 constexpr wchar_t kMainWndClass[] = L"LingxiUIMainWnd";
 constexpr wchar_t kSettingsWndClass[] = L"LingxiSettingsWnd";
+constexpr wchar_t kUserDictWndClass[] = L"LingxiUserDictWnd";
 constexpr UINT WM_APP_TRAY = WM_APP + 10; // 托盘回调消息
+
+std::function<void()> g_reloadUserDict; // 用户词典变更后重新加载引擎
+
+// ---------------- 用户词典文件工具（UTF-8：词\t拼音\t次数）----------------
+
+std::wstring UserDictPathW()
+{
+    wchar_t buf[MAX_PATH] = {};
+    DWORD n = GetEnvironmentVariableW(L"APPDATA", buf, MAX_PATH);
+    if (n > 0 && n < MAX_PATH)
+    {
+        std::wstring dir = std::wstring(buf) + L"\\LingxiIme";
+        CreateDirectoryW(dir.c_str(), NULL);
+        return dir + L"\\userdict.txt";
+    }
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(NULL, exe, MAX_PATH);
+    wchar_t* slash = wcsrchr(exe, L'\\');
+    if (slash) slash[1] = 0;
+    return std::wstring(exe) + L"userdict.txt";
+}
+
+std::string WToUtf8(const std::wstring& w)
+{
+    if (w.empty()) return {};
+    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), NULL, 0, NULL, NULL);
+    std::string s(n, 0);
+    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), s.data(), n, NULL, NULL);
+    return s;
+}
+
+std::wstring Utf8ToW(const std::string& s)
+{
+    if (s.empty()) return {};
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), NULL, 0);
+    std::wstring w(n, 0);
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), w.data(), n);
+    return w;
+}
+
+bool ReadFileBytes(const std::wstring& path, std::string& out)
+{
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD size = GetFileSize(h, NULL);
+    out.resize(size);
+    DWORD got = 0;
+    BOOL ok = ReadFile(h, out.data(), size, &got, NULL);
+    CloseHandle(h);
+    out.resize(ok ? got : 0);
+    return ok != FALSE;
+}
+
+bool WriteFileBytes(const std::wstring& path, const std::string& data)
+{
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL,
+                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD put = 0;
+    BOOL ok = WriteFile(h, data.data(), (DWORD)data.size(), &put, NULL);
+    CloseHandle(h);
+    return ok != FALSE && put == data.size();
+}
+
+struct UdEntry { std::wstring word; std::wstring key; int count; };
+
+// 解析用户词典文本为条目（兼容 UTF-8 BOM）。
+std::vector<UdEntry> ParseUserDict(const std::string& raw)
+{
+    std::string text = raw;
+    if (text.size() >= 3 && (unsigned char)text[0] == 0xEF &&
+        (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF)
+        text.erase(0, 3);
+    std::vector<UdEntry> v;
+    size_t start = 0;
+    while (start < text.size())
+    {
+        size_t nl = text.find('\n', start);
+        std::string line = text.substr(start, nl == std::string::npos ? std::string::npos : nl - start);
+        start = (nl == std::string::npos) ? text.size() : nl + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        size_t t1 = line.find('\t');
+        if (t1 == std::string::npos) continue;
+        size_t t2 = line.find('\t', t1 + 1);
+        if (t2 == std::string::npos) continue;
+        UdEntry e;
+        e.word = Utf8ToW(line.substr(0, t1));
+        e.key = Utf8ToW(line.substr(t1 + 1, t2 - t1 - 1));
+        e.count = atoi(line.substr(t2 + 1).c_str());
+        if (!e.word.empty() && !e.key.empty() && e.count > 0) v.push_back(std::move(e));
+    }
+    return v;
+}
+
+std::string SerializeUserDict(const std::vector<UdEntry>& entries)
+{
+    std::string out;
+    for (const auto& e : entries)
+    {
+        out += WToUtf8(e.word);
+        out.push_back('\t');
+        out += WToUtf8(e.key);
+        out.push_back('\t');
+        out += std::to_string(e.count);
+        out.push_back('\n');
+    }
+    return out;
+}
+
 
 constexpr int IDC_CHK_PINYIN = 101;
 constexpr int IDC_CHK_EN = 102;
@@ -29,6 +144,7 @@ constexpr int IDC_CHK_CNPUNCT = 107;
 constexpr int IDC_CHK_FUZZY = 108;
 constexpr int IDC_CHK_SHIFTTOGGLE = 109;
 constexpr int IDC_CHK_VMODE = 110;
+constexpr int IDC_BTN_USERDICT = 111;
 
 HWND g_hMain = nullptr;    // 隐藏消息窗口（托盘宿主）
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
@@ -85,6 +201,188 @@ void SaveFromControls()
            (int)s.cnPunct, (int)s.fuzzyPinyin, (int)s.shiftToggle, (int)s.vMode);
 }
 
+// ---------------- 用户词典管理窗口 ----------------
+
+constexpr int IDC_UD_LIST = 300;
+constexpr int IDC_UD_STATIC = 301;
+constexpr int IDC_UD_DEL = 302;
+constexpr int IDC_UD_CLEAR = 303;
+constexpr int IDC_UD_IMPORT = 304;
+constexpr int IDC_UD_EXPORT = 305;
+constexpr int IDC_UD_CLOSE = 306;
+
+HWND g_hUserDict = nullptr;
+HWND g_hUdList = nullptr;
+
+void RefreshUdList()
+{
+    if (!g_hUdList) return;
+    std::string raw;
+    std::vector<UdEntry> entries;
+    if (ReadFileBytes(UserDictPathW(), raw)) entries = ParseUserDict(raw);
+    SendMessageW(g_hUdList, LB_RESETCONTENT, 0, 0);
+    for (size_t i = 0; i < entries.size(); i++)
+    {
+        wchar_t line[256];
+        _snwprintf_s(line, _TRUNCATE, L"%ls    %ls    %d",
+                     entries[i].word.c_str(), entries[i].key.c_str(), entries[i].count);
+        SendMessageW(g_hUdList, LB_ADDSTRING, 0, (LPARAM)line);
+    }
+    wchar_t cap[64];
+    _snwprintf_s(cap, _TRUNCATE, L"已学习词条：%zu", entries.size());
+    SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, cap);
+}
+
+// 写回条目并让引擎立即重新加载。
+void PersistUdEntries(const std::vector<UdEntry>& entries)
+{
+    WriteFileBytes(UserDictPathW(), SerializeUserDict(entries));
+    if (g_reloadUserDict) g_reloadUserDict();
+}
+
+void UdDeleteSelected()
+{
+    int sel = (int)SendMessageW(g_hUdList, LB_GETCURSEL, 0, 0);
+    if (sel < 0) return;
+    std::string raw;
+    std::vector<UdEntry> entries;
+    if (ReadFileBytes(UserDictPathW(), raw)) entries = ParseUserDict(raw);
+    if (sel < (int)entries.size()) entries.erase(entries.begin() + sel);
+    PersistUdEntries(entries);
+    RefreshUdList();
+}
+
+void UdClearAll()
+{
+    if (MessageBoxW(g_hUserDict, L"确定清空全部已学习词条？此操作不可撤销。",
+                    L"清空用户词典", MB_OKCANCEL | MB_ICONQUESTION) != IDOK)
+        return;
+    WriteFileBytes(UserDictPathW(), std::string());
+    if (g_reloadUserDict) g_reloadUserDict();
+    RefreshUdList();
+}
+
+void UdImport()
+{
+    wchar_t path[MAX_PATH] = L"";
+    OPENFILENAMEW ofn{ sizeof(ofn) };
+    ofn.hwndOwner = g_hUserDict;
+    ofn.lpstrFilter = L"文本文件 (*.txt)\0*.txt\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (!GetOpenFileNameW(&ofn)) return;
+
+    std::string inRaw, curRaw;
+    if (!ReadFileBytes(path, inRaw)) return;
+    std::vector<UdEntry> imported = ParseUserDict(inRaw);
+    std::vector<UdEntry> cur;
+    if (ReadFileBytes(UserDictPathW(), curRaw)) cur = ParseUserDict(curRaw);
+    // 合并：同 (word,key) 累加 count，否则追加
+    for (const auto& ie : imported)
+    {
+        bool merged = false;
+        for (auto& ce : cur)
+            if (ce.word == ie.word && ce.key == ie.key) { ce.count += ie.count; merged = true; break; }
+        if (!merged) cur.push_back(ie);
+    }
+    PersistUdEntries(cur);
+    RefreshUdList();
+}
+
+void UdExport()
+{
+    wchar_t path[MAX_PATH] = L"userdict_export.txt";
+    OPENFILENAMEW ofn{ sizeof(ofn) };
+    ofn.hwndOwner = g_hUserDict;
+    ofn.lpstrFilter = L"文本文件 (*.txt)\0*.txt\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"txt";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    if (!GetSaveFileNameW(&ofn)) return;
+    std::string raw;
+    if (ReadFileBytes(UserDictPathW(), raw)) WriteFileBytes(path, raw);
+}
+
+LRESULT CALLBACK UserDictWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    switch (msg)
+    {
+    case WM_COMMAND:
+        switch (LOWORD(wParam))
+        {
+        case IDC_UD_DEL: UdDeleteSelected(); return 0;
+        case IDC_UD_CLEAR: UdClearAll(); return 0;
+        case IDC_UD_IMPORT: UdImport(); return 0;
+        case IDC_UD_EXPORT: UdExport(); return 0;
+        case IDC_UD_CLOSE: ShowWindow(hwnd, SW_HIDE); return 0;
+        }
+        break;
+    case WM_CLOSE:
+        ShowWindow(hwnd, SW_HIDE);
+        return 0;
+    }
+    return DefWindowProcW(hwnd, msg, wParam, lParam);
+}
+
+void CreateUserDictWindow(HINSTANCE hInst)
+{
+    if (g_hUserDict) { ShowWindow(g_hUserDict, SW_SHOW); SetForegroundWindow(g_hUserDict); RefreshUdList(); return; }
+
+    WNDCLASSEXW wc{ sizeof(wc) };
+    wc.lpfnWndProc = UserDictWndProc;
+    wc.hInstance = hInst;
+    wc.hIcon = g_hIcon;
+    wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
+    wc.lpszClassName = kUserDictWndClass;
+    RegisterClassExW(&wc);
+
+    UINT dpi = 96;
+    if (auto pGetDpi = (UINT(WINAPI*)())GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForSystem"))
+        dpi = pGetDpi();
+    int W = MulDiv(420, dpi, 96), H = MulDiv(400, dpi, 96);
+    int btnH = MulDiv(28, dpi, 96);
+    int pad = MulDiv(12, dpi, 96);
+
+    g_hUserDict = CreateWindowExW(0, kUserDictWndClass, L"用户词典管理",
+                                  WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
+                                  CW_USEDEFAULT, CW_USEDEFAULT, W, H, NULL, NULL, hInst, NULL);
+
+    CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
+                    pad, pad, W - pad * 2, btnH, g_hUserDict, (HMENU)(INT_PTR)IDC_UD_STATIC, hInst, NULL);
+    int listTop = pad + btnH + 4;
+    int btnRowY = H - btnH - pad - 8;
+    g_hUdList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
+                                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
+                                pad, listTop, W - pad * 2, btnRowY - listTop - 8,
+                                g_hUserDict, (HMENU)(INT_PTR)IDC_UD_LIST, hInst, NULL);
+
+    struct Btn { const wchar_t* text; int id; };
+    Btn btns[] = {
+        { L"删除选中", IDC_UD_DEL }, { L"清空", IDC_UD_CLEAR },
+        { L"导入", IDC_UD_IMPORT }, { L"导出", IDC_UD_EXPORT },
+        { L"关闭", IDC_UD_CLOSE },
+    };
+    int bw = (W - pad * 2 - 8 * 4) / 5;
+    for (int i = 0; i < 5; i++)
+    {
+        int bx = pad + i * (bw + 8);
+        CreateWindowExW(0, L"BUTTON", btns[i].text, WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                        bx, btnRowY, bw, btnH, g_hUserDict,
+                        (HMENU)(INT_PTR)btns[i].id, hInst, NULL);
+    }
+
+    EnumChildWindows(g_hUserDict, [](HWND h, LPARAM lp) -> BOOL {
+        SendMessageW(h, WM_SETFONT, (WPARAM)lp, TRUE);
+        return TRUE;
+    }, (LPARAM)g_hFont);
+
+    RefreshUdList();
+    ShowWindow(g_hUserDict, SW_SHOW);
+    SetForegroundWindow(g_hUserDict);
+}
+
 // ---------------- 设置窗口 ----------------
 
 LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -107,6 +405,9 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             return 0;
         case IDC_CMB_DARK:
             if (HIWORD(wParam) == CBN_SELCHANGE) SaveFromControls();
+            return 0;
+        case IDC_BTN_USERDICT:
+            CreateUserDictWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
             return 0;
         }
         break;
@@ -138,6 +439,11 @@ void CreateSettingsWindow(HINSTANCE hInst)
     int W = MulDiv(440, scale, 96), H = MulDiv(450, scale, 96);
     int x = MulDiv(16, scale, 96), y = MulDiv(16, scale, 96);
     int rowH = MulDiv(30, scale, 96);
+
+    // 关键：创建子控件期间 Edit 会触发 EN_CHANGE、复选框初始为未勾选，若此时
+    // 回写会把所有设置污染为 0。整个控件创建期间屏蔽保存，直到 LoadToControls
+    // 正确加载后才放开（LoadToControls 结束时会把 g_updating 复位为 false）。
+    g_updating = true;
 
     g_hSettings = CreateWindowExW(0, kSettingsWndClass, L"灵犀输入法设置",
                                   WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
@@ -183,6 +489,13 @@ void CreateSettingsWindow(HINSTANCE hInst)
     ComboBox_AddString(g_hCmbDark, L"跟随应用");
     ComboBox_AddString(g_hCmbDark, L"浅色");
     ComboBox_AddString(g_hCmbDark, L"深色");
+    y += rowH + MulDiv(6, scale, 96);
+
+    // 用户词典管理：查看/删除/清空/导入导出已学习词条
+    CreateWindowExW(0, L"BUTTON", L"用户词典管理...",
+                    WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                    x, y, MulDiv(180, scale, 96), rowH, g_hSettings,
+                    (HMENU)(INT_PTR)IDC_BTN_USERDICT, hInst, NULL);
 
     y += rowH + MulDiv(10, scale, 96);
     mkStatic(L"修改即时生效并自动保存。重建输入法后需重启应用才会加载新版本。", 0);
@@ -296,6 +609,16 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 }
 
 } // namespace
+
+void SetUserDictReloadCallback(std::function<void()> cb)
+{
+    g_reloadUserDict = std::move(cb);
+}
+
+void ShowSettingsWindow(HINSTANCE hInst)
+{
+    CreateSettingsWindow(hInst);
+}
 
 void InitTrayAndSettings(HINSTANCE hInst)
 {

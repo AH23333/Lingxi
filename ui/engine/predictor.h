@@ -26,6 +26,8 @@ public:
     // 用户选择反馈：rawPinyin=用户输入的原始拼音字母串，word=选中的词。
     // 用于自学习/动态调频；默认空实现，仅拼音引擎覆盖。
     virtual void Learn(const std::wstring& /*rawPinyin*/, const std::wstring& /*word*/) {}
+    // 重新加载用户词典（管理界面清空/导入后立即生效）；默认空实现。
+    virtual void ReloadUserDict() {}
 };
 
 // 词表引擎（永远可用）

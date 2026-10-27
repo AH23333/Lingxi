@@ -73,6 +73,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     lingxi::InitLogging(); // 按 LINGXI_LOG 环境变量开启热路径诊断日志
     int argc = 0;
     LPWSTR* argv = CommandLineToArgvW(GetCommandLineW(), &argc);
+    bool wantSettings = false;
+    if (argv)
+    {
+        for (int i = 1; i < argc; i++)
+            if (wcscmp(argv[i], L"--settings") == 0) wantSettings = true;
+    }
     if (argv && argc >= 2 && wcscmp(argv[1], L"--probe-llm") == 0)
     {
         int rc = ProbeLlm();
@@ -117,7 +123,11 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     if (hReady) SetEvent(hReady); // 管道服务已监听；句柄随进程存活，不主动关
 
     LX_LOG(L"ui", L"LingxiUI 启动完成");
+    // 用户词典管理变更后让拼音引擎重新加载
+    if (pinyinEngine)
+        lingxi::SetUserDictReloadCallback([&] { pinyinEngine->ReloadUserDict(); });
     lingxi::InitTrayAndSettings(hInst); // 托盘 + 设置入口（右下角）
+    if (wantSettings) lingxi::ShowSettingsWindow(hInst);
 
     MSG msg;
     while (GetMessageW(&msg, NULL, 0, 0) > 0)

@@ -564,6 +564,9 @@ private:
         LX_LOG(L"py", L"学习: '%hs' -> '%hs'", key.c_str(), ToUtf8(word).c_str());
     }
 
+    // 管理界面清空/导入后重新加载用户词典，立即生效。
+    void ReloadUserDict() override { LoadUserDict(); }
+
     // 模糊音：返回该完整音节的合法等价音节（自身在首位）。
     // 声母 z/zh、c/ch、s/sh、n/l 互通；韵母前/后鼻音尾 n/ng 互换；
     // 仅保留 _syllables 中真实存在的音节（自动剔除 sin、ung 这类非法组合）。
