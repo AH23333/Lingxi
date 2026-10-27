@@ -299,12 +299,15 @@ void CTextService::PinyinShrink()
 void CTextService::PinyinEndComposition(ITfContext* pCtx, const std::wstring* replaceWith)
 {
     if (!_pComposition && !_compRange) return;
+    // 值捕获替换串：会话可能异步执行，不能引用调用方的局部字符串指针。
+    bool doReplace = (replaceWith != nullptr);
+    std::wstring replaceText = replaceWith ? *replaceWith : std::wstring();
     _fSelfInsert = TRUE;
-    auto task = [this, replaceWith](TfEditCookie ec) -> HRESULT
+    auto task = [this, doReplace, replaceText](TfEditCookie ec) -> HRESULT
     {
-        if (_compRange && replaceWith)
+        if (_compRange && doReplace)
         {
-            HRESULT hr = _compRange->SetText(ec, 0, replaceWith->c_str(), (LONG)replaceWith->size());
+            HRESULT hr = _compRange->SetText(ec, 0, replaceText.c_str(), (LONG)replaceText.size());
             if (FAILED(hr)) return hr;
         }
         if (_pComposition) return _pComposition->EndComposition(ec);
@@ -370,49 +373,45 @@ void CTextService::SendPinyinCtx()
     ITfContext* pCtx = nullptr;
     if (!GetFocusContext(_pThreadMgr, &pCtx)) return;
 
-    RECT rc{};
-    bool hasRect = false;
+    // ⚠️ 整个 rect 计算 + 发送都放进编辑会话内，并对 pinyin 做值拷贝。
+    // Chromium 上 TF_ES_SYNC 常回退为异步会话：DoEditSession 会在本函数返回后
+    // 才执行，此时任何"引用捕获的局部栈变量"(&rc/&hasRect)都已销毁，写入即 AV。
+    // 编辑会话由 TSF 在宿主 UI 线程回调，故 GetGUIThreadInfo/SendCtx 仍在 UI 线程。
+    std::wstring pinyin = _pinyin;
     ITfContext* pCtxSession = pCtx;
-    auto task = [this, pCtxSession, &rc, &hasRect](TfEditCookie ec) -> HRESULT
+    auto task = [this, pCtxSession, pinyin](TfEditCookie ec) -> HRESULT
     {
         if (!_compRange) return E_FAIL;
+        RECT rc{};
+        bool hasRect = false;
         ITfContextView* pView = nullptr;
-        HRESULT hv = pCtxSession->GetActiveView(&pView);
-        if (SUCCEEDED(hv) && pView)
+        if (SUCCEEDED(pCtxSession->GetActiveView(&pView)) && pView)
         {
             RECT rcText{};
             HRESULT he = SafeGetTextExt(pView, pCtxSession, ec, _compRange, &rcText);
-            if (SUCCEEDED(he))
-            {
-                rc = rcText;
-                hasRect = true;
-            }
+            if (SUCCEEDED(he)) { rc = rcText; hasRect = true; }
             else if (he == E_UNEXPECTED)
-            {
                 LX_LOG(L"ime", L"GetTextExt 宿主异常，已降级系统插入符");
-            }
             pView->Release();
         }
+        if (!hasRect)
+        {
+            // 降级：系统插入符（自绘光标应用可能拿不到，零 rect 由 UI 保持原位）
+            GUITHREADINFO gti{ sizeof(gti) };
+            if (GetGUIThreadInfo(GetCurrentThreadId(), &gti) && gti.hwndCaret)
+            {
+                POINT pt = { gti.rcCaret.left, gti.rcCaret.bottom };
+                ClientToScreen(gti.hwndCaret, &pt);
+                rc = { pt.x, pt.y, pt.x, pt.y };
+            }
+        }
+        SendCtx(pinyin, rc, CTX_F_PINYIN);
         return S_OK;
     };
     auto* pSession = new CPinyinEditSession(this, pCtx, task);
     RequestSessionEx(pCtx, _tfClientId, pSession, TF_ES_READ);
     pSession->Release();
     pCtx->Release();
-
-    if (!hasRect)
-    {
-        // 降级：系统插入符（自绘光标应用可能拿不到，保持零 rect 由 UI 保持原位）
-        GUITHREADINFO gti{ sizeof(gti) };
-        if (GetGUIThreadInfo(GetCurrentThreadId(), &gti) && gti.hwndCaret)
-        {
-            POINT pt = { gti.rcCaret.left, gti.rcCaret.bottom };
-            ClientToScreen(gti.hwndCaret, &pt);
-            rc = { pt.x, pt.y, pt.x, pt.y };
-        }
-    }
-
-    SendCtx(_pinyin, rc, CTX_F_PINYIN);
 }
 
 // ==================== 键分发 ====================
