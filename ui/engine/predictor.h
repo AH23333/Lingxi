@@ -8,9 +8,12 @@
 
 namespace lingxi {
 
+// 引擎一次返回的最大候选数（支持候选翻页；UI 按 kPageSize 分页）。
+constexpr size_t kPredictMaxCandidates = 60;
+
 struct Prediction
 {
-    std::vector<std::wstring> cands; // ≤5 个，第 0 项为首选
+    std::vector<std::wstring> cands; // 按优先级排序，第 0 项为首选；最多 kPredictMaxCandidates
     uint32_t replaceLen = 0;         // 上屏时需先删掉光标前的字符数（英文前缀补全用）
 };
 

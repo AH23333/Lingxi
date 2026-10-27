@@ -514,6 +514,16 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
         case VK_BACK: case VK_ESCAPE: case VK_RETURN:
         case VK_SPACE: case VK_TAB:
             return true;
+        case VK_PRIOR: case VK_NEXT: // PageUp/PageDown：输入中翻页（吃）
+            return CandidatesVisible();
+        case VK_OEM_MINUS: case VK_OEM_PLUS: // - / =：仅在有多页时作翻页，否则当标点
+        {
+            bool multi = false;
+            EnterCriticalSection(&_cs);
+            multi = _cands.size() > kPageSize && _verCands == _verSent;
+            LeaveCriticalSection(&_cs);
+            return multi;
+        }
         }
         if (wParam >= L'1' && wParam <= L'9') return CandidatesVisible();
         return false; // 标点等：提交后放行
@@ -590,20 +600,30 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         ClearCandidates();
         SendHide();
         return;
+    // 翻页：PageDown / = 下一页，PageUp / - 上一页
+    case VK_NEXT:
+    case VK_OEM_PLUS:
+        PageCandidates(+1);
+        return;
+    case VK_PRIOR:
+    case VK_OEM_MINUS:
+        PageCandidates(-1);
+        return;
     case VK_SPACE:
     case VK_TAB:
     {
         std::wstring hanzi;
-        if (GetCandidate(0, hanzi)) PinyinCommitHanzi(hanzi);
-        else                        PinyinCommitRaw();
+        if (GetCandidate(_pageStart, hanzi)) PinyinCommitHanzi(hanzi);
+        else                                 PinyinCommitRaw();
         return;
     }
     default:
         if (wParam >= L'1' && wParam <= L'9')
         {
             std::wstring hanzi;
-            if (GetCandidate((uint32_t)(wParam - L'1'), hanzi)) PinyinCommitHanzi(hanzi);
-            else                                                PinyinCommitRaw();
+            uint32_t idx = _pageStart + (uint32_t)(wParam - L'1');
+            if (GetCandidate(idx, hanzi)) PinyinCommitHanzi(hanzi);
+            else                          PinyinCommitRaw();
             return;
         }
         // 标点/其他：优先提交汉字首选（标点随后放行），无候选则保留字母原文

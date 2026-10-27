@@ -2,6 +2,7 @@
 
 #include <windowsx.h>
 
+#include "../common/proto.h"
 #include "../common/log.h"
 
 namespace lingxi {
@@ -64,12 +65,36 @@ void CandWindow::LayoutMetrics(int* itemH, int* pad)
     *pad = MulDiv(8, dpi, 96);
 }
 
+// 调用方持锁：把 _pageStart 规整到合法范围并返回当前页 [begin,end)。
+void CandWindow::CurrentPageRangeLocked(size_t* begin, size_t* end) const
+{
+    size_t total = _cands.size();
+    size_t start = _pageStart;
+    if (start > total) start = 0;
+    if (total > 0 && start >= total) start = (total - 1) / kPageSize * kPageSize;
+    size_t b = start;
+    size_t e = min(total, b + kPageSize);
+    *begin = b;
+    *end = e;
+}
+
 void CandWindow::LayoutAndPosition()
 {
     int itemH = 0, pad = 0;
     LayoutMetrics(&itemH, &pad);
 
-    _height = pad * 2 + itemH * (int)_cands.size() + 18; // +18：底部构建标记条
+    // 锁内只取当前页候选快照（避免在锁内调 GetDC/GDI）
+    std::vector<std::wstring> page;
+    {
+        EnterCriticalSection(&_cs);
+        size_t pgBegin = 0, pgEnd = 0;
+        CurrentPageRangeLocked(&pgBegin, &pgEnd);
+        page.reserve(pgEnd - pgBegin);
+        for (size_t i = pgBegin; i < pgEnd; i++) page.push_back(_cands[i]);
+        LeaveCriticalSection(&_cs);
+    }
+
+    _height = pad * 2 + itemH * (int)page.size() + 18; // +18：底部页码/构建标记条
 
     int textMax = 0;
     HDC hdc = GetDC(_hwnd);
@@ -77,7 +102,7 @@ void CandWindow::LayoutAndPosition()
     {
         HGDIOBJ old = SelectObject(hdc, _font);
         SIZE sz{};
-        for (const auto& s : _cands)
+        for (const auto& s : page)
         {
             GetTextExtentPoint32W(hdc, s.c_str(), (int)s.size(), &sz);
             if (sz.cx > textMax) textMax = sz.cx;
@@ -119,9 +144,28 @@ void CandWindow::Show(const RECT& caretScreen, const std::vector<std::wstring>& 
     _cands = cands;
     _dark = dark;
     _ver = ver;
+    _pageStart = 0; // 新一批候选：回到第一页
     LeaveCriticalSection(&_cs);
     LayoutAndPosition();
     _visible = true;
+}
+
+void CandWindow::SetPage(uint32_t ver, uint32_t pageStart)
+{
+    if (!_hwnd) return;
+    bool changed = false;
+    EnterCriticalSection(&_cs);
+    if (ver == _ver && pageStart < _cands.size() && pageStart != _pageStart)
+    {
+        _pageStart = pageStart;
+        changed = true;
+    }
+    LeaveCriticalSection(&_cs);
+    if (changed)
+    {
+        LayoutAndPosition();
+        _visible = true;
+    }
 }
 
 void CandWindow::Hide()
@@ -131,6 +175,7 @@ void CandWindow::Hide()
     ShowWindow(_hwnd, SW_HIDE);
     EnterCriticalSection(&_cs);
     _cands.clear();
+    _pageStart = 0;
     LeaveCriticalSection(&_cs);
 }
 
@@ -142,12 +187,21 @@ void CandWindow::OnPaint()
 
     std::vector<std::wstring> cands;
     bool dark = true;
+    uint32_t pageStart = 0;
     {
         EnterCriticalSection(&_cs);
         cands = _cands;
         dark = _dark;
+        pageStart = _pageStart;
         LeaveCriticalSection(&_cs);
     }
+
+    size_t total = cands.size();
+    size_t pgBegin = pageStart;
+    if (pgBegin >= total) pgBegin = 0; // 容错：异常 pageStart 回首页
+    size_t pgEnd = min(total, pgBegin + kPageSize);
+    size_t totalPages = total ? (total + kPageSize - 1) / kPageSize : 1;
+    size_t curPage = pgBegin / kPageSize + 1;
 
     RECT rc;
     GetClientRect(_hwnd, &rc);
@@ -170,13 +224,14 @@ void CandWindow::OnPaint()
     HGDIOBJ oldFont = SelectObject(hdc, _font);
     SetBkMode(hdc, TRANSPARENT);
 
-    for (int i = 0; i < (int)cands.size(); i++)
+    for (size_t i = pgBegin; i < pgEnd; i++)
     {
-        RECT row = { pad, pad + i * itemH, rc.right - pad, pad + (i + 1) * itemH };
-        if (i == 0)
+        size_t row = i - pgBegin;
+        RECT rowR = { pad, pad + (int)row * itemH, rc.right - pad, pad + (int)(row + 1) * itemH };
+        if (row == 0)
         {
             HBRUSH hAccent = CreateSolidBrush(accent);
-            FillRect(hdc, &row, hAccent);
+            FillRect(hdc, &rowR, hAccent);
             DeleteObject(hAccent);
             SetTextColor(hdc, RGB(255, 255, 255));
         }
@@ -185,18 +240,28 @@ void CandWindow::OnPaint()
             SetTextColor(hdc, fg);
         }
         wchar_t buf[512];
-        _snwprintf_s(buf, _TRUNCATE, L"%d  %s", (i + 1) % 10, cands[i].c_str());
-        DrawTextW(hdc, buf, -1, &row, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+        _snwprintf_s(buf, _TRUNCATE, L"%zu  %s", row + 1, cands[i].c_str());
+        DrawTextW(hdc, buf, -1, &rowR, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
     }
 
-    // 右下角构建标记（小号灰字，不占行高）：能看到它 = 这个应用加载的是新 DLL
+    // 底部条（小号灰字，不占行高）：
+    //   左侧页码（多于一页时显示“‹ 1/7 ›”）；右下角构建标记（看到它=新 DLL）。
     {
         HGDIOBJ smallFont = CreateFontW(-10, 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                                         DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                                         CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
         SelectObject(hdc, smallFont);
-        SetTextColor(hdc, dark ? RGB(120, 120, 120) : RGB(160, 160, 160));
-        RECT rcStamp = { 0, rc.bottom - 16, rc.right - 4, rc.bottom };
+        COLORREF dim = dark ? RGB(150, 150, 150) : RGB(130, 130, 130);
+        if (totalPages > 1)
+        {
+            wchar_t pg[32];
+            _snwprintf_s(pg, _TRUNCATE, L"\u2039 %zu/%zu \u203a", curPage, totalPages);
+            SetTextColor(hdc, dim);
+            RECT rcPg = { 6, rc.bottom - 16, rc.right / 2, rc.bottom };
+            DrawTextW(hdc, pg, -1, &rcPg, DT_SINGLELINE | DT_LEFT | DT_VCENTER);
+        }
+        SetTextColor(hdc, dark ? RGB(120, 120, 120) : RGB(170, 170, 170));
+        RECT rcStamp = { rc.right / 2, rc.bottom - 16, rc.right - 4, rc.bottom };
         DrawTextW(hdc, kBuildStamp, -1, &rcStamp, DT_SINGLELINE | DT_RIGHT | DT_VCENTER);
         SelectObject(hdc, oldFont);
         DeleteObject(smallFont);
@@ -226,19 +291,26 @@ LRESULT CandWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         int itemH = 0, pad = 0;
         LayoutMetrics(&itemH, &pad);
-        int row = (pt.y - pad) / itemH;
+        int row = (pt.y - pad) / itemH; // 页内行号（0 起）
 
         uint32_t ver = 0;
-        int count = 0;
+        uint32_t globalIdx = 0;
+        bool hit = false;
         {
             EnterCriticalSection(&_cs);
+            size_t pgBegin = 0, pgEnd = 0;
+            CurrentPageRangeLocked(&pgBegin, &pgEnd);
             ver = _ver;
-            count = (int)_cands.size();
+            if (row >= 0 && (size_t)row < (pgEnd - pgBegin))
+            {
+                globalIdx = (uint32_t)(pgBegin + (size_t)row);
+                hit = true;
+            }
             LeaveCriticalSection(&_cs);
         }
-        if (row >= 0 && row < count && _pick)
+        if (hit && _pick)
         {
-            _pick(ver, (uint32_t)row);
+            _pick(ver, globalIdx);
             Hide();
         }
         return 0;

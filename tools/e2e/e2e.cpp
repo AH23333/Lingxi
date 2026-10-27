@@ -752,11 +752,19 @@ static bool RunScenario()
         for (wchar_t ch : std::wstring(L"mor"))
         {
             BOOL eaten = TRUE;
-            if (FAILED(pKm->TestKeyDown((WPARAM)ch, 0x00260001, &eaten)) || eaten) { passThrough = false; break; }
-            if (!InsertViaTsf(pCtx, std::wstring(1, ch))) { passThrough = false; break; }
+            HRESULT hrKey = pKm->TestKeyDown((WPARAM)ch, 0x00260001, &eaten);
+            if (FAILED(hrKey) || eaten) {
+                wprintf(L"[INFO] key '%c' eaten=%d hr=0x%08X\n", ch, (int)eaten, (unsigned)hrKey);
+                passThrough = false; break;
+            }
+            if (!InsertViaTsf(pCtx, std::wstring(1, ch))) {
+                wprintf(L"[INFO] InsertViaTsf('%c') failed\n", ch);
+                passThrough = false; break;
+            }
             PumpMessages();
         }
         std::wstring t = ReadFocusedText(pTm);
+        wprintf(L"[INFO] pass-through focused='%ls' (want 'mor')\n", t.c_str());
         bool passThroughOk = passThrough && t == L"mor";
         Report(passThroughOk, "typing pass-through", t.c_str());
         if (!passThroughOk) break; // fail-fast：缓冲区被噪声污染，交给外层重试

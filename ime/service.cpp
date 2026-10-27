@@ -362,6 +362,7 @@ void CTextService::OnCandidates(uint32_t ver, uint32_t replaceLen, std::vector<s
         _cands = std::move(cands);
         _verCands = ver;
         _replaceLen = replaceLen;
+        _pageStart = 0; // 新一批候选回到第一页
     }
     LeaveCriticalSection(&_cs);
 }
@@ -400,12 +401,58 @@ void CTextService::ClearCandidates()
     _cands.clear();
     _verCands = 0;
     _replaceLen = 0;
+    _pageStart = 0;
     LeaveCriticalSection(&_cs);
 }
 
 void CTextService::SendHide()
 {
     _pipe.Send(MSG_HIDE, NULL, 0);
+}
+
+// 翻页：delta=+1 下一页 / -1 上一页。页码为本侧（权威）维护，候选窗只负责
+// 按 pageStart 渲染；数字键选词时再叠加 _pageStart 偏移。
+void CTextService::PageCandidates(int delta)
+{
+    if (!_csInit) return;
+    uint32_t ver = 0;
+    uint32_t newStart = 0;
+    bool can = false;
+    EnterCriticalSection(&_cs);
+    if (!_cands.empty() && _verCands == _verSent)
+    {
+        uint32_t nxt = NextPageStart(_cands.size(), _pageStart, delta);
+        if (nxt != _pageStart)
+        {
+            _pageStart = nxt;
+            newStart = nxt;
+            ver = _verSent;
+            can = true;
+        }
+    }
+    LeaveCriticalSection(&_cs);
+    if (can)
+    {
+        MsgPage m{ ver, newStart };
+        _pipe.Send(MSG_PAGE, &m, sizeof(m));
+        LX_LOG(L"ime", L"翻页 ver=%u pageStart=%u", ver, newStart);
+    }
+}
+
+void CTextService::SendPage()
+{
+    // 保留：显式重发当前页（当前翻页在 PageCandidates 内即时发送，此函数备用）
+    if (!_csInit) return;
+    uint32_t ver = 0, start = 0;
+    bool ok = false;
+    EnterCriticalSection(&_cs);
+    if (_verCands == _verSent) { ver = _verSent; start = _pageStart; ok = true; }
+    LeaveCriticalSection(&_cs);
+    if (ok)
+    {
+        MsgPage m{ ver, start };
+        _pipe.Send(MSG_PAGE, &m, sizeof(m));
+    }
 }
 
 void CTextService::InsertCandidate(uint32_t index)

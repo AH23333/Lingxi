@@ -178,6 +178,13 @@ void PipeServer::HandleMsg(ClientCtx* c, uint8_t type, const std::vector<uint8_t
     case MSG_CTX:
         HandleCtx(c, body);
         break;
+    case MSG_PAGE:
+    {
+        MsgPage pg{};
+        if (ReadPod(p, end, pg))
+            _wnd->SetPage(pg.ver, pg.pageStart);
+        break;
+    }
     default:
         break;
     }
@@ -321,11 +328,13 @@ void PipeServer::PredictProc()
                 if (ch > 0x7F) { asciiOnly = false; break; }
             if (asciiOnly) pred.cands.clear();
         }
-        if (pred.cands.size() > st.candidateCount)
-            pred.cands.resize(st.candidateCount);
-        LX_LOG(L"pipe", L"裁剪后候选=%u paused=%d enComp=%d count=%u",
+        // 拼音模式保留全量（候选窗分页、支持翻页）；英文补全/续写按设置页大小。
+        size_t cap = e.pinyin ? (size_t)kMaxCandidates : (size_t)st.candidateCount;
+        if (pred.cands.size() > cap)
+            pred.cands.resize(cap);
+        LX_LOG(L"pipe", L"裁剪后候选=%u paused=%d enComp=%d pinyin=%d",
                (uint32_t)pred.cands.size(), (int)st.paused, (int)st.enCompletion,
-               (uint32_t)st.candidateCount);
+               (int)e.pinyin);
 
         {
             EnterCriticalSection(&_cs);

@@ -11,6 +11,7 @@
 // 因此首次运行若 <exe目录>\data 缺词表，自动从 <exe目录>\..\Debug\data 拷贝。
 //
 #include "predictor.h"
+#include "../../common/proto.h"
 
 #include <windows.h>
 #include <cstdio>
@@ -264,6 +265,68 @@ int wmain()
                              st.avgMs, st.maxMs);
                 wprintf(L"[INFO] latency %ls\n", line);
                 Report(st.avgMs < 10.0, "pinyin latency avg < 10ms (50 runs)", line);
+            }
+
+            // P6. 候选翻页数据有效性：长串应给出第二页且候选唯一、页边界正确
+            {
+                lingxi::Prediction r = py->Predict(L"jintianq");
+                size_t N = r.cands.size();
+                bool hasPage2 = N > lingxi::kPageSize;
+                bool distinct = hasPage2 && !r.cands[0].empty() &&
+                                !r.cands[lingxi::kPageSize].empty() &&
+                                r.cands[0] != r.cands[lingxi::kPageSize];
+                bool noDup = true;
+                for (size_t i = 0; i < N; ++i)
+                {
+                    for (size_t j = i + 1; j < N; ++j)
+                        if (r.cands[i] == r.cands[j]) { noDup = false; break; }
+                    if (!noDup) break;
+                }
+                size_t lastStart = (N > 0) ? (N - 1) / lingxi::kPageSize * lingxi::kPageSize : 0;
+                bool boundary = N > 0 && lastStart < N &&
+                                lastStart + lingxi::kPageSize >= N;
+                bool capped = N <= lingxi::kPredictMaxCandidates;
+
+                wchar_t detail[128];
+                _snwprintf_s(detail, _TRUNCATE, L"cands=%zu page2='%ls' pages=%zu",
+                             N, hasPage2 ? r.cands[lingxi::kPageSize].c_str() : L"",
+                             N ? (N + lingxi::kPageSize - 1) / lingxi::kPageSize : 0);
+                Report(hasPage2 && distinct, "pinyin: >9 candidates & page2 distinct", detail);
+                Report(noDup, "pinyin: paging candidates unique", detail);
+                Report(boundary && capped, "pinyin: page boundary & cap", detail);
+            }
+
+            // P6b. 翻页页码纯函数 NextPageStart：边界/夹取（不依赖引擎数据）
+            {
+                struct Case { size_t total; uint32_t cur; int delta; uint32_t expect; };
+                const Case cases[] = {
+                    {0,  0,  +1, 0},   // 空
+                    {1,  0,  +1, 0},   // 单页：下页不动
+                    {1,  0,  -1, 0},   // 单页：上页不动
+                    {9,  0,  +1, 0},   // 恰好一页
+                    {10, 0,  +1, 9},   // 两页(末页1)
+                    {10, 9,  +1, 9},   // 末页再向下：夹到末页
+                    {10, 9,  -1, 0},   // 末页向上
+                    {18, 0,  +1, 9},   // 恰好两页
+                    {18, 9,  +1, 9},   // 第二页已到底
+                    {19, 0,  +1, 9},
+                    {19, 9,  +1, 18},  // 三页(末页1)
+                    {19, 18, -1, 9},
+                    {56, 0,  +1, 9},
+                    {56, 9,  +1, 18},
+                    {56, 36, +1, 45},
+                    {56, 45, +1, 54},  // 56=6*9+2 → 7 页，末页起点 54(含 54、55)
+                    {56, 54, +1, 54},  // 末页夹取
+                    {56, 54, -1, 45},
+                };
+                for (const auto& cs : cases)
+                {
+                    uint32_t got = lingxi::NextPageStart(cs.total, cs.cur, cs.delta);
+                    wchar_t detail[128];
+                    _snwprintf_s(detail, _TRUNCATE, L"total=%zu cur=%u d=%+d -> %u (expect %u)",
+                                 cs.total, cs.cur, cs.delta, got, cs.expect);
+                    Report(got == cs.expect, "NextPageStart paging boundary", detail);
+                }
             }
 
             delete py;

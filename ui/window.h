@@ -17,9 +17,12 @@ public:
     void Shutdown();
 
     // caretScreen：光标屏幕矩形（全 0 表示未知，沿用上次位置）
+    // cands 为全量候选（窗口内部分页，每页 kPageSize 个），ver 变化时回到第一页。
     void Show(const RECT& caretScreen, const std::vector<std::wstring>& cands,
               bool dark, uint32_t ver);
     void Hide();
+    // 翻页：显示全量列表中 pageStart 起始的那一页（ver 不匹配则忽略）。
+    void SetPage(uint32_t ver, uint32_t pageStart);
 
     void SetPickHandler(std::function<void(uint32_t ver, uint32_t index)> handler)
     {
@@ -32,13 +35,16 @@ private:
     void OnPaint();
     void LayoutAndPosition();
     void LayoutMetrics(int* itemH, int* pad);
+    // 调用方持锁：返回当前页在全量列表中的起止 [begin,end)
+    void CurrentPageRangeLocked(size_t* begin, size_t* end) const;
 
     HWND _hwnd = nullptr;
     HFONT _font = nullptr;
     bool _dark = true;
     RECT _caret{};          // 屏幕坐标
     uint32_t _ver = 0;
-    std::vector<std::wstring> _cands;
+    std::vector<std::wstring> _cands; // 全量候选
+    uint32_t _pageStart = 0;          // 当前页首个候选的全局索引
     int _width = 0, _height = 0;
     int _lastX = 120, _lastY = 120;
     bool _visible = false;

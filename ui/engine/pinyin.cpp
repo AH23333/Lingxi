@@ -112,7 +112,7 @@ public:
             if (c.word.empty() || seen.count(c.word)) continue;
             seen.insert(c.word);
             p.cands.push_back(c.word);
-            if (p.cands.size() >= 9) break;
+            if (p.cands.size() >= kPredictMaxCandidates) break;
         }
         p.replaceLen = 0;
         return p;

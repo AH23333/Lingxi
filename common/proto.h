@@ -24,6 +24,23 @@ constexpr wchar_t kPipeName[] = L"\\\\.\\pipe\\lingxi-ime-ipc";
 // DLL 内隐藏封送窗口消息：wParam=index, lParam=ver
 constexpr UINT WM_APP_LX_PICK = WM_APP + 1;
 
+// 候选分页：数字键 1-9 对应一页内的 9 个候选，翻页键切换页。
+constexpr uint32_t kPageSize = 9;
+// 引擎一次返回、经 IPC 传递的最大候选数（足够翻 6 页以上）。
+constexpr uint32_t kMaxCandidates = 60;
+
+// 纯函数：由候选总数、当前页起始、翻页方向(delta=±1) 求新页起始，已夹到
+// 合法范围（首页 0；末页起点为 total 内最后一个整页起点）。total=0 → 0。
+inline uint32_t NextPageStart(size_t total, uint32_t cur, int delta)
+{
+    if (total == 0) return 0;
+    size_t last = (total - 1) / kPageSize * kPageSize;
+    long n = (long)cur + (long)kPageSize * delta;
+    if (n < 0) n = 0;
+    if ((size_t)n > last) n = (long)last;
+    return (uint32_t)n;
+}
+
 enum MsgType : uint8_t
 {
     MSG_HELLO = 1,      // DLL→UI  连接建立
@@ -31,8 +48,9 @@ enum MsgType : uint8_t
     MSG_DEACTIVATE = 3, // DLL→UI  TIP 停用
     MSG_HIDE = 4,       // DLL→UI  隐藏候选窗（失焦等）
     MSG_CTX = 5,        // DLL→UI  上下文更新，触发预测
-    MSG_CANDS = 6,      // UI→DLL  候选列表（UI 窗口同时据此显示）
-    MSG_PICK = 7,       // UI→DLL  鼠标点击候选，请求上屏
+    MSG_CANDS = 6,      // UI→DLL  全量候选列表（UI 窗口据此分页显示）
+    MSG_PICK = 7,       // UI→DLL  鼠标点击候选，请求上屏（index 为全量全局索引）
+    MSG_PAGE = 8,       // DLL→UI  翻页：请求显示 pageStart 起始的那一页
 };
 
 #pragma pack(push, 1)
@@ -66,6 +84,12 @@ struct MsgPick
 {
     uint32_t ver;
     uint32_t index;
+};
+
+struct MsgPage
+{
+    uint32_t ver;
+    uint32_t pageStart; // 本页首个候选在全量列表中的全局索引（0/9/18...）
 };
 #pragma pack(pop)
 
