@@ -12,11 +12,17 @@
 
 ## 二、当前状态（已对齐到提交）
 
-- 最新提交：`7699412 符号面板完整落地 + 单实例命令转发 + 修复 ReadFrame 丢帧`
+- 最新提交：`e328a7d R3前置：DLL 随拼音补发已上屏上文 + UI 双格式解析`
 - 工作区：**干净**，无未提交改动。
 - 测试：engine_test **0 FAIL**（Release，全 PASS）。
-- 架构：双进程。`ImeCore.dll`（TSF 文本服务，注入宿主）+ `LingxiUI.exe`（候选窗+引擎，命名管道 `\\.\pipe\lingxi-ipc`）。
+- 架构：双进程。`ImeCore.dll`（TSF 文本服务，注入宿主）+ `LingxiUI.exe`（候选窗+引擎，命名管道 `\\.\pipe\lingxi-ime-ipc`）。
 - **默认无内联组合模式**（`_inlineComp=false`），从架构上杜绝 Chromium 悬挂组合污染。
+
+### R3 前置已完成（豆包，2026-10-28）
+- 拼音模式 DLL 现在随拼音串补发已上屏上文（光标前 ≤300 字），`MsgCtx` 加 `ctxChars`、`CTX_F_CTX_PREFIX`；UI 侧 V1/V2 双格式自洽解析（兼容宿主驻留的旧 DLL，`MsgCtxV1`）。
+- **关键修复（见 cur/DEV-REPLY-prefix.md）**：`AppendStr/ReadStr` 的字符串长度前缀是 **u16（2 字节）**，不是 u32。曾出现一版按 4 字节算的自洽公式导致全部 CTX 帧被丢弃，已改回 2 字节。
+- 已用 tmp/v2ctx.exe（V2，46 字节）、tmp/v1ctx.exe（V1，34 字节）验证均收到 CANDS。
+- 下一步：R3 §4 KV 加固（n_ctx 512→1024、seq_rm 返回值检查、双 prompt 槽）→ §2 指令式重排。
 
 ### 符号面板已完成（GLM 审查意见全部处理）
 - 5 分类符号网格（常用/数学/货币/箭头/表情），点击经 MSG_INSERT_TEXT 插入宿主。
