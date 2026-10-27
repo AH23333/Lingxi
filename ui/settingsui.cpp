@@ -25,10 +25,13 @@ constexpr int IDC_CHK_PINYIN = 101;
 constexpr int IDC_CHK_EN = 102;
 constexpr int IDC_EDT_COUNT = 104;
 constexpr int IDC_CMB_DARK = 106;
+constexpr int IDC_CHK_CNPUNCT = 107;
+constexpr int IDC_CHK_FUZZY = 108;
 
 HWND g_hMain = nullptr;    // 隐藏消息窗口（托盘宿主）
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
-HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr, g_hCmbDark = nullptr;
+HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
+     g_hCmbDark = nullptr, g_hChkCnPunct = nullptr, g_hChkFuzzy = nullptr;
 HFONT g_hFont = nullptr;
 bool g_updating = false; // 程序性改控件时不回写设置
 
@@ -44,6 +47,8 @@ void LoadToControls()
     g_updating = true;
     Button_SetCheck(g_hChkPinyin, s.pinyinEnabled ? BST_CHECKED : BST_UNCHECKED);
     Button_SetCheck(g_hChkEn, s.enCompletion ? BST_CHECKED : BST_UNCHECKED);
+    Button_SetCheck(g_hChkCnPunct, s.cnPunct ? BST_CHECKED : BST_UNCHECKED);
+    Button_SetCheck(g_hChkFuzzy, s.fuzzyPinyin ? BST_CHECKED : BST_UNCHECKED);
     wchar_t buf[16];
     _snwprintf_s(buf, _TRUNCATE, L"%u", s.candidateCount);
     Edit_SetText(g_hEdtCount, buf);
@@ -57,6 +62,8 @@ void SaveFromControls()
     Settings s = LoadSettings(); // 保留未在此窗口编辑的字段
     s.pinyinEnabled = Button_GetCheck(g_hChkPinyin) == BST_CHECKED;
     s.enCompletion = Button_GetCheck(g_hChkEn) == BST_CHECKED;
+    s.cnPunct = Button_GetCheck(g_hChkCnPunct) == BST_CHECKED;
+    s.fuzzyPinyin = Button_GetCheck(g_hChkFuzzy) == BST_CHECKED;
     wchar_t buf[16] = L"";
     Edit_GetText(g_hEdtCount, buf, 16);
     int n = _wtoi(buf);
@@ -66,8 +73,9 @@ void SaveFromControls()
     int sel = ComboBox_GetCurSel(g_hCmbDark);
     if (sel >= 0) s.darkMode = (uint32_t)sel;
     SaveSettings(s);
-    LX_LOG(L"ui", L"设置已保存: pinyin=%d count=%u dark=%u en=%d",
-           (int)s.pinyinEnabled, s.candidateCount, s.darkMode, (int)s.enCompletion);
+    LX_LOG(L"ui", L"设置已保存: pinyin=%d count=%u dark=%u en=%d cnPunct=%d fuzzy=%d",
+           (int)s.pinyinEnabled, s.candidateCount, s.darkMode, (int)s.enCompletion,
+           (int)s.cnPunct, (int)s.fuzzyPinyin);
 }
 
 // ---------------- 设置窗口 ----------------
@@ -81,6 +89,8 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         {
         case IDC_CHK_PINYIN:
         case IDC_CHK_EN:
+        case IDC_CHK_CNPUNCT:
+        case IDC_CHK_FUZZY:
             if (HIWORD(wParam) == BN_CLICKED) SaveFromControls();
             return 0;
         case IDC_EDT_COUNT:
@@ -116,7 +126,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     if (auto pGetDpi = (UINT(WINAPI*)())GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForSystem"))
         dpi = pGetDpi();
     int scale = (int)dpi;
-    int W = MulDiv(400, scale, 96), H = MulDiv(300, scale, 96);
+    int W = MulDiv(440, scale, 96), H = MulDiv(380, scale, 96);
     int x = MulDiv(16, scale, 96), y = MulDiv(16, scale, 96);
     int rowH = MulDiv(30, scale, 96);
 
@@ -145,6 +155,8 @@ void CreateSettingsWindow(HINSTANCE hInst)
     mkStatic(L"拼音（zh-CN 配置下生效）", 0);
     g_hChkPinyin = mkCheck(L"拼音组合模式（字母上屏汉字，空格/数字选择；关闭则字母直通+英文补全）", IDC_CHK_PINYIN);
     g_hChkEn = mkCheck(L"英文逐键补全（词中自动补全英文单词）", IDC_CHK_EN);
+    g_hChkFuzzy = mkCheck(L"模糊音（z/zh、c/ch、s/sh、n/l、前后鼻音互通，精确优先）", IDC_CHK_FUZZY);
+    g_hChkCnPunct = mkCheck(L"中文标点（. , / ; 等自动转全角，Shift 出 ？：》《 等）", IDC_CHK_CNPUNCT);
 
     y += MulDiv(6, scale, 96);
     mkStatic(L"候选数量（1-9，数字键选择）", 0);
