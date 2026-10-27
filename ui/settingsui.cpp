@@ -216,6 +216,7 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         HMENU menu = CreatePopupMenu();
         Settings s = LoadSettings();
         AppendMenuW(menu, MF_STRING | (s.pinyinEnabled ? MF_CHECKED : 0), 2001, L"拼音组合模式");
+        AppendMenuW(menu, MF_STRING | (s.paused ? MF_CHECKED : 0), 2004, L"暂停预测（完全直通）");
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(menu, MF_STRING, 2002, L"设置...");
         AppendMenuW(menu, MF_STRING, 2003, L"退出");
@@ -231,6 +232,13 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
             ns.pinyinEnabled = !ns.pinyinEnabled;
             SaveSettings(ns);
             if (g_hChkPinyin) LoadToControls(); // 窗口开着则同步控件
+            break;
+        }
+        case 2004:
+        {
+            Settings ns = LoadSettings();
+            ns.paused = !ns.paused;
+            SaveSettings(ns);
             break;
         }
         case 2002:

@@ -39,6 +39,7 @@ Settings LoadSettings()
     if (GetDword(hKey, L"CandidateCount", v) && v >= 1 && v <= 9) s.candidateCount = v;
     if (GetDword(hKey, L"DarkMode", v) && v <= 2) s.darkMode = v;
     if (GetDword(hKey, L"EnCompletion", v)) s.enCompletion = v != 0;
+    if (GetDword(hKey, L"Paused", v)) s.paused = v != 0;
 
     RegCloseKey(hKey);
     return s;
@@ -55,6 +56,7 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"CandidateCount", s.candidateCount);
     SetDword(hKey, L"DarkMode", s.darkMode);
     SetDword(hKey, L"EnCompletion", s.enCompletion ? 1 : 0);
+    SetDword(hKey, L"Paused", s.paused ? 1 : 0);
 
     RegCloseKey(hKey);
 }

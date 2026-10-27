@@ -297,6 +297,12 @@ void PipeServer::PredictProc()
 
         // 用户设置（每次请求实时读取，µs 级注册表查询）
         Settings st = LoadSettings();
+        if (st.paused)
+        {
+            // 暂停预测：完全直通，不出候选（托盘“暂停预测”开关）
+            _wnd->Hide();
+            continue;
+        }
         if (!e.pinyin && !st.enCompletion)
         {
             // 英文逐键补全关闭：纯英文上下文不出候选（中文上下文续写保留）
