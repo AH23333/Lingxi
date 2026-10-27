@@ -181,7 +181,6 @@ private:
     bool _shiftUsed = false;
     bool _shiftWasActive = false; // Shift 按下时是否正在拼音输入
     std::atomic<bool> _modeDirty{ false }; // 语言/前台/焦点变化置位，按键路径执行检测
-    bool _fInPinyinEdit = false;  // 组合编辑会话执行中（抑制 OnEndEdit 自激发）
     std::wstring _pinyin;         // 当前拼音字母串
     ITfComposition* _pComposition = nullptr;
     ITfRange* _compRange = nullptr;

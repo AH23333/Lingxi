@@ -117,7 +117,7 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* pThreadMgr, TfClientId tid, 
     }
 
     _fActivated = true;
-    // 拼音模式：投递封送消息，在消息泵空闲点安全检测（绝不肏 CTF 回调窗口内）
+    // 拼音模式：投递封送消息，在消息泵空闲点安全检测（绝不碰 CTF 回调窗口内）
     RequestModeDetect();
     _pipe.Start(this, _hwndMarshal);
     _pipe.Send(MSG_ACTIVATE, NULL, 0);

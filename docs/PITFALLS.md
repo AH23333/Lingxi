@@ -118,3 +118,4 @@
 - **症状**：多 attempt 运行后日志里 DLL 行与 LingxiUI 行代际混杂、部分丢失
 - **根因**：DLL 缓存的日志句柄指向被删除的文件（内容继续写入但新路径看不到）；每个新拉起的 LingxiUI 开新文件
 - **正确做法**：取证时以 VEH 崩溃文件 + stdout（每行 fflush）为准；或 DLL 检测日志句柄失效重开（待办）
+- **更正（QC 复核）**：现行 `common/log.h` 的 `AppendToFile` 已改为**逐行开关文件**（每次日志行都重新 CreateFile/CloseHandle），不再缓存句柄——本坑的根因在当前实现下已消除；代价是 `LINGXI_LOG=1` 时每行一次开关文件的高频 IO（曾导致拼音延迟 0.8ms→15-44ms 的"性能回归"，见 cur/HANDOFF.md）。判读旧日志时仍按本条原样取证。
