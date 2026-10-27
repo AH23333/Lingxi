@@ -24,6 +24,7 @@
 #include <vector>
 
 #include "../../common/log.h"
+#include "../../common/settings.h"
 
 namespace lingxi {
 
@@ -79,6 +80,7 @@ public:
     {
         Prediction p;
         if (context.empty()) return p;
+        _fuzzy = LoadSettings().fuzzyPinyin; // 开关实时生效
         std::string raw = ToUtf8(context);
         if (raw.empty()) return p;
 
@@ -136,6 +138,11 @@ private:
     // 单音节 → 单字词（含多个同音字）
     std::unordered_map<std::string, std::vector<int>> _charBySyll;
 
+    // 模糊音开关（每次 Predict 从设置读取，默认开）
+    bool _fuzzy = true;
+    // 音节 → 合法模糊变体（含自身，自身在首位）；加载后一次性预计算，热路径只查表。
+    std::unordered_map<std::string, std::vector<std::string>> _fuzzyOf;
+
     // -----------------------------------------------------------------------
     // 加载
     // -----------------------------------------------------------------------
@@ -170,6 +177,7 @@ private:
 
         BuildIndexes();
         BuildSyllableSet();
+        BuildFuzzyIndex();
     }
 
     void BuildIndexes()
@@ -379,6 +387,73 @@ private:
         return false;
     }
 
+    // 声母长度：zh/ch/sh 为 2，其余单字母声母为 1，零声母(a/o/e…) 为 0。
+    static int InitialLen(const std::string& s)
+    {
+        if (s.size() >= 2 && (s[0] == 'z' || s[0] == 'c' || s[0] == 's') && s[1] == 'h')
+            return 2;
+        if (s.empty()) return 0;
+        switch (s[0])
+        {
+        case 'b': case 'p': case 'm': case 'f': case 'd': case 't': case 'n':
+        case 'l': case 'g': case 'k': case 'h': case 'j': case 'q': case 'x':
+        case 'r': case 'z': case 'c': case 's': case 'y': case 'w':
+            return 1;
+        }
+        return 0;
+    }
+
+    // 一次性预计算每个合法音节的模糊变体缓存（热路径只查表，不再重复枚举）。
+    void BuildFuzzyIndex()
+    {
+        _fuzzyOf.clear();
+        for (const auto& s : _syllables)
+            _fuzzyOf.emplace(s, ComputeFuzzy(s));
+    }
+
+    // 模糊音：返回该完整音节的合法等价音节（自身在首位）。
+    // 声母 z/zh、c/ch、s/sh、n/l 互通；韵母前/后鼻音尾 n/ng 互换；
+    // 仅保留 _syllables 中真实存在的音节（自动剔除 sin、ung 这类非法组合）。
+    std::vector<std::string> ComputeFuzzy(const std::string& s) const
+    {
+        std::vector<std::string> out;
+        out.push_back(s);
+        int iLen = InitialLen(s);
+        std::string initial = s.substr(0, iLen);
+        std::string final = s.substr(iLen);
+
+        std::vector<std::string> initVar{ initial };
+        if (initial == "z") initVar.push_back("zh");
+        else if (initial == "zh") initVar.push_back("z");
+        else if (initial == "c") initVar.push_back("ch");
+        else if (initial == "ch") initVar.push_back("c");
+        else if (initial == "s") initVar.push_back("sh");
+        else if (initial == "sh") initVar.push_back("s");
+        else if (initial == "n") initVar.push_back("l");
+        else if (initial == "l") initVar.push_back("n");
+
+        std::vector<std::string> finVar{ final };
+        if (final.size() >= 2 && final[final.size() - 1] == 'g' &&
+            final[final.size() - 2] == 'n')
+        {
+            finVar.push_back(final.substr(0, final.size() - 1)); // -ng → -n
+        }
+        else if (!final.empty() && final.back() == 'n')
+        {
+            finVar.push_back(final + "g"); // -n → -ng
+        }
+
+        for (const auto& ini : initVar)
+            for (const auto& fin : finVar)
+            {
+                std::string cand = ini + fin;
+                if (cand != s && _syllables.count(cand) &&
+                    std::find(out.begin(), out.end(), cand) == out.end())
+                    out.push_back(cand);
+            }
+        return out;
+    }
+
     static void Prune(std::vector<SegPath>& v)
     {
         // 去重（相同单元序列）
@@ -423,8 +498,18 @@ private:
         }
         return pen;
     }
+    // 词的单项成本：按加载行号（词频序）取对数，越常用成本越低。
+    double WordCost(int idx) const
+    {
+        return std::log(1.0 + (double)_entries[idx].rank);
+    }
+
     // 词数成本：词链中每个词都加，倾向用更少（更长）的词。
     static constexpr double kWordCountCost = 1.5;
+    // 每个模糊音节的罚分：使模糊命中排在精确命中之后，但仍可作为容错候选。
+    static constexpr double K_FUZZY = 3.0;
+    // 模糊音仅对至多 3 音节的词做变体枚举（控制组合数 4^3 以内）。
+    static constexpr int K_FUZZY_MAX_SYLL = 3;
 
     std::vector<WordMatch> MatchWords(const std::vector<SyllUnit>& units)
     {
@@ -441,11 +526,13 @@ private:
         bool hasPartial = false;
         for (const auto& u : units)
             if (u.kind == SyllUnit::PARTIAL) { hasPartial = true; break; }
+        bool appendedFuzzy = false; // 是否追加了模糊命中（仅此时才需要重排）
 
         if (!hasPartial)
         {
             // 全拼/简拼模式键精确匹配（O(1)）；键含 n 段，命中词音节数天然相等，
             // 同时统一支持全 FULL、全 INITIAL 与任意混合，避免线性扫描。
+            bool allFull = true;
             std::string key;
             key.reserve(24);
             for (int k = 0; k < n; k++)
@@ -454,14 +541,70 @@ private:
                 const std::string& t = units[k].text;
                 if (t.empty()) return out;
                 if (units[k].kind == SyllUnit::FULL) { key.push_back('='); key += t; }
-                else { key.push_back('-'); key.push_back(t[0]); }
+                else { allFull = false; key.push_back('-'); key.push_back(t[0]); }
             }
+            std::unordered_set<int> exactEi;
             auto it = _byPattern.find(key);
             if (it != _byPattern.end())
-                for (int i : it->second) add(i);
-            return out;
-        }
+                for (int i : it->second) { add(i); exactEi.insert(i); }
 
+            // 模糊音：全 FULL、短词（≤3 音节）。枚举每个音节的声母/韵母合法
+            // 变体组合，查同一模式索引；命中词按“模糊音节数”加罚，精确命中优先。
+            if (_fuzzy && allFull && n <= K_FUZZY_MAX_SYLL)
+            {
+                std::vector<std::vector<std::string>> var(n);
+                bool anyFuzzy = false;
+                for (int k = 0; k < n; k++)
+                {
+                    auto fit = _fuzzyOf.find(units[k].text);
+                    if (fit != _fuzzyOf.end()) var[k] = fit->second;
+                    else var[k] = { units[k].text };
+                    if (var[k].size() > 1) anyFuzzy = true;
+                }
+                if (anyFuzzy)
+                {
+                    std::unordered_map<int, int> bestFuzzy; // ei → 最小模糊音节数
+                    size_t total = 1;
+                    for (auto& v : var) total *= v.size();
+                    for (size_t comb = 1; comb < total; comb++) // comb=0 即全自身（精确）
+                    {
+                        size_t t = comb;
+                        std::string fk;
+                        fk.reserve(24);
+                        int fuzzyCount = 0;
+                        for (int k = 0; k < n; k++)
+                        {
+                            size_t pick = t % var[k].size();
+                            t /= var[k].size();
+                            const std::string& syl = var[k][pick];
+                            if (syl != units[k].text) fuzzyCount++;
+                            if (k) fk.push_back('|');
+                            fk.push_back('=');
+                            fk += syl;
+                        }
+                        if (fuzzyCount == 0) continue;
+                        auto fit = _byPattern.find(fk);
+                        if (fit == _byPattern.end()) continue;
+                        for (int ei : fit->second)
+                        {
+                            if (exactEi.count(ei)) continue;
+                            auto bf = bestFuzzy.find(ei);
+                            if (bf == bestFuzzy.end() || fuzzyCount < bf->second)
+                                bestFuzzy[ei] = fuzzyCount;
+                        }
+                    }
+                    for (const auto& kv : bestFuzzy)
+                    {
+                        bool single = _entries[kv.first].word.size() == 1;
+                        double pen = PenaltyFor(units, single) + kv.second * K_FUZZY;
+                        out.push_back({ kv.first, pen });
+                    }
+                    appendedFuzzy = !bestFuzzy.empty();
+                }
+            }
+        }
+        else
+        {
         // 含末尾 PARTIAL：首单元桶 + 逐音节过滤（仅残段路径触发，量小）
         const SyllUnit& u0 = units[0];
         if (u0.kind == SyllUnit::PARTIAL) return out; // 整串即残段：走残段单字
@@ -503,6 +646,21 @@ private:
             }
             if (ok) add(ei);
         }
+        }
+
+        // 仅在追加了模糊命中时重排：精确桶本已按词频(rank)有序，无需重复排序；
+        // 混入模糊词后按“词频 + 模糊/简拼罚分”排序，使高频精确词与高频模糊词都
+        // 靠前，上层“候选上限”截断时保留的是高价值词，而非随机/生僻词。
+        if (appendedFuzzy)
+        {
+            std::stable_sort(out.begin(), out.end(),
+                             [&](const WordMatch& a, const WordMatch& b) {
+                                 double ca = WordCost(a.idx) + a.penalty;
+                                 double cb = WordCost(b.idx) + b.penalty;
+                                 if (ca != cb) return ca < cb;
+                                 return a.idx < b.idx;
+                             });
+        }
         return out;
     }
 
@@ -532,11 +690,6 @@ private:
         int firstSpan = 0;
         int nWords = 0;
     };
-
-    double WordCost(int idx) const
-    {
-        return std::log(1.0 + (double)_entries[idx].rank);
-    }
 
     // -----------------------------------------------------------------------
     // 候选生成
@@ -671,14 +824,17 @@ private:
 
             // 3) 单词 / 短语（从位置 0 起，覆盖前若干单元；未覆盖计罚分）。
             // 纯简拼只保留覆盖全部或只差 1 个声母的前缀词（如 d→的、dh→电话）。
+            // 完整覆盖输入的词（span==n）放宽到 60 个：单字同音/模糊字、精确与模糊
+            // 整词都应可翻页看到；仅覆盖前缀的碎词仍限 4 个，避免噪声。
             for (int span = 1; span <= 4 && span <= n; span++)
             {
                 if (allInit && n - span > 1) continue;
                 const std::vector<WordMatch>& ws = getMatches(0, span);
                 int added = 0;
+                int limit = (span == n) ? (int)kPredictMaxCandidates : 4;
                 for (const auto& w : ws)
                 {
-                    if (added >= 4) break;
+                    if (added >= limit) break;
                     double uncovered = (double)(n - span) * 8.0;
                     double c = WordCost(w.idx) + w.penalty + kWordCountCost + uncovered;
                     add(_entries[w.idx].word, c, span, 1);

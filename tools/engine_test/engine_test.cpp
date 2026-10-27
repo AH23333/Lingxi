@@ -385,6 +385,65 @@ int wmain()
                 }
             }
 
+            // P8. 模糊音（z/zh、c/ch、s/sh、n/l、前/后鼻音互通；精确优先）
+            {
+                // 打“模糊”的音，候选中应能找到正确字（容错命中）
+                struct FCase { const wchar_t* in; const wchar_t* expect; };
+                const FCase hits[] = {
+                    {L"zang", L"张"},   // 平舌 zang -> 翘舌 zhang
+                    {L"zhang", L"脏"},  // 反向 zhang -> zang
+                    {L"si", L"是"},     // 平舌 si -> 翘舌 shi
+                    {L"shi", L"四"},    // 反向
+                    {L"na", L"拉"},     // n -> l
+                    {L"la", L"那"},     // l -> n
+                    {L"jin", L"京"},    // 前鼻 jin -> 后鼻 jing
+                    {L"jing", L"金"},   // 后鼻 jing -> 前鼻 jin
+                    {L"chen", L"程"},   // chen -> cheng
+                    {L"cheng", L"陈"},  // cheng -> chen
+                    {L"xian", L"想"},   // xian -> xiang
+                    {L"xiang", L"先"},  // xiang -> xian
+                    {L"nan", L"兰"},    // n/l 互通
+                    {L"lan", L"南"},
+                    {L"zao", L"找"},    // 平舌 zao -> 翘舌 zhao
+                    {L"zhao", L"早"},
+                };
+                auto hasCand = [](const lingxi::Prediction& r, const std::wstring& w) {
+                    for (const auto& c : r.cands)
+                        if (c == w) return true;
+                    return false;
+                };
+                for (const auto& c : hits)
+                {
+                    lingxi::Prediction r = py->Predict(c.in);
+                    bool ok = hasCand(r, c.expect);
+                    wchar_t detail[128];
+                    _snwprintf_s(detail, _TRUNCATE,
+                                 L"fuzzy '%ls' should include '%ls' (got %zu)",
+                                 c.in, c.expect, r.cands.size());
+                    Report(ok, "fuzzy pinyin tolerant hit", detail);
+                }
+                // 精确优先：打规范音时，高频精确字仍是首选，不被模糊字抢占
+                {
+                    struct ECase { const wchar_t* in; const wchar_t* top; };
+                    const ECase tops[] = {
+                        {L"zhang", L"长"},
+                        {L"shi", L"是"},
+                        {L"jing", L"经"},
+                        {L"xiang", L"向"},
+                    };
+                    for (const auto& c : tops)
+                    {
+                        lingxi::Prediction r = py->Predict(c.in);
+                        bool ok = !r.cands.empty() && r.cands[0] == c.top;
+                        wchar_t detail[128];
+                        _snwprintf_s(detail, _TRUNCATE, L"exact '%ls' top='%ls' got='%ls'",
+                                     c.in, c.top,
+                                     r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                        Report(ok, "fuzzy pinyin exact-first preserved", detail);
+                    }
+                }
+            }
+
             delete py;
         }
     }

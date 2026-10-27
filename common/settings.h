@@ -16,6 +16,7 @@ struct Settings
     bool enCompletion = true;     // 英文逐键补全（词中前缀替换）
     bool paused = false;          // 暂停预测：完全直通，不出任何候选（临时需要时用）
     bool cnPunct = true;          // 中文标点：中文模式下 . , / ; 等映射为全角标点
+    bool fuzzyPinyin = true;      // 模糊音：z/zh、c/ch、s/sh、n/l、前/后鼻音互通（精确优先）
 };
 
 Settings LoadSettings();
