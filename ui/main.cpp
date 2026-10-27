@@ -20,6 +20,7 @@ constexpr wchar_t kEvtShowSymbols[] = L"Local\\LingxiUI_ShowSymbols";
 constexpr wchar_t kEvtShowSettings[] = L"Local\\LingxiUI_ShowSettings";
 constexpr UINT WM_NOTIFY_SYMBOLS = WM_APP + 20;
 constexpr UINT WM_NOTIFY_SETTINGS = WM_APP + 21;
+constexpr int kHotkeySymbols = 1; // RegisterHotKey 热键 ID（Ctrl+Shift+B）
 
 std::function<void()> g_reqSymbols;
 std::function<void()> g_reqSettings;
@@ -28,6 +29,8 @@ LRESULT CALLBACK NotifyWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (msg == WM_NOTIFY_SYMBOLS) { if (g_reqSymbols) g_reqSymbols(); return 0; }
     if (msg == WM_NOTIFY_SETTINGS) { if (g_reqSettings) g_reqSettings(); return 0; }
+    if (msg == WM_HOTKEY && (int)wp == kHotkeySymbols)
+    { if (g_reqSymbols) g_reqSymbols(); return 0; }
     return DefWindowProcW(h, msg, wp, lp);
 }
 
@@ -191,6 +194,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     RegisterClassW(&nwc);
     HWND hNotify = CreateWindowExW(0, L"LingxiNotifyWnd", L"", 0,
                                    0, 0, 0, 0, HWND_MESSAGE, NULL, hInst, NULL);
+    // 全局热键 Ctrl+Shift+B 调出符号面板；被占用时静默跳过（不影响其他功能）
+    RegisterHotKey(hNotify, kHotkeySymbols, MOD_CONTROL | MOD_SHIFT | MOD_NOREPEAT,
+                   (UINT)'B');
     g_reqSymbols = [&] {
         lingxi::ShowSymbolPanel(hInst,
             [&server](const std::wstring& s) { server.SendInsertText(s); });
