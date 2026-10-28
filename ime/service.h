@@ -103,6 +103,9 @@ public:
     void WaitForLatestCandidates(DWORD maxMs);
     // 候选翻页：delta=+1 下一页 / -1 上一页（仅拼音模式；更新 _pageStart 并通知 UI）
     void PageCandidates(int delta);
+    // 候选翻页到首页/末页（Home/End 键；last=false 首页 / true 末页；
+    // 收发模式与 PageCandidates 一致，无候选/已在目标页为无操作）
+    void PageCandidatesHomeEnd(bool last);
     void SendPage();
     // 中文标点：判定该键是否映射为中文标点；映射并上屏（拼音活动时先提交首选）
     bool IsChinesePunctKey(WPARAM wParam);

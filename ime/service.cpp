@@ -479,6 +479,34 @@ void CTextService::PageCandidates(int delta)
     }
 }
 
+// Home/End 翻页：last=false 首页 / true 末页。收发模式与 PageCandidates 一致。
+void CTextService::PageCandidatesHomeEnd(bool last)
+{
+    if (!_csInit) return;
+    uint32_t ver = 0, newStart = 0;
+    bool can = false;
+    EnterCriticalSection(&_cs);
+    if (!_cands.empty() && _verCands == _verSent)
+    {
+        uint32_t total = (uint32_t)_cands.size();
+        uint32_t target = last ? (total - 1) / kPageSize * kPageSize : 0;
+        if (target != _pageStart)
+        {
+            _pageStart = target;
+            newStart = target;
+            ver = _verSent;
+            can = true;
+        }
+    }
+    LeaveCriticalSection(&_cs);
+    if (can)
+    {
+        MsgPage m{ ver, newStart };
+        _pipe.Send(MSG_PAGE, &m, sizeof(m));
+        LX_LOG(L"ime", L"Home/End 翻页 ver=%u pageStart=%u", ver, newStart);
+    }
+}
+
 void CTextService::SendPage()
 {
     // 保留：显式重发当前页（当前翻页在 PageCandidates 内即时发送，此函数备用）

@@ -216,6 +216,11 @@ public:
             if (inOfCtx.size() != inForCover.size()) coverOk = false;
         }
         if (st.shuangpin) raw = ShuangpinToQuanpin(raw); // 双拼→全拼
+        // 显式隔音判定（与 EnumeratePaths 同一归一口径，弯撇号 U+2019 同算）：
+        // 有隔音时 MatchWords 紧校验音节数（拒跨边界 compact 撞键），无隔音时
+        // 串级匹配是合法读法不校验（xian 的"西安"走 [xian] 路径 tier-0）。
+        // 必须在双拼转换后计算：ShuangpinToQuanpin 滤撇号，双拼自然无隔音。
+        bool strictSep = NormalizeIn(raw).find('\'') != std::string::npos;
 
         std::vector<SegPath> paths = EnumeratePaths(raw);
         if (paths.empty())
@@ -236,7 +241,7 @@ public:
             LX_LOGV(L"py", L"path cost=%d %hs", pp.cost, desc.c_str());
         }
 
-        std::vector<Candidate> out = Generate(paths, coverOk ? &inForCover : nullptr);
+        std::vector<Candidate> out = Generate(paths, coverOk ? &inForCover : nullptr, strictSep);
         for (const auto& c : out)
             LX_LOGV(L"py", L"cand cost=%.2f %hs", c.cost, ToUtf8(c.word).c_str());
 
@@ -1057,7 +1062,11 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     // 模糊音仅对至多 3 音节的词做变体枚举（控制组合数 4^3 以内）。
     static constexpr int K_FUZZY_MAX_SYLL = 3;
 
-    std::vector<WordMatch> MatchWords(const std::vector<SyllUnit>& units)
+    // strictSep：输入含显式隔音撇号（NormalizeIn 口径，弯撇号同）。有隔音时
+    // 紧凑/模糊分支紧校验音节数——跨显式边界的串级撞键（xi'an 的 [xi][an]
+    // 路径撞单音节词"先"）违反用户标注的边界，拒收；无隔音时串级匹配本来就是
+    // 合法读法（xian 的"西安"走 [xian] 单元路径 tier-0），不能拒。
+    std::vector<WordMatch> MatchWords(const std::vector<SyllUnit>& units, bool strictSep)
     {
         std::vector<WordMatch> out;
         if (units.empty()) return out;
@@ -1109,9 +1118,9 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                         // 紧凑全拼丢边界（xi+an 与 xian 同串）：单音节词"先/建"
                         // 会撞进双单元路径——隔音符（xi'an）语义因此失效。
                         // 音节数必须与单元数一致（PARTIAL 分支 1176 同款校验）。
-                        // 无隔音时只是去掉跨路径冗余匹配（xian 的"西安"仍由
-                        // [xi][an] 路径命中），零行为损失。
-                        if (_entries[i].sylls.size() != (size_t)n) continue;
+                        // 有隔音时拒收跨显式边界的撞键词（xi'an 不出"先"）；
+                        // 无隔音时不校验（xian 的"西安"合法走 [xian] 路径）。
+                        if (strictSep && _entries[i].sylls.size() != (size_t)n) continue;
                         add(i); exactEi.insert(i);
                     }
             }
@@ -1160,7 +1169,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                         for (int ei : fit->second)
                         {
                             if (exactEi.count(ei)) continue;
-                            if (_entries[ei].sylls.size() != (size_t)n) continue; // 紧凑全拼撞键：同上
+                            if (strictSep && _entries[ei].sylls.size() != (size_t)n) continue; // 跨隔音撞键：同上
                             auto bf = bestFuzzy.find(ei);
                             if (bf == bestFuzzy.end() || fuzzyCount < bf->second)
                                 bestFuzzy[ei] = fuzzyCount;
@@ -1270,7 +1279,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     // 非空时逐候选计算 coverEnd（消耗的前缀 in 字符数），空则全部 0。
     // -----------------------------------------------------------------------
     std::vector<Candidate> Generate(const std::vector<SegPath>& paths,
-                                    const std::string* inForCover)
+                                    const std::string* inForCover, bool strictSep)
     {
         std::vector<Candidate> all;
         // 最自然切分（最长音节、最少简拼）的路径 cost 作为 tier 0 基准；
@@ -1344,7 +1353,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 {
                     mwDone[i][span] = 1;
                     std::vector<SyllUnit> sub(units.begin() + i, units.begin() + i + span);
-                    mw[i][span] = MatchWords(sub);
+                    mw[i][span] = MatchWords(sub, strictSep);
                 }
                 return mw[i][span];
             };

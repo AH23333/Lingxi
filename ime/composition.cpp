@@ -633,6 +633,13 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
                 LeaveCriticalSection(&_cs);
                 return multi;
             }
+        case VK_UP: case VK_DOWN: case VK_HOME: case VK_END:
+        case VK_LEFT: case VK_RIGHT:
+            // 组合存续期移动光标类导航键一律归 IME：Up/Down/Home/End 翻页、
+            // Left/Right 吞下保守组合（组合光标编辑为 M5 尾巴）。此前放行会让
+            // 宿主光标移出组合范围，后续 SetText 与光标错位（B5 VK_SHIFT 同族
+            // 缺口）。Ctrl/Alt 组合键已在上方直通闸放行，不受影响。
+            return true;
         }
         if (wParam >= L'1' && wParam <= L'9' && !shiftOrCaps)
             return CandidatesVisible(); // 无 Shift 数字 = 当前页选词
@@ -856,6 +863,25 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
     case VK_OEM_MINUS:
         if (shiftOrCaps && CommitChinesePunct(wParam)) return;
         PageCandidates(-1);
+        return;
+    // 导航键翻页（B7 配套）：Up/Down 上下翻页、Home/End 首末页。PinyinKeyEaten
+    // 已在组合期吃下这些键（防宿主光标移出组合范围），此处给出有用语义；
+    // 无候选/已在目标页时为无操作。
+    case VK_UP:
+        PageCandidates(-1);
+        return;
+    case VK_DOWN:
+        PageCandidates(+1);
+        return;
+    case VK_HOME:
+        PageCandidatesHomeEnd(false);
+        return;
+    case VK_END:
+        PageCandidatesHomeEnd(true);
+        return;
+    case VK_LEFT:
+    case VK_RIGHT:
+        // 吞下保组合：组合光标编辑为 M5 尾巴（预留），放行会造成光标错位。
         return;
     case VK_SPACE:
     case VK_TAB:

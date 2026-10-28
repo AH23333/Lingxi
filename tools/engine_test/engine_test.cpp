@@ -728,6 +728,36 @@ int wmain()
                                  idxXian, cvXian, r.cands.size());
                     Report(ok, "separator: xi'an '先' is prefix-only (cover 1, not 4)", detail);
                 }
+                {
+                    // B6×B1 集成：xi'an 部分提交"西"（cover=2）后剩余 "'an"——
+                    // 引擎必须把前导隔音边界随后续音节一并消耗（安 cover=3），
+                    // 不在组合里留死撇号。
+                    lingxi::Prediction r = py->Predict(L"'an");
+                    bool parallel = r.cover.size() == r.cands.size();
+                    int idxAn = -1;
+                    uint32_t cvAn = 0;
+                    for (size_t k = 0; k < r.cands.size() && k < r.cover.size(); k++)
+                        if (r.cands[k] == L"安") { idxAn = (int)k; cvAn = r.cover[k]; break; }
+                    wchar_t detail[128];
+                    _snwprintf_s(detail, _TRUNCATE, L"安idx=%d cover=%u cands=%zu",
+                                 idxAn, cvAn, r.cands.size());
+                    Report(parallel && idxAn >= 0 && cvAn == 3,
+                           "separator: leftover 'an consumes boundary too (cover 3)", detail);
+                }
+                {
+                    // 音节数校验不误伤对照组：无隔音 xian 的双音节词"西安"仍从
+                    // [xi][an] 路径命中（cover=4）——校验只拒跨隔音边界的撞键词。
+                    lingxi::Prediction r = py->Predict(L"xian");
+                    int idxXa = -1;
+                    uint32_t cvXa = 0;
+                    for (size_t k = 0; k < r.cands.size() && k < r.cover.size(); k++)
+                        if (r.cands[k] == L"西安") { idxXa = (int)k; cvXa = r.cover[k]; break; }
+                    wchar_t detail[128];
+                    _snwprintf_s(detail, _TRUNCATE, L"西安idx=%d cover=%u cands=%zu",
+                                 idxXa, cvXa, r.cands.size());
+                    Report(idxXa >= 0 && cvXa == 4,
+                           "separator: bare xian '西安' still matches (no over-reject)", detail);
+                }
             }
 
             // P6c3. 双拼不提供 cover（键位→全拼不可逆推）：全 0 或空
