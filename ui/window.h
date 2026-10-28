@@ -18,8 +18,10 @@ public:
 
     // caretScreen：光标屏幕矩形（全 0 表示未知，沿用上次位置）
     // cands 为全量候选（窗口内部分页，每页 kPageSize 个），ver 变化时回到第一页。
+    // composing：当前拼音组合串（B2 回显，纯 UI 内部不走协议）；非空时首行绘制，
+    // 候选行整体下移一行，hover/点击行判定同步偏移。空串=无组合（英文补全等）。
     void Show(const RECT& caretScreen, const std::vector<std::wstring>& cands,
-              bool dark, uint32_t ver);
+              bool dark, uint32_t ver, const std::wstring& composing);
     void Hide();
     // 翻页：显示全量列表中 pageStart 起始的那一页（ver 不匹配则忽略）。
     void SetPage(uint32_t ver, uint32_t pageStart);
@@ -56,6 +58,7 @@ private:
     RECT _caret{};          // 屏幕坐标
     uint32_t _ver = 0;
     std::vector<std::wstring> _cands; // 全量候选
+    std::wstring _composing;          // 当前拼音组合串（B2 首行回显；空=无）
     uint32_t _pageStart = 0;          // 当前页首个候选的全局索引
     int _width = 0, _height = 0;
     int _lastX = 120, _lastY = 120;

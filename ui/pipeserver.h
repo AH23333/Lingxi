@@ -87,8 +87,8 @@ private:
     // cover 与 cands 平行（B1 部分提交），重排时按同一排列搬运
     void StartAsyncRerank(const ClientPtr& c, uint32_t ver, const std::vector<std::wstring>& cands,
                           const std::vector<uint32_t>& cover,
-                          bool dark, const RECT& caret, const std::wstring& ctx,
-                          uint32_t gen, uint32_t seq);
+                          bool dark, const RECT& caret, const std::wstring& composing,
+                          const std::wstring& ctx, uint32_t gen, uint32_t seq);
     void ApplyLearn(ClientCtx* c, uint32_t ver, uint32_t index); // 选字反馈→自学习
     void Activate(const ClientPtr& c);
     void Deactivate(const ClientPtr& c);

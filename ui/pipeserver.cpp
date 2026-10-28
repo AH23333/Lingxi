@@ -500,8 +500,9 @@ void PipeServer::PredictProc()
             LeaveCriticalSection(&_cs);
         }
         bool dark = (st.darkMode == 0) ? e.dark : (st.darkMode == 2);
+        // B2：拼音请求把组合串传给候选窗首行回显（纯 UI 内部，不走协议）
         if (!pred.cands.empty())
-            _wnd->Show(e.caret, pred.cands, dark, e.ver);
+            _wnd->Show(e.caret, pred.cands, dark, e.ver, e.pinyin ? e.text : std::wstring());
         else
             _wnd->Hide();
         // 记录最近一次拼音预测供选字反馈自学习（临界区保护，跨线程读取）
@@ -525,7 +526,8 @@ void PipeServer::PredictProc()
         {
             uint32_t myGen = e.c->gen.fetch_add(1) + 1; // 本次预测占一个交互代
             uint32_t mySeq = e.c->rrSeq.fetch_add(1) + 1; // 使更早的重排线程作废（合并）
-            StartAsyncRerank(e.c, e.ver, pred.cands, pred.cover, dark, e.caret, e.ctx, myGen, mySeq);
+            StartAsyncRerank(e.c, e.ver, pred.cands, pred.cover, dark, e.caret,
+                             e.text, e.ctx, myGen, mySeq); // B2：composing 穿透（pinyin 分支必真）
         }
     }
 }
@@ -543,11 +545,12 @@ void PipeServer::StartAsyncRerank(const ClientPtr& c, uint32_t ver,
                                   const std::vector<std::wstring>& cands,
                                   const std::vector<uint32_t>& cover,
                                   bool dark, const RECT& caret,
+                                  const std::wstring& composing,
                                   const std::wstring& ctx, uint32_t gen, uint32_t seq)
 {
     // 按值捕获全部上下文（线程独立，不依赖栈/队列）；c 为 shared_ptr 引用——
     // 客户端断线时 ClientCtx 不会被提前释放，本线程用完才归还（防悬垂）。
-    std::thread([this, c, ver, cands, cover, dark, caret, ctx, gen, seq]() {
+    std::thread([this, c, ver, cands, cover, dark, caret, composing, ctx, gen, seq]() {
         // 合并连击：先观察一小段。若期间用户又敲了新键（新重排序号已占位），
         // 本线程立刻退出——拼音每键即时预测后，只有最后一键触发的重排有活干。
         Sleep(kRerankSettleMs);
@@ -594,8 +597,8 @@ void PipeServer::StartAsyncRerank(const ClientPtr& c, uint32_t ver,
         pred2.cands = reordered;
         pred2.replaceLen = 0;
         pred2.cover = std::move(reorderedCover);
-        // 回到第一页并更新候选窗（同 ver，宿主无需感知）
-        _wnd->Show(caret, reordered, dark, ver);
+        // 回到第一页并更新候选窗（同 ver，宿主无需感知；composing 同 ver 不跳变）
+        _wnd->Show(caret, reordered, dark, ver, composing);
         SendCandidates(c.get(), ver, pred2);
         LX_LOG(L"pipe", L"LLM 重排生效(两阶段) ver=%u k=%u", ver, (uint32_t)k);
     }).detach();

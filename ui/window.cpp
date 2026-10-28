@@ -151,16 +151,21 @@ void CandWindow::LayoutAndPosition()
 
     // 锁内只取当前页候选快照（避免在锁内调 GetDC/GDI）
     std::vector<std::wstring> page;
+    std::wstring composing;
     {
         EnterCriticalSection(&_cs);
         size_t pgBegin = 0, pgEnd = 0;
         CurrentPageRangeLocked(&pgBegin, &pgEnd);
         page.reserve(pgEnd - pgBegin);
         for (size_t i = pgBegin; i < pgEnd; i++) page.push_back(_cands[i]);
+        composing = _composing;
         LeaveCriticalSection(&_cs);
     }
 
-    _height = pad * 2 + itemH * (int)page.size() + 18; // +18：底部页码/构建标记条
+    // B2 拼音回显：组合串非空时首行多占一行高
+    int compH = composing.empty() ? 0 : itemH;
+
+    _height = pad * 2 + compH + itemH * (int)page.size() + 18; // +18：底部页码/构建标记条
 
     int textMax = 0;
     HDC hdc = GetDC(_hwnd);
@@ -168,6 +173,13 @@ void CandWindow::LayoutAndPosition()
     {
         HGDIOBJ old = SelectObject(hdc, _font);
         SIZE sz{};
+        if (!composing.empty())
+        {
+            // 回显行文本 = 组合串 + "："（与 OnPaint 绘制一致），参与宽度竞争
+            std::wstring comp = composing + L"\xFF1A";
+            GetTextExtentPoint32W(hdc, comp.c_str(), (int)comp.size(), &sz);
+            if (sz.cx > textMax) textMax = sz.cx;
+        }
         for (const auto& s : page)
         {
             GetTextExtentPoint32W(hdc, s.c_str(), (int)s.size(), &sz);
@@ -202,7 +214,7 @@ void CandWindow::LayoutAndPosition()
 }
 
 void CandWindow::Show(const RECT& caretScreen, const std::vector<std::wstring>& cands,
-                      bool dark, uint32_t ver)
+                      bool dark, uint32_t ver, const std::wstring& composing)
 {
     if (!_hwnd) return;
     if (uint32_t fs = LoadSettings().candidateFontSize; fs != _fontSize)
@@ -212,6 +224,7 @@ void CandWindow::Show(const RECT& caretScreen, const std::vector<std::wstring>& 
     EnterCriticalSection(&_cs);
     _caret = caretScreen;
     _cands = cands;
+    _composing = composing;
     _dark = dark;
     _ver = ver;
     _pageStart = 0; // 新一批候选：回到第一页
@@ -275,6 +288,7 @@ void CandWindow::Hide()
     ShowWindow(_hwnd, SW_HIDE);
     EnterCriticalSection(&_cs);
     _cands.clear();
+    _composing.clear();
     _pageStart = 0;
     LeaveCriticalSection(&_cs);
 }
@@ -322,11 +336,13 @@ void CandWindow::OnPaint()
     std::vector<std::wstring> cands;
     uint32_t pageStart = 0;
     int hoverRow = -1;
+    std::wstring composing;
     {
         EnterCriticalSection(&_cs);
         cands = _cands;
         pageStart = _pageStart;
         hoverRow = _hoverRow;
+        composing = _composing;
         LeaveCriticalSection(&_cs);
     }
 
@@ -355,10 +371,27 @@ void CandWindow::OnPaint()
     HGDIOBJ oldFont = SelectObject(hdc, _font);
     SetBkMode(hdc, TRANSPARENT);
 
+    // B2 拼音回显首行：底色与候选区微区分（GDI 无 alpha，用一档实色近似半透明），
+    // 文本 = 组合串 + "："；不参与 hover/点击（WM_MOUSEMOVE/LBUTTONUP 已做行偏移）。
+    int compH = composing.empty() ? 0 : itemH;
+    if (compH)
+    {
+        RECT compR = { 0, 0, rc.right, pad + compH + pad / 2 };
+        HBRUSH hComp = CreateSolidBrush(dark ? RGB(53, 53, 53) : RGB(240, 244, 250));
+        FillRect(hdc, &compR, hComp);
+        DeleteObject(hComp);
+        std::wstring comp = composing + L"\xFF1A";
+        SetTextColor(hdc, dark ? RGB(150, 190, 255) : _accent);
+        RECT compText = { pad, pad, rc.right - pad, pad + compH };
+        DrawTextW(hdc, comp.c_str(), -1, &compText,
+                  DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+    }
+
     for (size_t i = pgBegin; i < pgEnd; i++)
     {
         size_t row = i - pgBegin;
-        RECT rowR = { pad, pad + (int)row * itemH, rc.right - pad, pad + (int)(row + 1) * itemH };
+        RECT rowR = { pad, pad + compH + (int)row * itemH, rc.right - pad,
+                      pad + compH + (int)(row + 1) * itemH };
         if (row == 0)
         {
             HBRUSH hAccent = CreateSolidBrush(accent);
@@ -442,7 +475,15 @@ LRESULT CandWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         int itemH = 0, pad = 0;
         LayoutMetrics(&itemH, &pad);
-        int row = (pt.y - pad) / itemH;
+        bool compActive = false;
+        {
+            EnterCriticalSection(&_cs);
+            compActive = !_composing.empty();
+            LeaveCriticalSection(&_cs);
+        }
+        // B2：拼音回显占首行，候选行判定减去该偏移（负值落回显行=无悬停）
+        int yOff = pad + (compActive ? itemH : 0);
+        int row = (pt.y - yOff) / itemH;
         bool valid = false;
         {
             EnterCriticalSection(&_cs);
@@ -474,7 +515,15 @@ LRESULT CandWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
         int itemH = 0, pad = 0;
         LayoutMetrics(&itemH, &pad);
-        int row = (pt.y - pad) / itemH; // 页内行号（0 起）
+        bool compActive = false;
+        {
+            EnterCriticalSection(&_cs);
+            compActive = !_composing.empty();
+            LeaveCriticalSection(&_cs);
+        }
+        // B2：拼音回显占首行，点击行判定减去该偏移（点回显行不选中任何候选）
+        int yOff = pad + (compActive ? itemH : 0);
+        int row = (pt.y - yOff) / itemH; // 页内行号（0 起）
 
         uint32_t ver = 0;
         uint32_t globalIdx = 0;
