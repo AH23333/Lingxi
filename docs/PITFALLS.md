@@ -174,3 +174,9 @@
 - **症状**：`mid='??' final='??'` 完全无法定位是哪两个字。
 - **根因**：wprintf 输出重定向到文件时按 C locale 转换，非 ASCII 全变 '?'。
 - **正确做法**：断言前把宽串转成 `%04X,` 码点序列打印（T14 的 hexOf 模式），乱码日志里也能精确取证。
+
+## B4 英文候选/复读过滤轮（2026-10-28 晚）
+
+### 31. engine_test 不编 llm.cpp；--probe-llm 直连 LlmPredictor 不经链路由 ⭐
+- **症状**：想给 ChainPredictor 路由/StripPromptEcho 写单测，发现 llm.cpp 根本不在 engine_test.vcxproj（只编 ngram/pinyin/settings）——LLM 相关纯逻辑全都无法进程内断言；而 `--probe-llm` 走 `CreateLlmPredictor()` 直连，链路由/候选过滤/词表优先一概不经——B4 类修复 probe-llm 测了个寂寞。
+- **正确做法**：**接缝前置**——LLM 邻接的纯逻辑（链路由、回显裁剪）放 ngram.cpp 并从 predictor.h 导出（`CreateChainPredictor`/`StripContinuationEcho`），llm.cpp 只留装配与生成；engine_test 用 FakePredictor 替身单测路由。真机端到端另设 `--probe-chain`（真实装配链）。判断一个 probe 能不能验证某修复：看它 new 的是哪个引擎、走没走路由层。

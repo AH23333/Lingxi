@@ -148,3 +148,16 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 - 修复：`symbolHotkey` 默认 false（对齐 llmRerank 的"不默认强加全局占用"原则）；设置页文案注明系统级独占与 Edge 冲突、托盘入口不变。
 - 用户 HKCU 旧默认残留（SymbolHotkey=1）已清 0 并重启真实环境 UI——热键即时释放，Edge 插件快捷键恢复。
 - latency 红复盘子：同机同时刻 A/B（cover 前引擎 10.47ms vs cover 版 10.7ms）证明当日 >10ms 均为机器负载漂移，非代码回归；机器忙时（Qoder/PyCharm/Edge 同跑）median 卡阈值属已知噪声，安静时 6.5-7ms。
+
+## 2026-10-28 晚（二） · B4 英文上下文词表优先 + 复读过滤升级
+
+**根因 A（英文打字吐中文候选）**：纯英文上下文在词边界（如 "Today is a nice " 尾空格）走 LLM 优先，qwen 续写吐中文。**根因 B（复读）**：StripPromptEcho 只裁头部×尾部字面重叠——尾部带标点/输出整段复读 N 遍两形态漏网。
+
+**方案（LOOMY-HANDOFF §B4 草案落地）**：
+
+- **接缝决策**：`ChainPredictor` 与回显裁剪从 llm.cpp（engine_test 不编译）移入 ngram.cpp，导出 `CreateChainPredictor`/`StripContinuationEcho`（predictor.h 声明）——engine_test 用 FakePredictor 替身直接单测路由，llm.cpp 只留装配
+- **根因 A**：链路由加纯 ASCII 分支——上下文整段 <0x80 时词表优先；词表无果其余引擎兜底但**候选过滤为纯 ASCII**（cover 平行同步剔，保持 size 约定）；全滤空则无候选（英文打字出中文比无候选更糟）。词中词表补全（replaceLen 语义）、中文上下文 LLM 优先均不变
+- **根因 B**：`StripContinuationEcho` 升级——空白/标点归一化比较（回显与尾部"只差标点"形态命中）、重叠上限 40 抬到 tail 全长、整段复读循环剥（**仅上轮全匹配才续剥**，"很好很好"类叠词部分重叠一次即止）、确认回显后清前导标点；k≥2 单字留缝维持
+- **probe 盲区补齐**：`--probe-llm` 直连 LlmPredictor 不经链路由，新增 `--probe-chain` 走真实装配链端到端取证
+
+**验证**：engine_test +14 断言（echo 矩阵 8 例 + 链路由/过滤 6 例）全 PASS，共 174+ 功能断言；probe-chain 真机："Today is a nice "→纯 ASCII 英文续写（day. I hope you have a good one.）、"inte"→词表 0ms 短路、中文上下文不变；probe-llm 无复读、增量一致。regress 功能面全 PASS（deep_test/e2e/fix_readings），pinyin latency 10.4-11.9ms 卡 10ms 阈值为已知负载漂移——A/B：HEAD 干净构建 12.2ms 比 B4 版还高（LLC 缓存污染，Qoder/Edge 同跑），非代码回归。真实环境 UI 已重启吃新二进制（PID 7616）。
