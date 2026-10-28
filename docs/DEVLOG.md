@@ -141,3 +141,10 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **取证教训**：候选序 probe 必须以 fresh 沙盒实测为准——n/l 模糊音默认开，立号/理好/利好（lihao）插在"你"前面，交接记录的"你@idx6"实为 idx7（'8'）。deep_test 日志走 ANSI 管道中文必乱码，断言取证用码点 hex 转储（T14 模式）。
 
 **验证**：regress ALL PASS（engine_test 147 断言 / fix_readings / deep_test T14 / e2e）。
+
+## 2026-10-28 下午（二） · B8 符号热键默认关
+
+- Edge 插件快捷键被吞的取证结论（LOOMY-HANDOFF §B4+）：唯一全局占用 = main.cpp 的 `RegisterHotKey(Ctrl+Shift+B)` 默认开；DLL 无键盘钩子。
+- 修复：`symbolHotkey` 默认 false（对齐 llmRerank 的"不默认强加全局占用"原则）；设置页文案注明系统级独占与 Edge 冲突、托盘入口不变。
+- 用户 HKCU 旧默认残留（SymbolHotkey=1）已清 0 并重启真实环境 UI——热键即时释放，Edge 插件快捷键恢复。
+- latency 红复盘子：同机同时刻 A/B（cover 前引擎 10.47ms vs cover 版 10.7ms）证明当日 >10ms 均为机器负载漂移，非代码回归；机器忙时（Qoder/PyCharm/Edge 同跑）median 卡阈值属已知噪声，安静时 6.5-7ms。

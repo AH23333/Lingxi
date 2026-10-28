@@ -64,6 +64,7 @@
 - ChainPredictor 代码现状快照已实读（链=词中词表优先，其余**一律先 LLM**→词表兜底；无语言闸、**无任何按键钩子代码**）。
 - 用户确认**中文模式**续写仍复读 → StripPromptEcho 形态没盖全：①它只裁"输出头部×上文尾部重叠"，模型**整段复述上文**（输出与 tail 全等/输出开头与 tail 结尾只差标点）时裁完仍复读；②k≥2 阈值留缝。**修法**：升级为"输出含 tail 任意 ≥2 字子串即整条丢弃该候选"级别的复读过滤 + T16 真实复读率统计再定阈值；别再用"裁头"单手段。
 - 新反馈（Edge 插件快捷键被吞）**15:52 已核实**：全局键占用只有 `main.cpp:205-207` 的 `RegisterHotKey(Ctrl+Shift+B, MOD_NOREPEAT)`，**默认开**（settings.h `symbolHotkey=true`）；DLL 侧 grep 证实**无** `SetWindowsHookEx`（不是钩子链问题）。归因步骤：Edge 里先关设置项复现；仍失效再查中文模式下 TestKeyDown 的 eaten 面。修复（下一轮小步做）：symbolHotkey **默认关**（对齐"不默认强加全局占用"的既定原则，类比 llmRerank）+ 设置页文案注明该组合键为系统级独占 + deep_test T17：符号热键开/关两态下 F5/Ctrl+Shift+B/Win 组合在组合态不被 DLL 吞的断言。
+- **✅ B8 已完成（`06548a8`）**：默认关 + 文案（注明 Edge 冲突/托盘入口）落地；用户 HKCU 旧默认残留 SymbolHotkey=1 已清 0 并重启真实 UI（热键即时释放）。T17 未做：需在测试内编排 HKCU 两态+UI 重启，ROI 低，验证靠设置页开关+Edge 实测即可。
 
 ### B5. 中文切换只有 Win+Space 硬切——Shift 单击用户无感 + 自定义诉求（未动，见上）
 - 现状：shiftToggle（Shift 单击）已实现且默认 true（OnKeyDown VK_SHIFT 单按→`_tempEnglish`+WM_APP_LX_MODE→`SendModeToggleToast`）；用户没感知到 = 要么没装上成功（老 DLL 驻留！§2），要么单击判定窗口太苛刻。
