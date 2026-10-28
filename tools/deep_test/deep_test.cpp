@@ -667,7 +667,28 @@ int wmain()
         pTm->QueryInterface(IID_ITfKeystrokeMgr, (void**)&pKm);
         if (!pKm) { Report(false, L"QueryInterface ITfKeystrokeMgr"); break; }
 
-        Report(WaitForPinyinMode(pKm), L"pinyin mode settle");
+        // ---- pinyin settle（失败时给足取证：前台 TIP 是谁、探测键是否被吃）----
+        {
+            bool settled = WaitForPinyinMode(pKm);
+            if (!settled)
+            {
+                CLSID fg{};
+                HRESULT hrFg = pKm->GetForeground(&fg);
+                BOOL probeEaten = FALSE;
+                pKm->TestKeyDown((WPARAM)L'q', 0x00100001, &probeEaten);
+                wchar_t d[256];
+                _snwprintf_s(d, _TRUNCATE,
+                             L"fgHr=0x%08X fgIsLingxi=%d probe_q_eaten=%d ctrl=%d alt=%d（前台 TIP 被外部切换/修饰键物理粘滞则非产品缺陷，参见 PITFALLS #19）",
+                             (unsigned)hrFg,
+                             IsEqualCLSID(fg, CLSID_LingxiTextService),
+                             (int)probeEaten,
+                             (GetKeyState(VK_CONTROL) & 0x8000) != 0,
+                             (GetKeyState(VK_MENU) & 0x8000) != 0);
+                Report(false, L"pinyin mode settle", d);
+            }
+            else
+                Report(true, L"pinyin mode settle");
+        }
 
         // 诊断：键状态与布局（Shift/CapsLock 误判会让字母直通）
         {
