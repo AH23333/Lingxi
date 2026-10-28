@@ -132,7 +132,9 @@ static int ProbePinyin()
     LX_LOG(L"pinyin", L"probe: 引擎已加载");
     const wchar_t* inputs[] = { L"jintian", L"jintianqi", L"nihao", L"zhidao", L"ni hao", L"moran",
                                 // B3 零声母简写取证：i/u 打头韵母（省略 y/w 的人类写法）
-                                L"i", L"u", L"in", L"iu", L"ui", L"un", L"uo", L"ian" };
+                                L"i", L"u", L"in", L"iu", L"ui", L"un", L"uo", L"ian",
+                                // B6 隔音符取证：xi'an（显式边界）vs xian（歧义串）
+                                L"xi'an", L"xian" };
     for (const wchar_t* in : inputs)
     {
         uint64_t t0 = GetTickCount64();

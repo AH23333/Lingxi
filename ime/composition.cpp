@@ -640,6 +640,12 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
             // 宿主光标移出组合范围，后续 SetText 与光标错位（B5 VK_SHIFT 同族
             // 缺口）。Ctrl/Alt 组合键已在上方直通闸放行，不受影响。
             return true;
+        case VK_OEM_7:
+            // B6 隔音符 eat 侧：组合中无 Shift 撇号必须进组合，不能依赖
+            // cnPunct 标点映射（cnPunct 关时 IsChinesePunctKey=false，撇号
+            // 会穿透宿主，B6 死路）。Shift+'（引号）与双拼维持原标点/放行路径。
+            if (!shiftOrCaps && !LoadSettings().shuangpin) return true;
+            return IsChinesePunctKey(wParam);
         }
         if (wParam >= L'1' && wParam <= L'9' && !shiftOrCaps)
             return CandidatesVisible(); // 无 Shift 数字 = 当前页选词

@@ -1318,6 +1318,69 @@ int wmain()
                 Report(nOk && tap3 && t2.empty() && iOk, L"T16 组合中单击Shift不丢组合不误提交", d16d);
                 if (tmPinned) RestoreToggleMode(oldTm);
             }
+
+            // ---- T17 导航键组合期接管（晚·十四）+ B6 隔音符端到端 ----
+            // eat 侧：PinyinActive() 时 Up/Down/Home/End/Left/Right 一律吃下
+            //（此前穿透宿主→光标移出组合范围错位，B5 同族缺口）；OEM_7 撇号
+            // 不依赖 cnPunct 标点映射进组合（cnPunct 关时也要能隔音）。
+            // handle 侧：导航键翻页/吞下保守组合；xi'an 空格提交=西安
+            //（live 探针实证首选 rank0，xian 的"先"才是 rank0=因果对照）。
+            {
+                EnsurePinyinMode(pKm);
+                ClearFocusedText(pTm);
+
+                // ① 组合期导航键全吃下、组合不丢、无提交
+                bool nOk = TypeKey(pKm, (WPARAM)L'n', true);
+                PumpMessages(); Sleep(150);
+                bool dDown  = TypeKey(pKm, VK_DOWN,  true);
+                bool dUp    = TypeKey(pKm, VK_UP,    true);
+                bool dHome  = TypeKey(pKm, VK_HOME,  true);
+                bool dEnd   = TypeKey(pKm, VK_END,   true);
+                bool dLeft  = TypeKey(pKm, VK_LEFT,  true);
+                bool dRight = TypeKey(pKm, VK_RIGHT, true);
+                PumpMessages(); Sleep(250);
+                std::wstring tNav = ReadFocusedText(pTm);
+                bool iOk = TypeKey(pKm, (WPARAM)L'i', true); // 组合继续（ni）
+                PumpMessages(); Sleep(150);
+                TypeKey(pKm, VK_ESCAPE, true);
+                PumpMessages();
+                wchar_t d17a[300];
+                _snwprintf_s(d17a, _TRUNCATE,
+                    L"nOk=%d down=%d up=%d home=%d end=%d left=%d right=%d tNav[%u]=%s iOk=%d",
+                    (int)nOk, (int)dDown, (int)dUp, (int)dHome, (int)dEnd,
+                    (int)dLeft, (int)dRight, (unsigned)tNav.size(),
+                    hexOf15(tNav).c_str(), (int)iOk);
+                Report(nOk && dDown && dUp && dHome && dEnd && dLeft && dRight
+                       && tNav.empty() && iOk,
+                       L"T17 组合期导航键全吃下不丢组合", d17a);
+
+                // ② 空组合态负对照：导航键放行（不误吞正常光标移动）
+                bool navPass = TypeKey(pKm, VK_DOWN, false);
+                PumpMessages();
+                wchar_t d17b[80];
+                _snwprintf_s(d17b, _TRUNCATE, L"navPass=%d", (int)navPass);
+                Report(navPass, L"T17 空组合态导航键放行", d17b);
+
+                // ③ B6 隔音符端到端：x i ' a n → 空格 → 西安
+                ClearFocusedText(pTm);
+                bool xOk  = TypeKey(pKm, (WPARAM)L'x', true);
+                bool i2Ok = TypeKey(pKm, (WPARAM)L'i', true);
+                bool apo  = TypeKey(pKm, VK_OEM_7, true); // 撇号进组合（B6 eat 侧）
+                bool aOk  = TypeKey(pKm, (WPARAM)L'a', true);
+                bool n2Ok = TypeKey(pKm, (WPARAM)L'n', true);
+                PumpMessages(); Sleep(300); // 候选回包
+                bool sp = TypeKey(pKm, VK_SPACE, true);
+                PumpMessages(); Sleep(300);
+                std::wstring tXa = ReadFocusedText(pTm);
+                wchar_t d17c[220];
+                _snwprintf_s(d17c, _TRUNCATE,
+                    L"x=%d i=%d apo=%d a=%d n=%d sp=%d t[%u]=%s",
+                    (int)xOk, (int)i2Ok, (int)apo, (int)aOk, (int)n2Ok, (int)sp,
+                    (unsigned)tXa.size(), hexOf15(tXa).c_str());
+                Report(xOk && i2Ok && apo && aOk && n2Ok && sp
+                       && tXa.size() == 2 && tXa[0] == 0x897F && tXa[1] == 0x5B89,
+                       L"T17 隔音符xi'an空格提交西安", d17c);
+            }
         }
     } while (false);
 
