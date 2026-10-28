@@ -173,6 +173,7 @@ void CTextService::DetectPinyinMode()
     // 开关读用户设置（托盘/设置页，HKCU\Software\LingxiIme），实时生效。
     bool py = false;
     bool disabled = !LoadSettings().pinyinEnabled;
+    bool premature = false; // 判定时前台 TIP 还不是我们：激活/切换过渡窗口
     if (!disabled && _pThreadMgr)
     {
         ITfKeystrokeMgr* pKm = nullptr;
@@ -197,6 +198,10 @@ void CTextService::DetectPinyinMode()
                 pProfiles->Release();
             }
         }
+        else if (_fActivated)
+        {
+            premature = true;
+        }
     }
     if (py != _pinyinMode)
         LX_LOG(L"ime", L"拼音模式: %d", (int)py); // 仅变化时记录
@@ -206,6 +211,30 @@ void CTextService::DetectPinyinMode()
     {
         _tempEnglish = false;
         _vMode = false;
+    }
+
+    // ---- 激活竞态自愈 ----
+    // ActivateEx 只投递一次检测；若那一次落在 "TIP 激活过渡窗口"（前台 TIP 尚未
+    // 切到我们），纯 TSF profile 切换又不改线程 HKL（#18），MaybeRedetect 永远
+    // 不再触发，_pinyinMode 卡死 false → 拼音静默降级成直通且不自愈。
+    // 这里对"还没进位"（premature）判据做有限次 250ms 延迟重检（≤8 次≈2s 窗口），
+    // 进位成功或稳定英文（非 premature）即停表——不会在正常场景空转。
+    if (premature && _hwndMarshal)
+    {
+        if (_modeRetryLeft > 0)
+        {
+            _modeRetryLeft--;
+            SetTimer(_hwndMarshal, kModeRetryTimer, 250, NULL);
+        }
+        else if (_modeRetryLeft == 0 && !_pinyinMode)
+        {
+            LX_LOG(L"ime", L"模式重检定限放弃（前台仍未进位），保持直通待按键触发重检");
+        }
+    }
+    else
+    {
+        _modeRetryLeft = 8; // 下一次 RequestModeDetect 重新享有完整重试预算
+        if (_hwndMarshal) KillTimer(_hwndMarshal, kModeRetryTimer);
     }
 }
 
@@ -753,6 +782,10 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
     case VK_SPACE:
     case VK_TAB:
     {
+        // 拼音串已发出、候选可能还在路上（引擎 µs 级 + 管道往返数毫秒）。
+        // 快打时字母上屏后极短时间按空格，候选尚未回包 —— 有界等待一次，
+        // 避免"该出汉字的空格却把字母原样提交"。超时则维持原回退语义。
+        WaitForLatestCandidates(80);
         std::wstring hanzi;
         if (GetCandidate(_pageStart, hanzi)) { NotifyPicked(_pageStart); PinyinCommitHanzi(hanzi); }
         else                                 PinyinCommitRaw();
@@ -763,6 +796,7 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         {
             std::wstring hanzi;
             uint32_t idx = _pageStart + (uint32_t)(wParam - L'1');
+            WaitForLatestCandidates(80);
             if (GetCandidate(idx, hanzi)) { NotifyPicked(idx); PinyinCommitHanzi(hanzi); }
             else                          PinyinCommitRaw();
             return;

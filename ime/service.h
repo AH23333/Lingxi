@@ -22,6 +22,7 @@ namespace lingxi {
 constexpr LONG kCtxMaxChars = 300;          // 上下文窗口（光标前字符数）
 // WM_APP_LX_PICK 定义于 common/proto.h
 constexpr UINT WM_APP_LX_MODE = WM_APP + 2; // 封送窗口：消息泵空闲点安全检测拼音模式
+constexpr UINT_PTR kModeRetryTimer = 0xB17; // 封送窗口定时器：激活过渡窗口的有限次延迟重检
 
 // Ctrl 或 Alt 按下：应用快捷键组合（Ctrl+C/V/F、Alt+字母等），TIP 永不拦截。
 // Shift/Caps 不在此列——它们另有中英混排语义（见 PinyinKeyEaten/HandlePinyinKey）。
@@ -95,6 +96,10 @@ public:
     void InsertCandidate(uint32_t index);
     void ClearCandidates();
     void SendHide();
+    // 提交键专用（空格/Tab/数字/标点首选）：最新版本的候选尚未回包时有界等待
+    // （上限建议 80ms，与管道写超时同预算，遵守"不长期阻塞宿主"铁律；管道断开/
+    // 无必要立即返回）。杜绝"快打后抢按空格 → 候选没赶上 → 上屏字母原文"。
+    void WaitForLatestCandidates(DWORD maxMs);
     // 候选翻页：delta=+1 下一页 / -1 上一页（仅拼音模式；更新 _pageStart 并通知 UI）
     void PageCandidates(int delta);
     void SendPage();
@@ -174,6 +179,8 @@ private:
     bool _cnDqOpen = false;    // 中文双引号配对开合（“…”）
     bool _cnSqOpen = false;    // 中文单引号配对开合（‘…’）
     bool _fActivated = false;
+    // 提交键有界等待候选：OnCandidates 落定"最新版本回包已入缓存"时置事件
+    HANDLE _hCandEvt = nullptr;
 
     HWND _hwndMarshal = nullptr; // 隐藏封送窗口（宿主 UI 线程）
     static LRESULT CALLBACK MarshalWndProc(HWND, UINT, WPARAM, LPARAM);
@@ -190,6 +197,7 @@ private:
     bool _shiftUsed = false;
     bool _shiftWasActive = false; // Shift 按下时是否正在拼音输入
     std::atomic<bool> _modeDirty{ false }; // 语言/前台/焦点变化置位，按键路径执行检测
+    int _modeRetryLeft = 8; // 激活过渡窗口有限次延迟重检计数（见 DetectPinyinMode 自愈）
     std::wstring _pinyin;         // 当前拼音字母串
     ITfComposition* _pComposition = nullptr;
     ITfRange* _compRange = nullptr;

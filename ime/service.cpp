@@ -84,6 +84,7 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* pThreadMgr, TfClientId tid, 
     _tfClientId = tid;
 
     if (!_csInit) { InitializeCriticalSection(&_cs); _csInit = true; }
+    if (!_hCandEvt) _hCandEvt = CreateEventW(NULL, FALSE, FALSE, NULL); // 自动重置
 
     if (!InitSinks())
         goto ExitError;
@@ -367,6 +368,7 @@ void CTextService::OnContextRead(const std::wstring& text, const RECT& rc)
 void CTextService::OnCandidates(uint32_t ver, uint32_t replaceLen, std::vector<std::wstring>&& cands)
 {
     LX_LOG(L"ime", L"收到候选 ver=%u replaceLen=%u count=%u", ver, replaceLen, (uint32_t)cands.size());
+    bool latest = false;
     EnterCriticalSection(&_cs);
     if (ver == _verSent)
     {
@@ -374,8 +376,26 @@ void CTextService::OnCandidates(uint32_t ver, uint32_t replaceLen, std::vector<s
         _verCands = ver;
         _replaceLen = replaceLen;
         _pageStart = 0; // 新一批候选回到第一页
+        latest = true;
     }
     LeaveCriticalSection(&_cs);
+    // 最新版本的候选已入缓存 → 唤醒提交键的有界等待
+    if (latest && _hCandEvt) SetEvent(_hCandEvt);
+}
+
+// 提交键（空格/Tab/数字/中文标点）专用：最新版本的候选尚未回包时，
+// 有界等待（不长期阻塞宿主）。UI → CANDS 通常 1~30ms；超上限即放弃等待，
+// 按现路径提交（回退原行为）。管道断开绝不等待——纯直通不能拖慢打键。
+void CTextService::WaitForLatestCandidates(DWORD maxMs)
+{
+    if (!_csInit || !_hCandEvt) return;
+    if (!_pipe.IsConnected()) return;
+    EnterCriticalSection(&_cs);
+    bool pending = (_verCands != _verSent);
+    if (pending) ResetEvent(_hCandEvt); // 丢弃历史信号，防陈旧唤醒
+    LeaveCriticalSection(&_cs);
+    if (pending)
+        WaitForSingleObject(_hCandEvt, maxMs);
 }
 
 void CTextService::OnPickRequested(uint32_t ver, uint32_t index)
@@ -714,6 +734,16 @@ LRESULT CALLBACK CTextService::MarshalWndProc(HWND hwnd, UINT msg, WPARAM wParam
         // 消息泵空闲点：此处调 GetActiveLanguageProfile 远离按键分发与激活回调
         if (svc && svc->_modeDirty.exchange(false))
             DetectPinyinModeSEH(svc);
+        return 0;
+    }
+    if (msg == WM_TIMER)
+    {
+        auto* svc = (CTextService*)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
+        if (svc && wParam == (UINT_PTR)kModeRetryTimer)
+        {
+            // 激活过渡窗口的有限次延迟重检（见 DetectPinyinMode 自愈逻辑）
+            svc->RequestModeDetect();
+        }
         return 0;
     }
     if (msg == WM_APP_LX_INSERT)
