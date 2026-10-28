@@ -214,3 +214,93 @@
 - **两份探索文档已落盘**:cur/GLM_EXPLORATION_R2R5.md(R2 新词索引方案+并发雷点、R4 字号/皮肤插入点、R5 32位TIP/卸载/稳定性/回归的照做指南)与 cur/GLM_EXPLORATION_R3_LLM.md(LLM 重排/多路采样/KV 复用全方案,API 对 llama.h 行号核实,GGUF 头实测;前置堵点:拼音模式 DLL 必须先补发上文);
 - 豆包消化神速:R2 新词索引(含简拼缩写)+ 繁体输出已提交(b6c4aa5/367148c)——**请确认新词索引重建已纳入 _udMtx 粗锁**(GLM_EXPLORATION_R2R5 §R2-2 的并发雷点:Predict 整体持锁或等价方案),下轮 QC 将验证;
 - 豆包持续活跃(pinyin.cpp 01:36 在改)。
+## 巡视 2026-10-28（Loomy 深度测试与修复会话）
+
+> 触发：用户要求"深度测试和修复 + 优化性能"。接手时工作区 = 豆包 R3 重排 WIP（未提交，5 文件）。
+> 本轮全部改动已过 engine_test 127 断言 + deep_test + e2e（tools/regress.cmd 全套 ALL PASS）。
+
+### 一、R3 重排 WIP 审查项处理（cur/GLM_REVIEW_rerank.md 全清）
+
+- **P1-1 双 prompt 形状槽**：落地方式改为**续写/重排各持独立 llama_context**（同一模型权重
+  仍只加载一次，_rrCtx n_ctx=640 ≈2.5MB 代价）。物理缓存天然隔离，重排的 prefill/清除
+  永远碰不到续写前缀——实测验证：重排风暴后英文续写往返仍 141→141ms 不等（旧单槽
+  必被驱逐回 ~1.4s 全量 prefill）。取证工具 tmp/pf_probe.cpp 保留，日志已清理。
+- **P1-2 prefill 硬闸 + EMA 自动降级**：abort_callback 经 llama_context_params 直传（b11900
+  支持，llama.h:404 字段核对）；abort(rc==2) 整序清除并会话关闭重排。EMA 吞吐样本（同前缀
+  重复 prompt 直接跳过重排=免费优化）。本机实测 prefill≈291 t/s < 300 阈值 → 标定后自动
+  降级，行为与设计一致。
+- **P1-3 SEH 熔断**：llama 调用经 RerankSeh/PredictSeh（POD 参数外壳，避免 C2712）捕获硬
+  异常 → ILlmReranker::MarkBroken() 原子熔断，续写链自然落词表，本会话不重试。
+- **P1-4 单候选跳过** + ctx 空跳过（P2-3）：触发条件 size()>=2 && !ctx.empty()。
+- **调试残留**：main.cpp rerank_diag 块、llm.cpp Dlog lambda 全部删除，源码 0 引用；
+  bin/Release 历史残留文件已删。
+- **重排合并防堆积**：拼音每键触发 → ClientCtx.rrSeq 序号，重排线程 settle 120ms 后被新键
+  取代则立即退出（只有最后一键的重排真正干活）；gen+lastLearn.ver 应用前复核保留。
+- **★发现并修复在制品里的真 P0 隐患**：重排 detached 线程按值捕获**裸 ClientCtx\***，
+  客户端断线 delete 后线程再触碰 = use-after-free。改 ClientCtx shared_ptr 全链引用
+  （队列/重排线程/_active），管道句柄关闭移入析构（最后引用者负责），断线时顺带摘除
+  本客户端未决队列项。
+- pipeserver.h "死声明"（ClientCtx::gen/StartAsyncRerank）——本轮全部实装，非死码。
+
+### 二、既有产品 bug 修复（非 WIP 带入，深度测试暴露）
+
+1. **快打+空格抢跑 → 上屏字母原文**（deep_test T10 稳定复现；用户高频痛点）：
+   - UI 侧：拼音请求不再吃 120ms 防抖（引擎 µs 级，防抖本为大模型续写设计）；每键候选
+     往返实测 31-94ms（均值 57ms）。
+   - DLL 侧：提交键（空格/Tab/数字/标点首选/未映射键回退提交）在"最新版本候选未回包"时
+     **有界等待 ≤80ms**（与管道写超时同预算，不破"不阻塞宿主"铁律；管道断开立即放弃），
+     OnCandidates 回包置事件唤醒。
+2. **EnumeratePaths 路径截断**（SHUTDOWN-HANDOFF backlog P1-1）：旧实现完整/残段路径同池
+   抢 K_POS=7 名额且 std::sort 不稳定，K_FINAL=14 截断是死代码。分池各留 7 + stable_sort
+   合并限 14。证人测试：超长混排 "nichifanlemawohenb" 候选 27→60（HEAD 红/修复绿，
+   engine_test P4c 已固化判据 cands≥40）。
+3. **模式检测激活竞态（真健壮性 bug，deep_test 冷启动稳定复现）**：
+   `ActivateEx` 只在激活瞬间投递一次检测；若那一刻前台 TIP 还没切到灵犀（过渡窗），
+   纯 TSF profile 切换又不改线程 HKL（PITFALLS #18），`MaybeRedetectPinyinMode` 永远不再
+   触发 → `_pinyinMode` 卡死 false → **拼音静默降级成直通且不自愈**（真实用户切输入法/
+   ctfmon 抖动同样可能命中）。修复：检测判为"未进位"（premature）时封送窗口 250ms
+   定时器有限重检 ≤8 次（≈2s 窗口），进位成功或稳定非拼音即停表；实测 HWND_MESSAGE
+   窗口 WM_TIMER 可靠（冷启动 deep_test attempt1 一次绿）。注：HEAD 版对照实验证明该
+   flaky 先于 R3 WIP 存在，非在制品引入。
+4. **engine_test 自我污染 + 污染真实用户词典**：Learn 用例直呼 %APPDATA% 真实词典——
+   第二次运行残留置顶翻车 P4b（"泥好×3"抢占 nihao 首选），且测试假词进用户词典。修复
+   = 进程内 APPDATA 重定向到 bin/enginetest/userdata 沙盒并每轮清空，幂等。deep_test/
+   e2e 侧由 regress.cmd 统一挂沙盒。本轮排查确认：用户真实词典（C:\\Users\\...\\LingxiIme）
+   31 词条全部真人词未受污染（污染样本只在测试环境变量副本，已删；备份 tmp/userdict-*.txt）。
+
+### 三、测试与工具改进
+
+- engine_test：119 → **127 断言**（P4c 长串分池证人 3 项 + 沙盒化），README 同步。
+- tools/regress.cmd：纳入 deep_test（engine+deep+e2e 三件套）；**每条 TSF 套件前 taskkill 自有
+  LingxiUI**（跨套件状态串扰是本轮 regress 首跑假红根因）；APPDATA 沙盒全程。
+- deep_test：settle FAIL 诊断（前台 CLSID/探测键/Ctrl-Alt 位），假红可直接分诊。
+- tmp/pf_probe：管道假客户端性能探针（临时工具，输出留档 tmp/pf_out1.txt）。
+
+### 四、性能小结
+
+| 项 | 修复前 | 修复后 |
+|---|---|---|
+| 拼音每键候选往返（IPC 含） | ≥150ms（120ms 防抖+引擎+IPC） | **实测均值 57ms**（31-94） |
+| 引擎拼音延迟（进程内） | 0.307ms | 0.339ms（池翻倍成本，阈值 10ms 内不动） |
+| 快打空格抢跑 | 上屏字母原文 | 有界等待 ≤80ms 后正确上屏 |
+| 长串残段覆盖 | 候选塌缩 27（截断死代码） | 满上限 60 |
+| 重排驱逐续写 KV | 每次重排清全部 KV（续写退化全量 prefill ~1.4s） | 双 ctx 物理隔离，续写增量保持 |
+| 重复同 prompt 重排 | 每次付全额 prefill | common==n 短路，免付 |
+| 低配/慢机 | 无闸（可阻塞秒级） | abort 硬闸（prefill>500ms 即断）+ EMA 会话级自动降级 |
+| llama AV | 可崩 UI | SEH 熔断（本会话词表兜底） |
+| 重排线程与连击 | 每键一个全预算线程排队烧 LLM | settle120ms+rrSeq：只最后一键真跑 |
+
+### 五、遗留/待办（下一轮候选）
+
+1. backlog 未动：P2 繁体一对多词级例外表；P2 Learn 落盘防抖（锁内磁盘 IO）、P2 ngram 注释失真。
+   测试盲区 4/5：xi'an 切分竞争、双拼非常规输入、双拼模式自学习闭环（本轮已修其学习键，双拼
+   模式下的端到端闭环未建场景）。
+2. 多路采样（R3 专文 §3）仍未做——默认关，建议先用户实测重排收益再决定。
+3. 已运行宿主进程仍驻留旧 DLL（TSF 特性）——**需用户重启目标应用**体验空格等待/模式自愈
+   等 DLL 侧新行为；LingxiUI.exe 已是新版（重排/免防抖/UI 侧全部即时生效）。
+4. 本机 prefill 实测 291 t/s 贴着 300 阈值：重排标定后大概率自动降级（设计内）。若期望
+   更强机型上必开，可考虑把 kMinPrefillTps 调至 260-280 或改判 abort-only。
+5. LLmPredictor dtor 未等预热线程（既有行为）；预热线程 call_once 与析构竞态理论上存在。
+
+—— Loomy，2026-10-28
+

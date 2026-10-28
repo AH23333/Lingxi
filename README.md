@@ -12,6 +12,9 @@ Windows 端 AI 输入法，基于 **TSF（Text Services Framework）** 实现为
 - 候选翻页：一次返回最多 **60 个候选**，每页 9 个，`-`/`=` 或 `PageUp`/`PageDown` 翻页。
 - 末尾音节不完整也能出词（`jintianq`）。
 - 自学习：用户在某拼音下选过的词按次数自动置顶，跨重启保留。
+- **LLM 上下文重排（R3，默认开）**：原序候选先上屏不等待；后台按已上屏上文用本地小模型
+  重排 top-8 后二次刷新候选窗。prefill 硬超时 + 吞吐不达标自动降级（慢机自动退回纯频度序），
+  LLM 文本永不进候选；**快打时抢按空格也不会丢汉字**——提交键对"候选还在路上"有界等待。
 
 **交互与模式**
 - **Shift 单击**：无拼音活动时在中文 / 临时英文间切换，光标附近弹出"中/英"提示。
@@ -86,16 +89,25 @@ msbuild tools\engine_test\engine_test.vcxproj /p:Configuration=Release /p:Platfo
 bin\enginetest\engine_test.exe   :: 全部 PASS 则 exit=0
 ```
 
-覆盖（当前 **119 项断言**）：英文前缀补全与替换、上下文补全、中文续写、拼音音节切分、
+覆盖（当前 **127 项断言**）：英文前缀补全与替换、上下文补全、中文续写、拼音音节切分、
 词链/残段、简拼混拼、整句首选、口语层、模糊音容错、翻页数据、自学习置顶与跨重载持久化、
-用户词典。性能断言采用**多次预热 + 逐次采样 + 中位数**，测量期临时提升线程优先级以隔离
-后台进程干扰：拼音 `jintianqi` 中位数 < 10ms（实测约 0.3ms），英文上下文 < 5ms。
+用户词典、**长句+末尾残段分池存活**。用户词典读写走 `bin\enginetest\userdata\` 沙盒，
+每次运行前清空，测试既不污染真实用户词典也不被上次残留污染（幂等）。性能断言采用
+**多次预热 + 逐次采样 + 中位数**，测量期临时提升线程优先级以隔离后台进程干扰：
+拼音 `jintianqi` 中位数 < 10ms（实测约 0.3ms），英文上下文 < 5ms。
 
-### 端到端测试（e2e）
+### 端到端与深度测试（e2e / deep_test）
 
-`tools/e2e/e2e.cpp` 实现合成文本存储（ITextStoreACP），程序化激活灵犀 TIP，用
-`ITfKeystrokeMgr` 模拟按键并断言缓冲区。覆盖激活、直通、上下文读取、IPC、预测、
-候选窗真实显示、替换式上屏、中文续写。`bin\Debug\e2e.exe` 全 PASS 则 exit=0（自动拉起 LingxiUI）。
+- `tools/e2e/e2e.cpp`：合成文本存储（ITextStoreACP），程序化激活灵犀 TIP，用
+  `ITfKeystrokeMgr` 模拟按键并断言缓冲区。覆盖激活、直通、上下文读取、IPC、预测、
+  候选窗真实显示、替换式上屏、中文续写。`bin\Debug\e2e.exe` 全 PASS 则 exit=0（自动拉起 LingxiUI）。
+- `tools/deep_test/deep_test.cpp`：专测拼音组合管道——空格上屏、连续词、退格、Esc、
+  Enter 保留、Shift 混排、标点提交、数字选词与压力轮次；自带 VEH 崩溃取证与 3 轮重试壳。
+  通过标准 = 断言全过 + 零 AV。冷启动"前台 TIP 尚未进位"的模式检测竞态由 DLL 侧有限次
+  延迟重检自愈（见下"已知限制"）。
+- `tools/regress.cmd`：一键全量回归（engine_test + deep_test + e2e，各带重试），跑前统一挂
+  用户词典环境沙盒、每条 TSF 套件前重启自有 LingxiUI 以隔离跨套件状态串扰。日志归档
+  `tmp\regress-*\`。
 
 ## 隐私
 
@@ -111,7 +123,8 @@ bin\enginetest\engine_test.exe   :: 全部 PASS 则 exit=0
 - [x] R2.5 用户词升级：新词/自定义词入索引、简拼缩写可调出（如 mm→已学新词）、用户词典管理界面
 - [x] R3 预备：繁体输出（OpenCC 字符映射，码点级代理对处理）
 - [x] R4 体验：中文标点、Shift 切换、v 模式、设置开关、用户词典管理、符号面板（emoji 代理对、托盘入口、Ctrl+Shift+B 可开关热键）、小鹤双拼、单实例命令转发、候选窗 hover 高亮
-- [ ] R3 本地 LLM 整句重排（多路采样、KV cache 复用）——实施方案已就绪（cur/GLM_EXPLORATION_R3_LLM.md）
+- [x] R3 本地 LLM 整句重排（指令式重排 + KV 物理隔离双上下文 + prefill abort 硬闸 +
+      吞吐 EMA 自动降级 + SEH 熔断）——多路采样默认关未实施，收益待实测再定
 - [ ] R4 尾巴：自定义短语、字体字号皮肤（字号实施中）
 - [ ] R5 工程化：32 位 TIP、卸载清理、崩溃保护、签名——预探索完成（cur/GLM_EXPLORATION_R2R5.md）
 
