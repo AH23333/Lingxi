@@ -983,6 +983,41 @@ int wmain()
                          t.c_str(), hanzi, noRaw, typeOk);
             Report(hanzi && noRaw && typeOk, L"T13 快打 + 30ms 抢空格上屏汉字", d);
         }
+
+        // ---- T14 B1 部分提交：nihao 数字选"你"后余 hao 继续组合，空格收"好" ----
+        {
+            EnsurePinyinMode(pKm);
+            ClearFocusedText(pTm);
+            TypeLetters(pKm, L"nihao");
+            PumpMessages();
+            Sleep(400); // 等候选回包
+            TypeKey(pKm, (WPARAM)L'8'); // fresh 序 probe（engine_test P6c4 pin）：idx 7="你"(cover=2)；idx 6=立号(n/l 模糊)
+            PumpMessages();
+            Sleep(300); // 等部分提交 + "hao" 新候选
+            std::wstring mid = ReadFocusedText(pTm);
+            TypeKey(pKm, VK_SPACE); // 收"好"
+            PumpMessages();
+            Sleep(250);
+            std::wstring t = ReadFocusedText(pTm);
+            bool finalOk = t.find(L"你好") != std::wstring::npos;
+            bool noLetter = t.find(L"nihao") == std::wstring::npos && t.find(L"hao") == std::wstring::npos;
+            // 码点十六进制转储：日志管道走 ANSI，中文会变 '?'，必须 dump 码点取证
+            auto hexOf = [](const std::wstring& s) {
+                std::wstring h;
+                wchar_t buf[8];
+                for (wchar_t ch : s)
+                {
+                    swprintf_s(buf, L"%04X,", (unsigned)ch);
+                    h += buf;
+                }
+                return h;
+            };
+            wchar_t d[420];
+            _snwprintf_s(d, _TRUNCATE, L"mid[%u]=%s final[%u]=%s finalOk=%d noLetter=%d",
+                         (unsigned)mid.size(), hexOf(mid).c_str(),
+                         (unsigned)t.size(), hexOf(t).c_str(), finalOk, noLetter);
+            Report(finalOk && noLetter, L"T14 部分提交：数字选你(cover=2) 余hao 空格收好", d);
+        }
     } while (false);
 
     // ---- 清理 ----

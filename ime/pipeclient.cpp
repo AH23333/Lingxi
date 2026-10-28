@@ -143,7 +143,16 @@ void CPipeClient::HandleMessage(uint8_t type, const std::vector<uint8_t>& body)
             if (!ReadStr(p, end, s)) return;
             cands.push_back(std::move(s));
         }
-        if (_cb) _cb->OnCandidates(m.ver, m.replaceLen, std::move(cands));
+        // B1 部分提交：串列表之后的 u16 cover 数组（可选尾部）。
+        // 新 UI 追加发送；旧 UI 没有 → 读失败按全 0（提交后全清=旧行为）。
+        std::vector<uint32_t> cover(m.count, 0);
+        for (uint32_t i = 0; i < m.count; i++)
+        {
+            uint16_t cv = 0;
+            if (!ReadPod(p, end, cv)) break; // 帧尾：旧 UI，保持已填 0
+            cover[i] = cv;
+        }
+        if (_cb) _cb->OnCandidates(m.ver, m.replaceLen, std::move(cands), std::move(cover));
         break;
     }
     case MSG_PICK:

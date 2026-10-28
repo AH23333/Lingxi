@@ -481,9 +481,14 @@ void PipeServer::PredictProc()
             if (asciiOnly) pred.cands.clear();
         }
         // 拼音模式保留全量（候选窗分页、支持翻页）；英文补全/续写按设置页大小。
+        // cover（B1）与 cands 必须同步裁剪/校验：不平行=旧引擎输出，按无 cover 处理。
+        if (pred.cover.size() != pred.cands.size()) pred.cover.clear();
         size_t cap = e.pinyin ? (size_t)kMaxCandidates : (size_t)st.candidateCount;
         if (pred.cands.size() > cap)
+        {
             pred.cands.resize(cap);
+            if (!pred.cover.empty()) pred.cover.resize(cap);
+        }
         LX_LOG(L"pipe", L"裁剪后候选=%u paused=%d enComp=%d pinyin=%d",
                (uint32_t)pred.cands.size(), (int)st.paused, (int)st.enCompletion,
                (int)e.pinyin);
@@ -506,6 +511,7 @@ void PipeServer::PredictProc()
             e.c->lastLearn.ver = e.ver;
             e.c->lastLearn.raw = e.text;
             e.c->lastLearn.cands = pred.cands;
+            e.c->lastLearn.cover = pred.cover;
             LeaveCriticalSection(&_cs);
         }
         SendCandidates(e.c.get(), e.ver, pred);
@@ -519,7 +525,7 @@ void PipeServer::PredictProc()
         {
             uint32_t myGen = e.c->gen.fetch_add(1) + 1; // 本次预测占一个交互代
             uint32_t mySeq = e.c->rrSeq.fetch_add(1) + 1; // 使更早的重排线程作废（合并）
-            StartAsyncRerank(e.c, e.ver, pred.cands, dark, e.caret, e.ctx, myGen, mySeq);
+            StartAsyncRerank(e.c, e.ver, pred.cands, pred.cover, dark, e.caret, e.ctx, myGen, mySeq);
         }
     }
 }
@@ -535,12 +541,13 @@ bool PipeServer::RerankStillCurrent(ClientCtx* c, uint32_t ver, uint32_t gen, ui
 
 void PipeServer::StartAsyncRerank(const ClientPtr& c, uint32_t ver,
                                   const std::vector<std::wstring>& cands,
+                                  const std::vector<uint32_t>& cover,
                                   bool dark, const RECT& caret,
                                   const std::wstring& ctx, uint32_t gen, uint32_t seq)
 {
     // 按值捕获全部上下文（线程独立，不依赖栈/队列）；c 为 shared_ptr 引用——
     // 客户端断线时 ClientCtx 不会被提前释放，本线程用完才归还（防悬垂）。
-    std::thread([this, c, ver, cands, dark, caret, ctx, gen, seq]() {
+    std::thread([this, c, ver, cands, cover, dark, caret, ctx, gen, seq]() {
         // 合并连击：先观察一小段。若期间用户又敲了新键（新重排序号已占位），
         // 本线程立刻退出——拼音每键即时预测后，只有最后一键触发的重排有活干。
         Sleep(kRerankSettleMs);
@@ -564,16 +571,29 @@ void PipeServer::StartAsyncRerank(const ClientPtr& c, uint32_t ver,
         // 核对：客户端仍在、仍活跃、ver 未被新预测覆盖、期间无翻页/选词/新重排
         if (!RerankStillCurrent(c.get(), ver, gen, seq)) return;
 
-        // 重组：重排 top-K + 其余候选保持原序
+        // 重组：重排 top-K + 其余候选保持原序；cover（B1）按同一排列搬运，
+        // 不平行则视为无 cover（DLL 侧按全清处理，不影响正确性）。
         size_t k = min(cands.size(), order.size());
+        bool hasCover = cover.size() == cands.size();
         std::vector<std::wstring> reordered;
+        std::vector<uint32_t> reorderedCover;
         reordered.reserve(cands.size());
-        for (size_t idx : order) reordered.push_back(cands[idx]);
-        for (size_t i = k; i < cands.size(); i++) reordered.push_back(cands[i]);
+        reorderedCover.reserve(hasCover ? cands.size() : 0);
+        for (size_t idx : order)
+        {
+            reordered.push_back(cands[idx]);
+            if (hasCover) reorderedCover.push_back(cover[idx]);
+        }
+        for (size_t i = k; i < cands.size(); i++)
+        {
+            reordered.push_back(cands[i]);
+            if (hasCover) reorderedCover.push_back(cover[i]);
+        }
 
         Prediction pred2;
         pred2.cands = reordered;
         pred2.replaceLen = 0;
+        pred2.cover = std::move(reorderedCover);
         // 回到第一页并更新候选窗（同 ver，宿主无需感知）
         _wnd->Show(caret, reordered, dark, ver);
         SendCandidates(c.get(), ver, pred2);
@@ -591,6 +611,16 @@ void PipeServer::SendCandidates(ClientCtx* c, uint32_t ver, const Prediction& pr
     AppendPod(bodyOut, m);
     for (const auto& s : pred.cands)
         AppendStr(bodyOut, s);
+    // B1 部分提交：cover 与 cands 平行且有效时，在串列表之后追加 u16×count。
+    // 旧 DLL 顺序读完字符串即停（容忍尾部）；新 DLL 读不到数组则按全 0 处理。
+    if (pred.cover.size() == pred.cands.size() && !pred.cover.empty())
+    {
+        for (uint32_t cv : pred.cover)
+        {
+            uint16_t v = (uint16_t)min(cv, 0xFFFFu);
+            AppendPod(bodyOut, v);
+        }
+    }
     WriteFrame(c->hPipe, MSG_CANDS, bodyOut.data(), (uint32_t)bodyOut.size(), 500);
 }
 
@@ -622,20 +652,28 @@ void PipeServer::SendInsertText(const std::wstring& text)
 
 // 选字反馈（键盘/鼠标）：按 ver 取最近一次拼音预测，用全局索引定位被选词，
 // 把（原始拼音串, 词）喂给拼音引擎做自学习。
+// B1：学习键改用候选实际消耗的前缀（cover）——旧实现把整条 raw 记给部分词
+// （"nihao"选"你"记到 nihao→你），查询键永不相交=错位学习；现在记 ni→你，
+// 后续打 ni 即可命中。cover 缺失/为 0 时维持旧口径（整条 raw）。
 void PipeServer::ApplyLearn(ClientCtx* c, uint32_t ver, uint32_t index)
 {
     std::wstring raw, word;
+    uint32_t cover = 0;
     EnterCriticalSection(&_cs);
     if (c && c->lastLearn.ver == ver && index < c->lastLearn.cands.size())
     {
         raw = c->lastLearn.raw;
         word = c->lastLearn.cands[index];
+        cover = index < c->lastLearn.cover.size() ? c->lastLearn.cover[index] : 0;
     }
     LeaveCriticalSection(&_cs);
+    if (cover > 0 && cover < raw.size())
+        raw = raw.substr(0, cover); // 学习键=消耗前缀
     if (!raw.empty() && !word.empty() && _pinyinEngine)
     {
         _pinyinEngine->Learn(raw, word);
-        LX_LOG(L"pipe", L"自学习反馈 ver=%u idx=%u '%ls'", ver, index, word.c_str());
+        LX_LOG(L"pipe", L"自学习反馈 ver=%u idx=%u cover=%u '%ls'",
+               ver, index, cover, word.c_str());
     }
 }
 

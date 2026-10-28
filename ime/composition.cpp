@@ -429,15 +429,43 @@ void CTextService::PinyinCancel()
     pCtx->Release();
 }
 
-void CTextService::PinyinCommitHanzi(const std::wstring& hanzi)
+// B1 部分提交：cover 是否指向有效剩余拼音。
+// 条件：0 < cover < 串长（部分消耗）且 _pinyin 全字母（非字母字符的下标
+// 映射不可靠，全清兜底）。是则 rest=剩余串。
+bool CTextService::PinyinKeepRest(uint32_t cover, std::wstring& rest)
 {
+    if (cover == 0 || cover >= _pinyin.size()) return false;
+    for (wchar_t ch : _pinyin)
+        if (!((ch >= L'a' && ch <= L'z') || (ch >= L'A' && ch <= L'Z')))
+            return false;
+    rest = _pinyin.substr(cover);
+    return !rest.empty();
+}
+
+// 提交汉字。cover（B1）满足部分消耗条件时：上屏词后剩余拼音留在组合里
+// 继续输入（无组合模式直接改内存串再预测；内联模式重启组合承载剩余串）。
+// 其余情况维持旧行为：提交即全清。
+void CTextService::PinyinCommitHanzi(const std::wstring& hanzi, uint32_t cover)
+{
+    // 先取剩余（PinyinEndComposition 会清 _pinyin，必须在其前判定）
+    std::wstring rest;
+    bool keep = PinyinKeepRest(cover, rest);
     if (!_inlineComp)
     {
         // 无组合：宿主里没有拼音字母，直接把汉字插到光标处。
-        LX_LOG(L"ime", L"无组合上屏汉字 chars=%u", (uint32_t)hanzi.size());
+        LX_LOG(L"ime", L"无组合上屏汉字 chars=%u cover=%u keep=%u",
+               (uint32_t)hanzi.size(), cover, (uint32_t)keep);
         _fSelfInsert = TRUE;
         InsertTextAtSelection(hanzi);
         _fSelfInsert = FALSE;
+        if (keep)
+        {
+            // 部分提交：剩余拼音继续组合（用户长串选短词不再"白打"）
+            _pinyin = rest;
+            ClearCandidates();
+            SendPinyinCtx();
+            return;
+        }
         PinyinResetNoInline();
         return;
     }
@@ -447,9 +475,21 @@ void CTextService::PinyinCommitHanzi(const std::wstring& hanzi)
         LX_LOG(L"ime", L"提交汉字失败：无焦点上下文");
         return;
     }
-    LX_LOG(L"ime", L"组合提交汉字 chars=%u", (uint32_t)hanzi.size());
+    LX_LOG(L"ime", L"组合提交汉字 chars=%u cover=%u keep=%u",
+           (uint32_t)hanzi.size(), cover, (uint32_t)keep);
     PinyinEndComposition(pCtx, &hanzi);
     pCtx->Release();
+    // 内联模式部分提交：重启组合承载剩余拼音（PinyinStart 重置 _pinyin 并重建
+    // 组合）。模式过渡期（_fActivated/_pinyinMode 掉线）PinyinStart 会拒启——
+    // 重启失败则回退全清收尾，不留悬挂候选。
+    if (keep && _fActivated && _pinyinMode)
+    {
+        PinyinStart(rest[0]);
+        for (size_t i = 1; i < rest.size(); i++)
+            PinyinAppend(rest[i]);
+        if (PinyinActive()) return;
+        LX_LOG(L"ime", L"部分提交后重启组合失败，回退全清");
+    }
     ClearCandidates();
     SendHide();
 }
@@ -609,6 +649,22 @@ bool CTextService::GetCandidate(uint32_t index, std::wstring& out)
     EnterCriticalSection(&_cs);
     bool ok = (_verCands == _verSent && index < _cands.size());
     if (ok) out = _cands[index];
+    LeaveCriticalSection(&_cs);
+    return ok;
+}
+
+// 候选 + 该候选消耗的拼音前缀字符数（B1 部分提交）；cover=0 表示未知/全清。
+// 单次临界区内同时取词与 cover，杜绝两次读取间新候选回包造成的错位。
+bool CTextService::GetCandidateEx(uint32_t index, std::wstring& out, uint32_t& cover)
+{
+    if (!_csInit) return false;
+    EnterCriticalSection(&_cs);
+    bool ok = (_verCands == _verSent && index < _cands.size());
+    if (ok)
+    {
+        out = _cands[index];
+        cover = index < _candCover.size() ? _candCover[index] : 0;
+    }
     LeaveCriticalSection(&_cs);
     return ok;
 }
@@ -787,29 +843,37 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         // 避免"该出汉字的空格却把字母原样提交"。超时则维持原回退语义。
         WaitForLatestCandidates(80);
         std::wstring hanzi;
-        if (GetCandidate(_pageStart, hanzi)) { NotifyPicked(_pageStart); PinyinCommitHanzi(hanzi); }
-        else                                 PinyinCommitRaw();
+        uint32_t cover = 0;
+        if (GetCandidateEx(_pageStart, hanzi, cover)) { NotifyPicked(_pageStart); PinyinCommitHanzi(hanzi, cover); }
+        else                                           PinyinCommitRaw();
         return;
     }
     default:
         if (wParam >= L'1' && wParam <= L'9' && !shiftOrCaps)
         {
             std::wstring hanzi;
+            uint32_t cover = 0;
             uint32_t idx = _pageStart + (uint32_t)(wParam - L'1');
             WaitForLatestCandidates(80);
-            if (GetCandidate(idx, hanzi)) { NotifyPicked(idx); PinyinCommitHanzi(hanzi); }
-            else                          PinyinCommitRaw();
+            if (GetCandidateEx(idx, hanzi, cover)) { NotifyPicked(idx); PinyinCommitHanzi(hanzi, cover); }
+            else                                   PinyinCommitRaw();
             return;
         }
         // 中文标点（。，？！（）等）：提交首选汉字后上屏标点
         if (CommitChinesePunct(wParam)) return;
-        // 未映射的其他键：提交汉字首选（原键随后放行），无候选则保留字母原文
+        // Unmapped other keys: commit the first-choice Chinese character (the original key is subsequently released); if no candidate, keep the original letters
         {
             std::wstring hanzi;
-            if (GetCandidate(0, hanzi)) { NotifyPicked(0); PinyinCommitHanzi(hanzi); }
-            else                        PinyinCommitRaw();
-            ClearCandidates();
-            SendHide();
+            uint32_t cover = 0;
+            if (GetCandidateEx(0, hanzi, cover)) { NotifyPicked(0); PinyinCommitHanzi(hanzi, cover); }
+            else                                  PinyinCommitRaw();
+            // 部分提交后组合仍在（PinyinCommitHanzi 内已发起下一轮预测），
+            // 不清候选/不藏窗，避免与在途候选回包竞态；全清时维持原收尾。
+            if (!PinyinActive())
+            {
+                ClearCandidates();
+                SendHide();
+            }
             *pfEaten = FALSE;
         }
         return;

@@ -97,6 +97,10 @@ struct MsgCands
     uint32_t count;         // 跟随 count 组 [u16 charLen][wchar_t...]
     uint32_t replaceLen;    // 上屏前需删除光标前的字符数（英文前缀补全）
 };
+// B1 部分提交：MsgCands 的 count 组字符串之后可选择性跟随 count 个 u16 cover
+// （各候选消耗的原始拼音前缀字符数）。写入端仅在 cover 与候选平行且有效时追加；
+// 读取端顺序读完字符串后：能读到 count 个 u16 即采用，读不到则全 0（=旧行为，
+// 提交后全清）。新旧两侧双向兼容，kProtoVer 不动。
 
 struct MsgPick
 {

@@ -18,8 +18,11 @@ namespace lingxi {
 class IPipeClientCallback
 {
 public:
+    // cover：与 cands 平行的"各候选消耗的原始拼音前缀字符数"（B1 部分提交）；
+    // 旧 UI 不发送时为全 0（调用方按全清处理）。长度恒等于 cands.size()。
     virtual void OnCandidates(uint32_t ver, uint32_t replaceLen,
-                              std::vector<std::wstring>&& cands) = 0;
+                              std::vector<std::wstring>&& cands,
+                              std::vector<uint32_t>&& cover) = 0;
     virtual void OnPickRequested(uint32_t ver, uint32_t index) = 0;
 protected:
     ~IPipeClientCallback() = default;

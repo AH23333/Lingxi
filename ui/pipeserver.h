@@ -37,6 +37,7 @@ private:
         uint32_t ver = 0;
         std::wstring raw;              // 用户输入的原始拼音串
         std::vector<std::wstring> cands; // 全量候选
+        std::vector<uint32_t> cover;   // 与 cands 平行：各候选消耗的 raw 前缀字符数（B1）
     };
 
     struct ClientCtx
@@ -83,7 +84,9 @@ private:
                         const std::wstring& ctx = {});
     void SendCandidates(ClientCtx* c, uint32_t ver, const Prediction& pred);
     // 两阶段重排：原序已显示后，后台按上文重排 top-8，完成且未被交互打断则更新同 ver
+    // cover 与 cands 平行（B1 部分提交），重排时按同一排列搬运
     void StartAsyncRerank(const ClientPtr& c, uint32_t ver, const std::vector<std::wstring>& cands,
+                          const std::vector<uint32_t>& cover,
                           bool dark, const RECT& caret, const std::wstring& ctx,
                           uint32_t gen, uint32_t seq);
     void ApplyLearn(ClientCtx* c, uint32_t ver, uint32_t index); // 选字反馈→自学习

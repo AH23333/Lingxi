@@ -84,7 +84,8 @@ public:
 
     // ---- IPipeClientCallback（管道读线程调用，禁止触碰 TSF）----
     void OnCandidates(uint32_t ver, uint32_t replaceLen,
-                      std::vector<std::wstring>&& cands) override;
+                      std::vector<std::wstring>&& cands,
+                      std::vector<uint32_t>&& cover) override;
     void OnPickRequested(uint32_t ver, uint32_t index) override; // 仅 PostMessage
 
     // ---- 宿主 UI 线程入口 ----
@@ -122,6 +123,8 @@ public:
     void HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pfEaten); // OnKeyDown 分发
     bool PinyinKeyEaten(WPARAM wParam);                                       // OnTestKeyDown 判定
     bool GetCandidate(uint32_t index, std::wstring& out);                     // 候选缓存读取
+    // 候选缓存读取 + B1 部分提交 cover（该候选消耗的拼音前缀字符数；0=未知/全清）
+    bool GetCandidateEx(uint32_t index, std::wstring& out, uint32_t& cover);
     void SendPinyinCtx();                                                     // 组合串+光标矩形→UI
     void SendModeToast(bool english);                                        // 中/英文切换短暂提示
 
@@ -136,7 +139,12 @@ private:
     void PinyinAppend(wchar_t ch);
     void PinyinShrink();
     void PinyinCancel();
-    void PinyinCommitHanzi(const std::wstring& hanzi);
+    // 提交汉字并按 cover 决定剩余拼音去留（B1 部分提交）：
+    // 0 < cover < _pinyin.size() 且 _pinyin 全字母 → 上屏词后剩余串继续组合；
+    // 其余（cover 0/越界/含非字母）→ 全清（旧行为）。
+    void PinyinCommitHanzi(const std::wstring& hanzi, uint32_t cover = 0);
+    // cover 是否指向有效的剩余拼音：是则 rest=剩余串并返回 true（调用时 _pinyin 未清）
+    bool PinyinKeepRest(uint32_t cover, std::wstring& rest);
     void PinyinCommitRaw();
     void PinyinResetNoInline(); // 无组合模式收尾：清内存状态并隐藏候选窗
     void PinyinEndComposition(ITfContext* pCtx, const std::wstring* replaceWith); // 共用收尾
@@ -172,6 +180,7 @@ private:
     CRITICAL_SECTION _cs{};
     bool _csInit = false;
     std::vector<std::wstring> _cands;
+    std::vector<uint32_t> _candCover; // 与 _cands 平行：各候选消耗的拼音前缀字符数（B1）
     uint32_t _verSent = 0;     // 最近发出的上下文版本
     uint32_t _verCands = 0;    // 候选对应的版本
     uint32_t _replaceLen = 0;  // 上屏前需删除的光标前字符数

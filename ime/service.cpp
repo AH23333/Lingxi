@@ -365,14 +365,21 @@ void CTextService::OnContextRead(const std::wstring& text, const RECT& rc)
 
 // ==================== 候选与上屏 ====================
 
-void CTextService::OnCandidates(uint32_t ver, uint32_t replaceLen, std::vector<std::wstring>&& cands)
+void CTextService::OnCandidates(uint32_t ver, uint32_t replaceLen, std::vector<std::wstring>&& cands,
+                                std::vector<uint32_t>&& cover)
 {
-    LX_LOG(L"ime", L"收到候选 ver=%u replaceLen=%u count=%u", ver, replaceLen, (uint32_t)cands.size());
+    LX_LOG(L"ime", L"收到候选 ver=%u replaceLen=%u count=%u cover=%u",
+           ver, replaceLen, (uint32_t)cands.size(),
+           cover.size() == cands.size() ? (uint32_t)cover.size() : 0);
+    // cover 平行性校验：不平行（旧 UI 或异常帧）按全 0 处理（提交后全清=旧行为）
+    if (cover.size() != cands.size())
+        cover.assign(cands.size(), 0);
     bool latest = false;
     EnterCriticalSection(&_cs);
     if (ver == _verSent)
     {
         _cands = std::move(cands);
+        _candCover = std::move(cover);
         _verCands = ver;
         _replaceLen = replaceLen;
         _pageStart = 0; // 新一批候选回到第一页
@@ -406,11 +413,12 @@ void CTextService::OnPickRequested(uint32_t ver, uint32_t index)
 
 void CTextService::HandlePickFromUI(uint32_t ver, uint32_t index)
 {
-    // 拼音组合中：鼠标选词 = 提交该汉字进组合
+    // 拼音组合中：鼠标选词 = 提交该汉字进组合（cover 支持部分提交，B1）
     if (_pComposition)
     {
         std::wstring hanzi;
-        if (GetCandidate(index, hanzi)) PinyinCommitHanzi(hanzi);
+        uint32_t cover = 0;
+        if (GetCandidateEx(index, hanzi, cover)) PinyinCommitHanzi(hanzi, cover);
         return;
     }
     InsertCandidate(index); // InsertCandidate 内部会校验版本
@@ -430,6 +438,7 @@ void CTextService::ClearCandidates()
     if (!_csInit) return;
     EnterCriticalSection(&_cs);
     _cands.clear();
+    _candCover.clear();
     _verCands = 0;
     _replaceLen = 0;
     _pageStart = 0;
@@ -516,6 +525,7 @@ void CTextService::NotifyPicked(uint32_t globalIndex)
 void CTextService::InsertCandidate(uint32_t index)
 {
     std::wstring text;
+    uint32_t cover = 0;
     {
         EnterCriticalSection(&_cs);
         if (_verCands != _verSent || index >= _cands.size())
@@ -524,6 +534,7 @@ void CTextService::InsertCandidate(uint32_t index)
             return;
         }
         text = _cands[index];
+        cover = index < _candCover.size() ? _candCover[index] : 0;
         LeaveCriticalSection(&_cs);
     }
 
@@ -531,8 +542,8 @@ void CTextService::InsertCandidate(uint32_t index)
     // 由其正确清空内存拼音串并结束拼音状态，避免上屏后 PinyinActive 残留。
     if (PinyinActive())
     {
-        LX_LOG(L"ime", L"上屏候选[%u] chars=%u", index, (uint32_t)text.size());
-        PinyinCommitHanzi(text);
+        LX_LOG(L"ime", L"上屏候选[%u] chars=%u cover=%u", index, (uint32_t)text.size(), cover);
+        PinyinCommitHanzi(text, cover);
         return;
     }
 

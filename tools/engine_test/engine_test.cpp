@@ -586,6 +586,18 @@ int wmain()
                 Report(coverNihao == 5, "cover: nihao '你好' consumes 5 (all)", detail);
             }
 
+            // P6c4. nihao 候选序取证："你"必须落在首页（≤9，deep_test T14 依赖）
+            {
+                lingxi::Prediction r = py->Predict(L"nihao");
+                int idxNi = -1;
+                for (size_t k = 0; k < r.cands.size(); k++)
+                    if (r.cands[k] == L"你") { idxNi = (int)k; break; }
+                wchar_t detail[96];
+                _snwprintf_s(detail, _TRUNCATE, L"idxNi=%d cands=%zu", idxNi, r.cands.size());
+                Report(idxNi >= 0 && idxNi < 9,
+                       "cover: nihao '你' in first page (digit-reachable)", detail);
+            }
+
             // P6c2. cover：长串部分词——"jintianqi"→"今天" 消耗 "jintian"(7)
             {
                 lingxi::Prediction r = py->Predict(L"jintianqi");
