@@ -3,6 +3,15 @@
 > 最近更新：2026-10-28 凌晨（QC 代理代更：R2-R4 功能面全部落地、Edge 兼容用户实测确认、R3/R5 预探索完成）。**任何代理读完本文档即可直接接手。**
 > 配套阅读：[PROGRESS.md](PROGRESS.md) · [DEVLOG.md](DEVLOG.md) · [PITFALLS.md](PITFALLS.md)（20 条踩坑，#17-#19 为崩溃三段式）· [README.md](../README.md) · 双代理协作目录 [cur/](../cur/)（含 QC 报告与 R2-R5 预探索指南）
 
+## ⚡ 最新状态速报（2026-10-28 下午，Loomy 轮）
+
+- 13 提交后工作区干净，regress 三件套+词典闸门全绿；R3 重排从 WIP 到全部落地并按实测**默认关**（打字 CPU 66%->3.5%，候选窗抖动清零）。
+- 词库进入管线时代：tools/fix_readings.py（多音补全+--check 闸门，228 字/239 读音）+ tools/modern_terms.txt（现代词层，build_pinyin --modern-only 幂等）。
+- 体验三修：提交键候选有界等待（快打不丢汉字）、切分分池（长串候选 27->60）、模式检测竞态自愈；deep_test 新增 T12/T13，engine_test 142 断言。
+- **当前生效状态**：LingxiUI.exe 已真实环境重启（新词库/新 LLM 链在跑）；用户应用里的 DLL 侧修复需重启应用。最新交接=**cur/LOOMY-HANDOFF.md**（含 B1-B8 未完成项与取证设计）。
+
+（下方凌晨速报为历史背景。）
+
 ## ⚡ 最新状态速报（2026-10-28 凌晨：R2-R4 体验面全落地 + Edge 结案 + R3/R5 方案就绪）
 
 - **git**：HEAD `b6c4aa5`（以下提交均在 main）；工作区常有开发代理在制品，以 `git status` 为准

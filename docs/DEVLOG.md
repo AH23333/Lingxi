@@ -118,3 +118,10 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 - [ ] R3：LLM 整句重排 + 多路采样 + KV cache（按 cur/GLM_EXPLORATION_R3_LLM.md 实施）
 - [ ] R4 尾巴：自定义短语、字体字号皮肤（字号进行中）
 - [ ] R5：32 位 TIP、卸载清理、崩溃保护、签名、regress.cmd（按 cur/GLM_EXPLORATION_R2R5.md 实施）
+
+## 2026-10-28 下午（Loomy 轮：深度测试 + 体验整改 + 数据管线）
+
+- **13 提交落地**（链见 git log）：R3 重排在制品全部修完（双上下文 KV 物理隔离 / prefill abort 硬闸 / EMA 吞吐降级 / SEH 熔断 / ClientCtx shared_ptr 悬垂修复 / rrSeq 连击合并），重排**默认关**——实测打字 CPU 66%→3.5%、候选窗抖动清零、续写往返 141→141ms 不被驱逐；
+- 体验修复：提交键候选有界等待 ≤80ms + 拼音免防抖（快打空格不再上屏字母，每键候选 RTT 均值 57ms）；切分完整/残段分池（长串候选 27→60）；模式检测激活竞态定时器自愈（冷启动 deep_test attempt1 转绿）；
+- 词库管线：多音读音系统补全 tools/fix_readings.py（228 字/239 读音 + --check 闸门进回归）；现代词层 tools/modern_terms.txt（176 词，inject_modern 只升不降、--modern-only 幂等）；engine_test 沙盒化 + 多音/现代词断言 119→142；deep_test 新增 T12/T13 行为场景；
+- 收口前新报反馈全部取证完毕未动刀（Edge 快捷键=main.cpp:205 RegisterHotKey 默认开；中文续写复读=StripPromptEcho 未盖全两形态；i/u/v 首字母词典无行；Shift 单击无感），设计与复现步骤见 cur/LOOMY-HANDOFF.md §3 B3-B8.

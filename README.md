@@ -37,6 +37,10 @@ tools\build.cmd Debug      :: 构建（VS2022 + MSVC + WinSDK 10.0.26100）
 tools\register.cmd Debug   :: 注册（需管理员：TSF TIP 注册写 HKLM）
 tools\unregister.cmd Debug :: 注销（需管理员）
 tools\imecheck.ps1         :: 注册状态自检
+
+:: 词库数据管线（幂等，随时可跑；fix_readings --check 已挂 regress 闸）
+python tools\build_pinyin.py --modern-only  :: 现代词层+多音补全重放到 zh_pinyin.txt
+python tools\fix_readings.py --dry          :: 只出多音缺口审计报告，不改数据
 ```
 
 注册后若输入法列表未出现"灵犀"，注销并重新登录一次 Windows。
@@ -91,9 +95,11 @@ msbuild tools\engine_test\engine_test.vcxproj /p:Configuration=Release /p:Platfo
 bin\enginetest\engine_test.exe   :: 全部 PASS 则 exit=0
 ```
 
-覆盖（当前 **127 项断言**）：英文前缀补全与替换、上下文补全、中文续写、拼音音节切分、
+覆盖（当前 **142 项断言**）：英文前缀补全与替换、上下文补全、中文续写、拼音音节切分、
 词链/残段、简拼混拼、整句首选、口语层、模糊音容错、翻页数据、自学习置顶与跨重载持久化、
-用户词典、**长句+末尾残段分池存活**。用户词典读写走 `bin\enginetest\userdata\` 沙盒，
+用户词典、**长句+末尾残段分池存活**、**多音单字读音可达（shei→谁/xie→血 等 10 例）**、
+**现代技术词整词（zidongbuquan→自动补全）**。词库一致性另有独立闸门：
+`tools\fix_readings.py --check`（多音缺口检测）已挂进 `tools\regress.cmd`。用户词典读写走
 每次运行前清空，测试既不污染真实用户词典也不被上次残留污染（幂等）。性能断言采用
 **多次预热 + 逐次采样 + 中位数**，测量期临时提升线程优先级以隔离后台进程干扰：
 拼音 `jintianqi` 中位数 < 10ms（实测约 0.3ms），英文上下文 < 5ms。

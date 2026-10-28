@@ -1,7 +1,8 @@
 # LingxiIme · Loomy 会话交接（2026-10-28 下午，额度收敛版）
 
 > 接手必读顺序：本文件 → `cur/SHUTDOWN-HANDOFF.md`（豆包的历史交接，规则仍有效）→ `cur/QC-REPORT.md` 末尾我的会话记录。
-> 我（Loomy）本轮 = 深度测试+修复+性能+用户体验整改，共 **9 个提交**（d7debbd 之后），全部各自过构建，终态 regress 全链 ALL PASS。
+> 我（Loomy）本轮 = 深度测试+修复+性能+用户体验整改，共 **13 个提交**（d7debbd 之后，含文档同步），全部各自过构建，终态 regress 全链 ALL PASS。
+> 收口新反馈（Edge 插件快捷键 / 中文模式续写复读 / Shift 切换无感 / i-u-v 首字母）**全部取证完毕未动刀**，见 §B4+/§B8/B3/B5；新一轮从 B1（最痛）或 B8（最便宜）开刀。
 
 ## 0. 一句话现状
 
@@ -28,7 +29,7 @@
 1. **词典/LLM/链/设置项** = 跑在 `LingxiUI.exe`：改数据或 UI 代码后必须**杀掉并重启 LingxiUI.exe** 才生效（它是常驻进程）。
 2. **键盘/组合/提交/翻页/模式切换** = 跑在宿主进程内的 ImeCore.dll：TSF 特性，**用户自己的应用重启**才吃新 DLL（README 已注）。用户报的很多"还没修好"其实是旧进程驻留。
 3. HKCU\Software\LingxiIme 实时读——开关不用重启。
-- ⚠️ 当前运行的 LingxiUI.exe 实例是 regress 沙盒环境（APPDATA 指向 tmp\regress-*\userdata）拉起的——**用户现在打字的学习词会写进沙盒目录**。下一轮第一件事：`taskkill /f /im LingxiUI.exe` 后用真实 `$env:APPDATA="C:\Users\34697\AppData\Roaming"` Start-Process `bin\Debug\LingxiUI.exe`。
+- ✅ 已处理：15:5x 已 kill 沙盒实例并用真实 APPDATA 重启 UI（存活复核通过，新词库已进程）。下一轮开工前仍按 PITFALLS #27 自查：Get-Process LingxiUI 的 StartTime 必须晚于最新 build/词典时间戳。
 - ⚠️ 本桌面会话曾修改 **HKCU 的 LlmRerank=0 / ShiftToggle(未动)**——Loomy shell 与用户共享此 HKCU。`LlmRerank` 之前显式为 1（旧默认开），现语义=默认关+用户可勾选。若用户反馈"重排开关失效"先查这个键。
 
 ## 3. 体验整改 backlog（用户原话 → 已侦查根因 → 设计草案）
