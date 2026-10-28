@@ -195,3 +195,10 @@
 - **修法**：修饰键本体在分发层单列放行。Ctrl/Alt 本体在 KeyDown 时 keystate 已置位、被 `CtrlOrAltDown()` 闸自然覆盖，**Shift 无此覆盖必须单列**（`wParam == VK_SHIFT → *pfEaten = FALSE; return`，放 CtrlOrAltDown 闸后）。weasel 参照：VK_SHIFT 注册为 preserved key 单独处理，不当普通键分发——普通 key sink 架构下的等价语义就是分发层放行。
 - **症状B（归因方法论）**：T16 加入后 deep_test attempt1 偶发挂 1~7 个（T14/T15/T10/T12/T16 混杂），像极了新测试污染。取证三板斧：①**失败首发位置**——挂的 T14/T15 在 T16 之前，T16 不可能是因；②**单因一致性**——attempt1 挂 7 个全部与"_pinyinMode 漂移/候选超时"单因一致（vEaten=0、bPass=0、mid=0 都是直通症状），无第二解释需求；③**LX_LOG 取证**——`Shift toggle -> tempEnglish=1/0` 翻转对正常、OnTestKeyDown 的 vk/py/tmpEn/v/fAct 列直接读漂移值。结论：既有 flaky（T14 "你hao"=部分提交后新候选 vs 空格 `WaitForLatestCandidates(80ms)` 竞态→CommitRaw 回退；T10/T12=激活/模式漂移）暴露增多，非 T16 回归，attempt 间自愈后全绿。
 - **正确做法**：新增测试后连环红，先问"失败首发在新增测试之前吗？"——在之前直接排除新回归假设；再看失败组能否被**一个单因**解释（能=漂移/竞态，不能=真回归）；最后 LX_LOG 拿状态列实证。别一红就回滚自己的改动。
+
+## R5 稳定性收口轮（2026-10-28 晚）
+
+### 34. PowerShell 嵌套 powershell 时外层双引号先插值 `$env:`——内层命令形同虚设 ⭐
+- **症状**：`powershell "$env:APPDATA='C:\...'; Start-Process ..."` 想给内层设 APPDATA，外层先把 `$env:APPDATA` 展开成字面路径，内层收到 `C:\...='C:\...'` 报 CommandNotFoundException，但 `;` 后的 Start-Process 照常执行——**目标进程起来了、环境变量却没设成**，看起来成功实则配置没生效。
+- **根因**：外层 PowerShell 对双引号字符串做插值，`$env:APPDATA` 在传给内层之前已被展开；内层根本没收到赋值语句。
+- **正确做法**：嵌套 powershell 的命令体一律**单引号包裹**（`powershell '$env:APPDATA=''C:\...''; ...'`），或干脆避免嵌套——直接在当前层 `$env:APPDATA='...'; Start-Process ...` 同进程执行即可（本工具 shell 的 APPDATA 本就是用户真实值，多数"重启真实 UI"场景根本无需覆盖）。检查内层是否真执行了赋值：看输出里有没有赋值语句被当命令名报错的痕迹。

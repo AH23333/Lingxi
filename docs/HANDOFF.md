@@ -1,5 +1,12 @@
 # 交接文档（HANDOFF）
 
+## ⚡ 最新状态速报（2026-10-28 晚·八，R5 稳定性收口——WER 崩溃转储落地）
+
+- **WER LocalDumps 本机落地**：tools\setup_dumps.cmd（脚本早备好从未执行）提权跑通并实证 HKLM——`LocalDumps\LingxiUI.exe` DumpFolder=%TEMP%\lingxi-dumps / DumpType=2 全量 / DumpCount=5，**此后 LingxiUI 崩溃自动落全量 dump**。DLL 侧不装 VEH/UEF 铁律不变。
+- **SignalNamedEvent 静默失败 P2 已修**（ui/main.cpp）：二实例转发 --symbols/--settings 时主实例 4s 未就绪不再静默丢命令，LX_LOG + 弹一次提示；regress ALL PASS，真实 UI 已重启（PID 20772）。
+- **PITFALLS #34 新增**：PowerShell 嵌套 powershell 外层双引号先插值 `$env:`——内层赋值形同虚设，嵌套命令体一律单引号或同层执行。
+- R5 剩余：32 位 TIP；R3 LLM 整句重排方案就绪未实施（cur/GLM_EXPLORATION_R3_LLM.md）。Loomy 整改 B1-B8 全收官（含 B2 像素取证补遗）。
+
 ## ⚡ 最新状态速报（2026-10-28 晚·七，B2 窗体像素取证补遗——验证实证收官）
 
 - **B2 回显渲染实证完成**：假客户端探针（MSG_CTX pinyin="nihao"）驱动真实候选窗出窗 + 特征色像素分析——composing 底色带 RGB(240,244,250) 窗顶 42 行横带、其下候选区、accent 蓝字跨回显带；en 对照（flags=0）无回显带且候选区上移 42 行=因果实锤（回显行只在有组合串时出现且候选区同步下推）。B2 落地时"窗体无自动化断言人眼验收"的边界补齐为像素实证。探针产物已清理，数据固化 cur/LOOMY-HANDOFF.md §B2 补遗、DEVLOG 晚（七）小节。**B1/B8/B4/B3/B5(①②)/B2 全部完成，Loomy 整改全链收官。**

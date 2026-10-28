@@ -260,3 +260,16 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **边界**：探针短暂抢占管道 active，断开后归还真实客户端；截图坐标系受 DPI 虚拟化影响但特征色空间关系不受影响（只看相对行分布）。探针/截图临时产物已清理（tmp 下零残留），像素数据固化于 cur/LOOMY-HANDOFF.md §B2 补遗。
 
 **backlog 终态**：B1/B8/B4/B3/B5(①②)/B2 全部完成且 B2 窗体验证补齐实证，Loomy 体验整改全链收官。
+
+## 2026-10-28 晚（八） · R5 稳定性收口：WER 崩溃转储落地 + SignalNamedEvent 静默失败 P2 修复
+
+**背景**：cur/GLM_EXPLORATION_R2R5.md R5"稳定性"节——WER LocalDumps 脚本（tools\setup_dumps.cmd）早已就位但**从未在本机执行**（HKLM 键缺失实证）；同节"顺手"条 SignalNamedEvent 4 秒静默失败为遗留 P2。
+
+**改动**：
+
+- `ui/main.cpp` `SignalNamedEvent`：4 秒等待耗尽（主实例持有单实例 Mutex 但通知事件未建——冷启动 LLM 加载可达数秒的真实窗口）不再静默丢命令，`MessageBoxW` 弹一次"主程序仍在启动中"提示（`static bool warned` 保证进程存活期至多一次，--symbols+--settings 双超时也只弹一盒），前置 LX_LOG 取证。测试无依赖（全仓 grep 无 --settings/--symbols 外部调用方），纯二实例回退路径。
+- **WER LocalDumps 本机执行**：`Start-Process -Verb RunAs` 提权跑 tools\setup_dumps.cmd（UAC 一次），注册表实证 `HKLM\...\LocalDumps\LingxiUI.exe` DumpFolder=`%TEMP%\lingxi-dumps` / DumpType=2（全量）/ DumpCount=5——此后任何 LingxiUI.exe 崩溃自动落全量 dump 离线可析。DLL 侧不装 VEH/UEF 铁律不变（宿主进程内装全局异常处理器=事故源），零代码方案优先于 SetUnhandledExceptionFilter 代码方案。
+
+**验证**：build Debug 全过；regress **ALL PASS**（engine_test / fix_readings --check / deep_test / e2e attempt1）；真实 UI 已用真实 APPDATA 重启（PID 20772， StartTime 晚于构建）。本工具 shell 的 APPDATA 实测即用户真实 Roaming 路径（嵌套 powershell 覆盖语句被外层插值吃掉的坑固化 PITFALLS #34）。
+
+**R5 剩余**：32 位 TIP（vcxproj 加 Win32 配置 + EnsureUIRunning 回退链，unregister.cmd 已前向兼容 Debug32 路径）；R3 LLM 整句重排仍为方案就绪未实施（前置堵点：拼音模式 DLL 补发上文）。
