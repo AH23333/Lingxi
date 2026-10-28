@@ -194,7 +194,7 @@ void LoadToControls()
     Button_SetCheck(g_hChkEn, s.enCompletion ? BST_CHECKED : BST_UNCHECKED);
     Button_SetCheck(g_hChkCnPunct, s.cnPunct ? BST_CHECKED : BST_UNCHECKED);
     Button_SetCheck(g_hChkFuzzy, s.fuzzyPinyin ? BST_CHECKED : BST_UNCHECKED);
-    ComboBox_SetCurSel(g_hCmbToggleMode, (int)(s.toggleMode <= 2 ? s.toggleMode : 1));
+    ComboBox_SetCurSel(g_hCmbToggleMode, (int)(s.toggleMode <= 4 ? s.toggleMode : 1));
     Button_SetCheck(g_hChkVMode, s.vMode ? BST_CHECKED : BST_UNCHECKED);
     Button_SetCheck(g_hChkShuangpin, s.shuangpin ? BST_CHECKED : BST_UNCHECKED);
     Button_SetCheck(g_hChkSymbolHotkey, s.symbolHotkey ? BST_CHECKED : BST_UNCHECKED);
@@ -222,7 +222,7 @@ void SaveFromControls()
     s.cnPunct = Button_GetCheck(g_hChkCnPunct) == BST_CHECKED;
     s.fuzzyPinyin = Button_GetCheck(g_hChkFuzzy) == BST_CHECKED;
     int tsel = ComboBox_GetCurSel(g_hCmbToggleMode);
-    if (tsel >= 0 && tsel <= 2) s.toggleMode = (uint32_t)tsel;
+        if (tsel >= 0 && tsel <= 4) s.toggleMode = (uint32_t)tsel;
     s.vMode = Button_GetCheck(g_hChkVMode) == BST_CHECKED;
     s.shuangpin = Button_GetCheck(g_hChkShuangpin) == BST_CHECKED;
     s.symbolHotkey = Button_GetCheck(g_hChkSymbolHotkey) == BST_CHECKED;
@@ -540,6 +540,8 @@ void CreateSettingsWindow(HINSTANCE hInst)
     ComboBox_AddString(g_hCmbToggleMode, L"关闭");
     ComboBox_AddString(g_hCmbToggleMode, L"Shift");
     ComboBox_AddString(g_hCmbToggleMode, L"Shift 或 Ctrl");
+    ComboBox_AddString(g_hCmbToggleMode, L"CapsLock");
+    ComboBox_AddString(g_hCmbToggleMode, L"Ctrl");
     y += rowH + MulDiv(6, scale, 96);
     g_hChkVMode = mkCheck(L"v 模式（中文下首字母 v 直通英文，如 vhello 出 hello）", IDC_CHK_VMODE);
     g_hChkShuangpin = mkCheck(L"小鹤双拼（每音节两键：声母+韵母，零声母按韵母首字母补齐）", IDC_CHK_SHUANGPIN);

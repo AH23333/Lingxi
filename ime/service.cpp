@@ -640,6 +640,12 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LP
         *pfEaten = TRUE;
         return S_OK;
     }
+    // CapsLock=切换键（mode 3）：KeyDown 即吞——不翻转大小写状态，专职语言切换
+    if (wParam == VK_CAPITAL && LoadSettings().toggleMode == 3 && _pinyinMode)
+    {
+        *pfEaten = TRUE;
+        return S_OK;
+    }
     // 直通形态：候选可见时拦截确认键，其余一律放行
     // （Ctrl/Alt 组合不拦截：候选可见时 Ctrl+1/Ctrl+Tab 等快捷键仍属应用）
     bool visible = CandidatesVisible();
@@ -655,8 +661,8 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM
            (uint32_t)wParam, (int)_pinyinMode, (int)_tempEnglish, (int)_vMode, (int)_fActivated);
     MaybeRedetectPinyinMode(); // 个别应用不走 TestKeyDown
 
-    // 中英切换键单击检测（toggleMode：1 Shift / 2 Shift 或 Ctrl）：记录按下；
-    // 与其他键组合（含 Shift/Ctrl 交错，如 Ctrl+Shift+K 应用快捷键）则标记 used
+    // 中英切换键单击检测（toggleMode：1 Shift / 2 Shift 或 Ctrl / 3 CapsLock / 4 Ctrl）：
+    // 记录按下；与其他键组合（含切换键交错，如 Ctrl+Shift+K 应用快捷键）则标记 used
     if (wParam == VK_SHIFT || wParam == VK_CONTROL)
     {
         if (_shiftDown)
@@ -668,8 +674,33 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM
             _shiftWasActive = PinyinActive();
         }
     }
-    else if (_shiftDown)
-        _shiftUsed = true;
+    else if (wParam == VK_CAPITAL)
+    {
+        if (_shiftDown)
+            _shiftUsed = true; // Shift 未放又按 CapsLock = 组合使用
+        if (_capsDown)
+            _capsUsed = true; // 自动重复
+        else
+        {
+            _capsDown = true;
+            _capsUsed = false;
+            _capsWasActive = PinyinActive();
+        }
+    }
+    else
+    {
+        if (_shiftDown)
+            _shiftUsed = true;
+        if (_capsDown)
+            _capsUsed = true;
+    }
+
+    // CapsLock=切换键（mode 3）：已由 OnTestKeyDown 吞下（大小写不翻转），此处仅记账
+    if (wParam == VK_CAPITAL && LoadSettings().toggleMode == 3 && _pinyinMode)
+    {
+        *pfEaten = TRUE;
+        return S_OK;
+    }
 
     // 中文输入（拼音模式且非临时英文）才走拼音处理
     if (IsChineseInput())
@@ -718,11 +749,12 @@ STDMETHODIMP CTextService::OnKeyUp(ITfContext*, WPARAM wParam, LPARAM, BOOL* pfE
 {
     *pfEaten = FALSE;
     // 中英切换键单击（未与其他键组合、按下前后均无拼音活动、当前模式允许该键）：
-    // 在中文/临时英文间切换。toggleMode：0 无 1 Shift 2 Shift 或 Ctrl。
+    // 在中文/临时英文间切换。toggleMode：0 无 1 Shift 2 Shift 或 Ctrl 4 Ctrl。
     if (_shiftDown && (wParam == VK_SHIFT || wParam == VK_CONTROL))
     {
         uint32_t tm = LoadSettings().toggleMode;
-        bool allowed = (wParam == VK_SHIFT) ? (tm >= 1) : (tm >= 2);
+        bool allowed = (wParam == VK_SHIFT) ? (tm == 1 || tm == 2)
+                                            : (tm == 2 || tm == 4);
         if (allowed && !_shiftUsed && !_shiftWasActive && !PinyinActive() && _pinyinMode)
         {
             _tempEnglish = !_tempEnglish;
@@ -731,6 +763,19 @@ STDMETHODIMP CTextService::OnKeyUp(ITfContext*, WPARAM wParam, LPARAM, BOOL* pfE
         }
         _shiftDown = false;
         _shiftUsed = false;
+    }
+    // CapsLock 单击（mode 3）：干净单击切中英；KeyDown 已吞（大小写未翻转）
+    if (wParam == VK_CAPITAL && _capsDown)
+    {
+        uint32_t tm = LoadSettings().toggleMode;
+        if (tm == 3 && !_capsUsed && !_capsWasActive && !PinyinActive() && _pinyinMode)
+        {
+            _tempEnglish = !_tempEnglish;
+            LX_LOG(L"key", L"CapsLock toggle -> tempEnglish=%d", (int)_tempEnglish);
+            SendModeToast(_tempEnglish);
+        }
+        _capsDown = false;
+        _capsUsed = false;
     }
     return S_OK;
 }

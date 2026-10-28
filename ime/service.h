@@ -201,12 +201,17 @@ private:
     bool _pinyinMode = false;
     bool _tempEnglish = false; // Shift 单击切换的临时英文模式
     bool _vMode = false;       // v 模式：首字母 v 后一串字母直通英文（v 不上屏）
-    // 中英切换键单击检测（toggleMode：1 Shift / 2 Shift 或 Ctrl）：
+    // 中英切换键单击检测（toggleMode：1 Shift / 2 Shift 或 Ctrl / 4 Ctrl）：
     // KeyDown 置位、与其他键（含两个切换键交错，如 Ctrl+Shift 快捷键）组合则
     // 标记 used、KeyUp 按当前模式判定该键是否允许触发切换
     bool _shiftDown = false;
     bool _shiftUsed = false;
     bool _shiftWasActive = false; // 切换键按下时是否正在拼音输入
+    // CapsLock 单击检测（toggleMode==3）：mode 3 时 KeyDown 即吞掉（不翻转大小写，
+    // CapsLock 专职语言切换）；KeyUp 干净单击才切中英
+    bool _capsDown = false;
+    bool _capsUsed = false;
+    bool _capsWasActive = false; // CapsLock 按下时是否正在拼音输入
     std::atomic<bool> _modeDirty{ false }; // 语言/前台/焦点变化置位，按键路径执行检测
     int _modeRetryLeft = 8; // 激活过渡窗口有限次延迟重检计数（见 DetectPinyinMode 自愈）
     std::wstring _pinyin;         // 当前拼音字母串

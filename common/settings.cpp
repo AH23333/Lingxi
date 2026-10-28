@@ -43,10 +43,10 @@ Settings LoadSettings()
     if (GetDword(hKey, L"Paused", v)) s.paused = v != 0;
     if (GetDword(hKey, L"CnPunct", v)) s.cnPunct = v != 0;
     if (GetDword(hKey, L"FuzzyPinyin", v)) s.fuzzyPinyin = v != 0;
-    // 中英切换键（B5 草案②）：新键 ToggleMode 优先；无/越界则旧键 ShiftToggle
+    // 中英切换键：新键 ToggleMode 优先；无/越界则旧键 ShiftToggle
     // （bool）派生 0/1；两键均缺 = 默认 1（Shift 切换，与历史行为一致）
     DWORD tm = 0;
-    if (GetDword(hKey, L"ToggleMode", tm) && tm <= 2)
+    if (GetDword(hKey, L"ToggleMode", tm) && tm <= 4)
         s.toggleMode = tm;
     else if (GetDword(hKey, L"ShiftToggle", v))
         s.toggleMode = v != 0 ? 1 : 0;
