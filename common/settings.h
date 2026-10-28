@@ -21,7 +21,9 @@ struct Settings
     bool shiftToggle = true;      // 无拼音时单击 Shift 切换中/英文
     bool vMode = true;            // v 模式：中文下首字母 v 直通英文
     bool shuangpin = false;       // 小鹤双拼：每音节两键（声母键+韵母键）
-    bool symbolHotkey = true;    // 全局热键 Ctrl+Shift+B 调出符号面板（独占该组合键）
+    bool symbolHotkey = false;   // 全局热键 Ctrl+Shift+B 调出符号面板（独占该组合键）。
+                                  // 默认关：全局独占会占用应用自身快捷键（Edge 插件等
+                                  // 实测冲突）；符号面板仍可从托盘/菜单打开。
     bool traditionalOutput = false; // 繁体输出：候选简体→繁体（字符级映射）
     bool llmRerank = false;        // LLM 拼音候选重排：默认关（打字期额外 CPU / 慢机自动降级）；
                                    // 想要上下文语序更自然再手动开启，设置页可勾选，实时生效

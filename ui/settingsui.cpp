@@ -532,7 +532,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_hChkShiftToggle = mkCheck(L"Shift 单击切换中/英文（无拼音时单击 Shift，显示中/英提示）", IDC_CHK_SHIFTTOGGLE);
     g_hChkVMode = mkCheck(L"v 模式（中文下首字母 v 直通英文，如 vhello 出 hello）", IDC_CHK_VMODE);
     g_hChkShuangpin = mkCheck(L"小鹤双拼（每音节两键：声母+韵母，零声母按韵母首字母补齐）", IDC_CHK_SHUANGPIN);
-    g_hChkSymbolHotkey = mkCheck(L"符号面板热键 Ctrl+Shift+B（全局独占；关闭后仅托盘/菜单打开）", IDC_CHK_SYMBOLHOTKEY);
+    g_hChkSymbolHotkey = mkCheck(L"符号面板热键 Ctrl+Shift+B（全局独占，会占用应用同款快捷键如 Edge 插件；默认关，面板可从托盘打开）", IDC_CHK_SYMBOLHOTKEY);
     g_hChkTraditional = mkCheck(L"繁体输出（候选简体字转为繁体）", IDC_CHK_TRADITIONAL);
     g_hChkLlmRerank = mkCheck(L"LLM 上下文智能重排（实验：停顿打完一字后按上文重排候选，增加 CPU）", IDC_CHK_LLMRERANK);
 
