@@ -462,8 +462,23 @@ static bool ActivateLingxiZhCn(int tries = 10)
 {
     for (int i = 0; i < tries; i++)
     {
-        HRESULT hr = g_pIpp->ActivateLanguageProfile(CLSID_LingxiTextService, 0x0804, GUID_LingxiProfile_zhCN);
-        if (SUCCEEDED(hr)) return true;
+        // Win8+ 首选 ProfileMgr::ActivateProfile：走完整输入法切换路径，
+        // ctfmon 会话级状态同步认可。旧 ActivateLanguageProfile 只做线程内
+        // profile 激活，会被会话级输入法"纠正"覆盖（楔死：键派发给别的 TIP）。
+        ITfInputProcessorProfileMgr* pPm = nullptr;
+        HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, NULL, CLSCTX_INPROC_SERVER,
+                                      IID_ITfInputProcessorProfileMgr, (void**)&pPm);
+        if (SUCCEEDED(hr) && pPm)
+        {
+            hr = pPm->ActivateProfile(TF_PROFILETYPE_INPUTPROCESSOR, 0x0804,
+                                      CLSID_LingxiTextService, GUID_LingxiProfile_zhCN,
+                                      NULL, 0);
+            pPm->Release();
+            if (SUCCEEDED(hr)) return true;
+        }
+        // 回退：旧 API（系统无 ProfileMgr 时）
+        HRESULT hr2 = g_pIpp->ActivateLanguageProfile(CLSID_LingxiTextService, 0x0804, GUID_LingxiProfile_zhCN);
+        if (SUCCEEDED(hr2)) return true;
         PumpMessages();
         Sleep(300);
     }
@@ -669,7 +684,7 @@ int wmain()
 
         // ---- pinyin settle（失败时给足取证：前台 TIP 是谁、探测键是否被吃）----
         {
-            bool settled = WaitForPinyinMode(pKm);
+            bool settled = WaitForPinyinMode(pKm, 75); // 15s：覆盖激活后 msctf 派发就绪延迟（PITFALLS #19）
             if (!settled)
             {
                 CLSID fg{};
@@ -685,6 +700,30 @@ int wmain()
                              (GetKeyState(VK_CONTROL) & 0x8000) != 0,
                              (GetKeyState(VK_MENU) & 0x8000) != 0);
                 Report(false, L"pinyin mode settle", d);
+                // 取证：线程真正 active 的 TIP 是谁（ProfileMgr 权威视图）
+                {
+                    ITfInputProcessorProfileMgr* pPm = nullptr;
+                    if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, NULL, CLSCTX_INPROC_SERVER,
+                                                   IID_ITfInputProcessorProfileMgr, (void**)&pPm)) && pPm)
+                    {
+                        TF_INPUTPROCESSORPROFILE prof{};
+                        if (SUCCEEDED(pPm->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &prof)))
+                        {
+                            bool isLingxi = IsEqualCLSID(prof.clsid, CLSID_LingxiTextService);
+                            LPOLESTR sClsid = nullptr;
+                            StringFromCLSID(prof.clsid, &sClsid);
+                            wprintf(L"[INFO] activeTip clsid=%ls (lingxi=%d) profileType=%u hkl=0x%p\n",
+                                    sClsid ? sClsid : L"?", (int)isLingxi,
+                                    prof.dwProfileType, (void*)prof.hkl);
+                            if (sClsid) CoTaskMemFree(sClsid);
+                        }
+                        else
+                        {
+                            wprintf(L"[INFO] activeTip: GetActiveProfile FAILED\n");
+                        }
+                        pPm->Release();
+                    }
+                }
             }
             else
                 Report(true, L"pinyin mode settle");
@@ -1017,6 +1056,142 @@ int wmain()
                          (unsigned)mid.size(), hexOf(mid).c_str(),
                          (unsigned)t.size(), hexOf(t).c_str(), finalOk, noLetter);
             Report(finalOk && noLetter, L"T14 部分提交：数字选你(cover=2) 余hao 空格收好", d);
+        }
+
+        // ---- T15 B3 零声母简写：首键 i/u 出候选（此前 0 候选=用户报"键死"）+ v 直通退出通路 ----
+        {
+            auto hexOf15 = [](const std::wstring& s) {
+                std::wstring h;
+                wchar_t buf[8];
+                for (wchar_t ch : s)
+                {
+                    swprintf_s(buf, L"%04X,", (unsigned)ch);
+                    h += buf;
+                }
+                return h;
+            };
+            // 场景矩阵（probe pin，空格收首选）：i→一(u+4E00) u→无(u+65E0)
+            // in→因(u+56E0) iu→有(u+6709)——修复前全部空候选、空格上屏字母原文
+            struct T15Case { const wchar_t* keys; wchar_t expect; };
+            const T15Case t15[] = {
+                { L"i",  0x4E00 }, // 一（i→yi）
+                { L"u",  0x65E0 }, // 无（u→wu）
+                { L"in", 0x56E0 }, // 因（in→yin）
+                { L"iu", 0x6709 }, // 有（iu→you）
+            };
+            for (const auto& cs : t15)
+            {
+                EnsurePinyinMode(pKm);
+                ClearFocusedText(pTm);
+                TypeLetters(pKm, cs.keys);
+                PumpMessages();
+                Sleep(400); // 等候选回包
+                TypeKey(pKm, VK_SPACE);
+                PumpMessages();
+                Sleep(250);
+                std::wstring t = ReadFocusedText(pTm);
+                wchar_t d[240];
+                _snwprintf_s(d, _TRUNCATE, L"'%ls' t[%u]=%s expect=%04X",
+                             cs.keys, (unsigned)t.size(), hexOf15(t).c_str(), (unsigned)cs.expect);
+                Report(t.size() == 1 && t[0] == cs.expect, L"T15 零声母简写：空格收首选汉字", d);
+            }
+
+            // i + 逗号：中文标点触发"首选汉字+标点"合并提交 → 一+，（u+FF0C）
+            {
+                EnsurePinyinMode(pKm);
+                ClearFocusedText(pTm);
+                TypeLetters(pKm, L"i");
+                PumpMessages();
+                Sleep(400);
+                TypeKey(pKm, VK_OEM_COMMA);
+                PumpMessages();
+                Sleep(250);
+                std::wstring t = ReadFocusedText(pTm);
+                bool ok = t.size() == 2 && t[0] == 0x4E00 && t[1] == 0xFF0C;
+                wchar_t d[240];
+                _snwprintf_s(d, _TRUNCATE, L"t[%u]=%s", (unsigned)t.size(), hexOf15(t).c_str());
+                Report(ok, L"T15 零声母+标点：首选汉字+全角逗号", d);
+            }
+
+            // 退格缩减 iu→i（本 harness 非内联、组合字母不落 store，用功能断言：
+            // 退格后空格应收"一"；若退格失效会收"有"）+ Esc 取消无字母残留
+            {
+                EnsurePinyinMode(pKm);
+                ClearFocusedText(pTm);
+                TypeLetters(pKm, L"iu");
+                PumpMessages();
+                Sleep(300);
+                TypeKey(pKm, VK_BACK);   // 缩减 iu→i，新候选在途
+                PumpMessages();
+                Sleep(400);              // 等缩减后候选回包
+                TypeKey(pKm, VK_SPACE);  // 应收"一"
+                PumpMessages();
+                Sleep(250);
+                std::wstring t = ReadFocusedText(pTm);
+                EnsurePinyinMode(pKm);
+                ClearFocusedText(pTm);
+                TypeLetters(pKm, L"iu");
+                PumpMessages();
+                Sleep(200);
+                TypeKey(pKm, VK_ESCAPE);
+                PumpMessages();
+                Sleep(150);
+                std::wstring t2 = ReadFocusedText(pTm);
+                wchar_t d[320];
+                _snwprintf_s(d, _TRUNCATE, L"backCommit[%u]=%s afterEsc[%u]=%s",
+                             (unsigned)t.size(), hexOf15(t).c_str(),
+                             (unsigned)t2.size(), hexOf15(t2).c_str());
+                bool backOk = t.size() == 1 && t[0] == 0x4E00; // 退格后剩 i→一
+                bool escOk = t2.empty();
+                Report(backOk && escOk, L"T15 退格缩减(iu→i→一)+Esc取消无残留", d);
+            }
+
+            // v 直通：v 被吃（进 vMode）、后续字母放行（eaten=false）、文本无残留
+            {
+                EnsurePinyinMode(pKm);
+                ClearFocusedText(pTm);
+                bool vEaten = TypeKey(pKm, (WPARAM)L'v', true);
+                PumpMessages();
+                bool kPass = TypeKey(pKm, (WPARAM)L'k', false);
+                PumpMessages();
+                Sleep(150);
+                std::wstring t = ReadFocusedText(pTm);
+                wchar_t d[240];
+                _snwprintf_s(d, _TRUNCATE, L"vEaten=%d kPass=%d t[%u]=%s",
+                             (int)vEaten, (int)kPass, (unsigned)t.size(), hexOf15(t).c_str());
+                Report(vEaten && kPass && t.empty(), L"T15 v直通：v吃后续字母放行", d);
+            }
+
+            // vMode 退出通路（用户报"v 后按键失灵"的反向验证）：
+            // Esc / 退格 退出后回拼音组合，i→一 / iu→有
+            {
+                struct T15Exit { WPARAM exitKey; const wchar_t* keys; wchar_t expect; };
+                const T15Exit exits[] = {
+                    { VK_ESCAPE, L"i",  0x4E00 }, // Esc 退出 → 一
+                    { VK_BACK,   L"iu", 0x6709 }, // 退格退出 → 有
+                };
+                for (const auto& ec : exits)
+                {
+                    EnsurePinyinMode(pKm);
+                    ClearFocusedText(pTm);
+                    TypeKey(pKm, (WPARAM)L'v', true);   // 进 vMode
+                    PumpMessages();
+                    TypeKey(pKm, ec.exitKey, false);    // 退出键放行，vMode 结束
+                    PumpMessages();
+                    TypeLetters(pKm, ec.keys);          // 应回拼音组合
+                    PumpMessages();
+                    Sleep(400);
+                    TypeKey(pKm, VK_SPACE);
+                    PumpMessages();
+                    Sleep(250);
+                    std::wstring t = ReadFocusedText(pTm);
+                    wchar_t d[280];
+                    _snwprintf_s(d, _TRUNCATE, L"exit=%04X keys='%ls' t[%u]=%s expect=%04X",
+                                 (unsigned)ec.exitKey, ec.keys,
+                                 (unsigned)t.size(), hexOf15(t).c_str(), (unsigned)ec.expect);
+                    Report(t.size() == 1 && t[0] == ec.expect, L"T15 vMode退出后回拼音组合", d);
+                }
+            }
         }
     } while (false);
 

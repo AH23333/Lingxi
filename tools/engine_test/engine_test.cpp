@@ -636,6 +636,45 @@ int wmain()
                        "cover: jintianqi '今天' consumes 7 ('jintian')", detail);
             }
 
+            // P6d. B3 零声母简写兜底：i/u 打头韵母（省略 y/w 的人类写法）
+            // 此前一律 0 候选（词典无 i/u 打头音节）。补简写映射后应出对应
+            // 高频字，且 cover 严格等于原始键数（rawLen 回放，非改写后音节
+            // 长度——i→yi 若回放 text 长度 cover 会错报 2）。
+            {
+                struct B3Case { const wchar_t* input; const wchar_t* wa; const wchar_t* wb; uint32_t cover; };
+                const B3Case b3[] = {
+                    { L"i",   L"一", L"",   1 }, // i→yi
+                    { L"u",   L"五", L"",   1 }, // u→wu
+                    { L"in",  L"音", L"因", 2 }, // in→yin
+                    { L"iu",  L"有", L"",   2 }, // iu→you
+                    { L"ui",  L"为", L"位", 2 }, // ui→wei
+                    { L"un",  L"问", L"文", 2 }, // un→wen
+                    { L"uo",  L"我", L"",   2 }, // uo→wo
+                    { L"ian", L"眼", L"言", 3 }, // ian→yan
+                };
+                for (const auto& cs : b3)
+                {
+                    lingxi::Prediction r = py->Predict(cs.input);
+                    bool parallel = r.cover.size() == r.cands.size();
+                    bool found = false;
+                    uint32_t cv = 0;
+                    for (size_t k = 0; k < r.cands.size() && k < r.cover.size(); k++)
+                    {
+                        if (r.cands[k] == cs.wa || (cs.wb[0] && r.cands[k] == cs.wb))
+                        {
+                            found = true;
+                            cv = r.cover[k];
+                            break;
+                        }
+                    }
+                    wchar_t detail[128];
+                    _snwprintf_s(detail, _TRUNCATE, L"'%ls' found=%d cover=%u cands=%zu",
+                                 cs.input, (int)found, cv, r.cands.size());
+                    Report(parallel && found && cv == cs.cover,
+                           "zero-initial: i/u shorthand yields cands (B3)", detail);
+                }
+            }
+
             // P6c3. 双拼不提供 cover（键位→全拼不可逆推）：全 0 或空
             {
                 lingxi::Settings s0 = lingxi::LoadSettings();

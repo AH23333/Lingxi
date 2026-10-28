@@ -99,7 +99,9 @@ static int ProbePinyin()
     LX_LOG(L"pinyin", L"probe: 开始");
     lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
     LX_LOG(L"pinyin", L"probe: 引擎已加载");
-    const wchar_t* inputs[] = { L"jintian", L"jintianqi", L"nihao", L"zhidao", L"ni hao", L"moran" };
+    const wchar_t* inputs[] = { L"jintian", L"jintianqi", L"nihao", L"zhidao", L"ni hao", L"moran",
+                                // B3 零声母简写取证：i/u 打头韵母（省略 y/w 的人类写法）
+                                L"i", L"u", L"in", L"iu", L"ui", L"un", L"uo", L"ian" };
     for (const wchar_t* in : inputs)
     {
         uint64_t t0 = GetTickCount64();

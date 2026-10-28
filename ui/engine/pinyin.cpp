@@ -144,6 +144,10 @@ struct SyllUnit
     enum Kind : uint8_t { FULL, INITIAL, PARTIAL };
     Kind kind = FULL;
     std::string text; // 小写
+    // 该单元消耗的原始输入字符数。常规单元 text 即原始输入、0=与 text 等长；
+    // B3 零声母简写单元的 text 是改写后的规范音节（i→yi 长度≠键数），
+    // 必须显式记录原始消耗，cover 回放按此值前进。
+    int rawLen = 0;
 };
 
 struct SegPath
@@ -612,7 +616,29 @@ private:
         return in;
     }
 
-    std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
+    // 零声母简写（B3）：人类输入习惯里 i/u 打头的韵母常省略 y/w
+// （i→yi、in→yin、iu→you、u→wu、ui→wei、uo→wo…）。词典与音节表均无
+// i/u 打头的写法，不补这层时首键 i/u 起的组合永远空候选——即用户报的
+// "输入 i/u 特殊拼音后按键像失灵"根因（数字被吞、候选空）。仅在切分
+// 起点查表，不改 mid-string 拼写；v 打头不映射（DLL 侧 vMode 英语直通）。
+static const char* ZeroInitialShorthand(const std::string& s)
+{
+    static const std::pair<const char*, const char*> kMap[] = {
+        { "i", "yi" },      { "ia", "ya" },      { "iao", "yao" },
+        { "ian", "yan" },   { "iang", "yang" },  { "ie", "ye" },
+        { "in", "yin" },    { "ing", "ying" },   { "iong", "yong" },
+        { "iu", "you" },
+        { "u", "wu" },      { "ua", "wa" },      { "uai", "wai" },
+        { "uan", "wan" },   { "uang", "wang" },  { "ue", "yue" },
+        { "ueng", "weng" }, { "ui", "wei" },     { "un", "wen" },
+        { "uo", "wo" },
+    };
+    for (const auto& kv : kMap)
+        if (s == kv.first) return kv.second;
+    return nullptr;
+}
+
+std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     {
         std::string in = NormalizeIn(rawIn);
         int n = (int)in.size();
@@ -638,6 +664,15 @@ private:
                 std::string s = in.substr(i, L);
                 if (!_syllables.count(s)) continue;
                 Extend(dp, i, i + L, SyllUnit{ SyllUnit::FULL, s }, 2);
+            }
+            // 零声母简写兜底（B3）：i/u 打头省略 y/w 的写法作为完整音节
+            // 单元扩展，与上方逐字全拼/简拼并存，由 DP cost 自然竞争；
+            // rawLen 记录原始键数（text 是改写后的规范音节）。
+            for (int L = 1; L <= 4 && i + L <= bound; L++)
+            {
+                const char* t = ZeroInitialShorthand(in.substr(i, L));
+                if (t)
+                    Extend(dp, i, i + L, SyllUnit{ SyllUnit::FULL, t, L }, 2);
             }
             // 单字母简拼
             if (in[i] >= 'a' && in[i] <= 'z')
@@ -1257,7 +1292,10 @@ private:
                 for (int k = 0; k < n; k++)
                 {
                     while (pos < (int)inNorm.size() && inNorm[pos] == '\'') pos++;
-                    pos += (int)units[k].text.size();
+                    // 零声母简写单元（B3）text 是改写后音节，长度≠原始键数，
+                    // 回放前进必须用 rawLen，否则 cover 会越过原始输入末端。
+                    pos += units[k].rawLen > 0 ? units[k].rawLen
+                                               : (int)units[k].text.size();
                     unitEnd[k + 1] = pos;
                 }
             }
