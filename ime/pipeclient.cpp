@@ -48,15 +48,28 @@ bool CPipeClient::EnsureUIRunning()
 
     STARTUPINFOW si = { sizeof(si) };
     PROCESS_INFORMATION pi = {};
-    if (!CreateProcessW(exePath, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+    if (CreateProcessW(exePath, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
     {
-        LX_LOG(L"pipe", L"LingxiUI.exe 启动失败 err=%u（预测功能降级为纯直通）", GetLastError());
-        return false;
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        LX_LOG(L"pipe", L"已拉起 LingxiUI.exe");
+        return true;
     }
-    CloseHandle(pi.hThread);
-    CloseHandle(pi.hProcess);
-    LX_LOG(L"pipe", L"已拉起 LingxiUI.exe");
-    return true;
+
+    // 32 位 DLL（bin\<C>32\）目录里没有 x64 LingxiUI.exe：回退到姊妹 x64 目录
+    //（按 DLL 自身配置名对齐 Debug/Release——32 位进程拉起 x64 exe 合法）。
+    // 仍失败则降级纯直通（现有安全路径不变）。
+    const wchar_t* sibling = wcsstr(dllPath, L"Debug32") ? L"Debug" : L"Release";
+    _snwprintf_s(exePath, _TRUNCATE, L"%s..\\%s\\LingxiUI.exe", dllPath, sibling);
+    if (CreateProcessW(exePath, NULL, NULL, NULL, FALSE, 0, NULL, NULL, &si, &pi))
+    {
+        CloseHandle(pi.hThread);
+        CloseHandle(pi.hProcess);
+        LX_LOG(L"pipe", L"已拉起 LingxiUI.exe（32 位回退路径）");
+        return true;
+    }
+    LX_LOG(L"pipe", L"LingxiUI.exe 启动失败 err=%u（预测功能降级为纯直通）", GetLastError());
+    return false;
 }
 
 void CPipeClient::Run()

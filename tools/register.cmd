@@ -19,4 +19,19 @@ if errorlevel 1 (
     exit /b 1
 )
 echo [register] OK. If the IME does not appear in the input list, sign out and back in.
+
+rem 32-bit TIP for WOW64 hosts (optional, coexists with x64 registration).
+rem The 32-bit DLL lives in bin\<CONFIG>32\ (tools\build32.cmd). Register with
+rem SysWOW64 regsvr32 so CLSID/CTF land in the WOW6432Node registry view.
+set "DLL32=%~dp0..\bin\%CONFIG%32\ImeCore.dll"
+if exist "%DLL32%" (
+    %SystemRoot%\SysWOW64\regsvr32.exe /s "%DLL32%"
+    if errorlevel 1 (
+        echo [register] WARNING: 32-bit registration FAILED ^(needs Administrator^).
+    ) else (
+        echo [register] 32-bit TIP registered ^(WOW64 hosts now supported^).
+    )
+) else (
+    echo [register] 32-bit ImeCore.dll not found - skipping WOW64 registration.
+)
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0imecheck.ps1"
