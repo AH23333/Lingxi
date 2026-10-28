@@ -416,3 +416,19 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **验证**：engine_test separator 6/6 全绿（弯撇号归一后 strict 同样生效——U+2019 转 ' 后 DP/MatchWords 口径一致）；唯一红 latency 25.4ms（left4dead2 活跃，PITFALLS #41 环境漂移，安静基线 ~7ms）；tools\build.cmd 全链绿（无 error/warning）。
 
 **边界与债**：DLL 导航键路由仅代码审读口径（deep_test 用户用机中不跑）；真实 UI 未重启（新 DLL 需重启应用生效）。Home/End 翻页与滚轮（B7）共用 _pageStart 权威页码，无新增状态。
+
+## 2026-10-29 晚（十四·续） · 空闲窗口全量回归 + B6 eat 侧显式接线 + deep_test T17
+
+**背景**：用户停机开测（"我已停止使用电脑，你可以赶紧大量测试"）。先落两轮代码审读债：deep_test.exe 重建 + `tools\regress.cmd` 全量（晚·十三/十四的 DLL 键路由从未真机验证过）。
+
+**空闲基线恢复（PITFALLS #41 归因闭环）**：regress 首轮 ALL PASS——engine_test **latency 7.156ms**（left4dead2 退场后回到安静基线，与晚·十一 7.07ms 同分布；负载期 14~31ms 漂移全归因环境成立）；fix_readings PASS；deep_test 26/26 AV=0（attempt 1/2 T10 冷启动 flake badRound=4/15，attempt 3 全净——regress 杀 UI 重启未热的已知模式）；e2e attempt 1 PASS。日志 tmp\regress-1338211878。
+
+**probe 扩展（`ui/main.cpp`）**：ProbePinyin 输入加 L"xi'an", L"xian" 常驻诊断。实探：**xi'an→西安 rank 0**（45 cands，无"先"）；xian→先 rank 0、西安 rank 9（60 cands）——隔音语义因果对照成立。
+
+**B6 eat 侧断线发现与显式接线（`ime/composition.cpp` PinyinKeyEaten）**：组合中 VK_OEM_7 此前落 `return IsChinesePunctKey(wParam)`——吃键依赖 cnPunct 标点映射间接达成（MapChinesePunct 的 ' → 弯引号分支返回 1）：**cnPunct=true（默认）时 B6 可用，cnPunct=false 时 IsChinesePunctKey 早退 false → 撇号整键穿透宿主，B6 handler 成死码**。晚·十三"落 default 误提交首选"的推断是错的（穿透不是误提交）。修复：switch 显式 `case VK_OEM_7`——无 Shift 且非双拼直接吃（与 HandlePinyinKey B6 闸完全一致），不依赖 cnPunct；Shift+'（引号）与双拼维持原标点/放行路径（落到 IsChinesePunctKey 判定不变）。
+
+**deep_test T17（+3 断言，`tools/deep_test/deep_test.cpp`）**：①组合期 6 导航键（Down/Up/Home/End/Left/Right）全吃下且组合不丢（ReadFocusedText 空、后续字母仍进组合）；②空组合态负对照 VK_DOWN 放行（不误吞正常光标移动）；③B6 端到端：x,i,',a,n 全程 eaten → 空格 → 焦点文本==西安（0x897F,0x5B89）。
+
+**验证**：build.cmd 全链绿（exit=0 无 error）；deep_test **attempt 1 即 29/29 PASS AV=0**（T17 三条全过，撇号 e2e 实证）。全量 regress 复跑：deep_test PASS + e2e attempt 1 PASS + fix_readings PASS；engine_test 174 功能断言全绿（separator 6/6、B3、cover），**唯一红 = latency 20.6ms 超阈值**——归因：笔记本**电池供电**（PowerLine Offline，平衡方案降频，纯 CPU 的词典解析 6.9s→15s 同步变慢 2.2 倍佐证），期间还排查了一段并行 StarMark `dotnet test` 干扰（~130% 单核，等其退出后复测依旧，排除）。插电基线 7.2ms vs 电池 20.6ms，用户裁定**接受电池模式结果**（功能全绿，延迟记环境值）。真实 UI 已重启（PID 7656 晚于构建，新 DLL 生效）。
+
+**边界与债**：电池模式延迟 20ms 为环境值（插电恢复 ~7ms 口径不变，阈值不动）；组合光标编辑（M5 尾巴，Left/Right 已预留吞下）；UI 视觉人工确认（晚·十二遗留）；R3 压测收尾。

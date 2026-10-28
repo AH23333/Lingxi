@@ -1,5 +1,14 @@
 # 交接文档（HANDOFF）
 
+## ⚡ 最新状态速报（2026-10-29 晚·十四·续，空闲全量回归收口 + B6 eat 侧显式接线 + T17 端到端）
+
+- **晚·十三/十四审读债全清**：用户停机后 `tools\regress.cmd` 全量（tmp\regress-1338211878）：engine_test **latency 7.156ms**（安静基线恢复，PITFALLS #41 归因闭环）、fix_readings、deep_test 26/26 AV=0、e2e attempt 1 全 PASS。
+- **B6 eat 侧断线修复（`ime/composition.cpp`）**：组合中 VK_OEM_7 吃键此前依赖 cnPunct 标点映射间接达成——**cnPunct=false 时撇号穿透宿主，B6 handler 死码**（晚·十三"误提交首选"推断有误，实为穿透）。PinyinKeyEaten 显式 case：无 Shift 且非双拼直接吃，与 handler 闸一致，不依赖 cnPunct；Shift+' 引号/双拼路径不变。
+- **deep_test T17（+3）**：导航键 6 键组合期全吃下组合不丢 / 空组合负对照放行 / **xi'an 空格提交西安端到端（0x897F,0x5B89）**。deep_test attempt 1 即 **29/29 PASS AV=0**。
+- **probe 实探**：xi'an→西安 rank 0（45 cands 无"先"）；xian→先 rank 0、西安 rank 9——隔音因果对照成立。probe 输入 xi'an/xian 已常驻 ui/main.cpp。
+- **验证口径**：最终 regress deep_test/e2e/fix_readings PASS；engine_test 174 功能断言全绿（separator 6/6），唯一红 latency 20.6ms=**电池供电降频**（PowerLine Offline，词典解析 6.9s→15s 佐证；插电基线 7.2ms；期间并行 StarMark dotnet test 干扰已排查排除）——用户裁定接受电池模式结果，功能全绿。真实 UI 已重启（PID 7656，晚于构建，新 DLL 生效）。
+- **待做**：UI 视觉人工确认（晚·十二遗留）；R3 压测收尾（真机 p50/p95）；组合光标编辑（M5 尾巴，Left/Right 已预留吞下）。
+
 ## ⚡ 最新状态速报（2026-10-28 晚·十四，导航键翻页与组合期接管 + strictSep 撞键校验修正）
 
 - **strictSep 修正**：上轮 compact 音节数校验误拒无隔音输入的合法串级匹配（xian 的"西安"走 [xian] 路径 tier-0 被拒成 tier-1 截断丢失——新增 no-over-reject 断言抓到）。改为 Predict 按 NormalizeIn 口径（弯撇号同算、双拼转换后计算）算 `strictSep` 传入 MatchWords：有隔音才紧校验（xi'an 不出"先"），无隔音串级匹配是合法读法。
