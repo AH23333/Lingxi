@@ -230,6 +230,7 @@ constexpr int IDC_CHK_SYMBOLHOTKEY = 113;
 constexpr int IDC_CHK_TRADITIONAL = 114;
 constexpr int IDC_CMB_SKIN = 115;
 constexpr int IDC_CHK_LLMRERANK = 116;
+constexpr int IDC_CHK_LLMMULTIPATH = 119; // LLM 多路采样（R3 §3，默认关）
 constexpr int IDC_BTN_HOTPHRASES = 118; // 快捷短语管理入口
 
 HWND g_hMain = nullptr;    // 隐藏消息窗口（托盘宿主）
@@ -240,7 +241,7 @@ HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
      g_hChkCnPunct = nullptr, g_hChkFuzzy = nullptr,
      g_hChkVMode = nullptr,
      g_hChkShuangpin = nullptr, g_hChkSymbolHotkey = nullptr, g_hChkTraditional = nullptr,
-     g_hChkLlmRerank = nullptr;
+      g_hChkLlmRerank = nullptr, g_hChkLlmMultiPath = nullptr;
 HFONT g_hFont = nullptr;
 bool g_updating = false; // 程序性改控件时不回写设置
 
@@ -264,6 +265,7 @@ void LoadToControls()
     Button_SetCheck(g_hChkSymbolHotkey, s.symbolHotkey ? BST_CHECKED : BST_UNCHECKED);
     Button_SetCheck(g_hChkTraditional, s.traditionalOutput ? BST_CHECKED : BST_UNCHECKED);
     Button_SetCheck(g_hChkLlmRerank, s.llmRerank ? BST_CHECKED : BST_UNCHECKED);
+    Button_SetCheck(g_hChkLlmMultiPath, s.llmMultiPath ? BST_CHECKED : BST_UNCHECKED);
     wchar_t buf[16];
     _snwprintf_s(buf, _TRUNCATE, L"%u", s.candidateCount);
     Edit_SetText(g_hEdtCount, buf);
@@ -292,6 +294,7 @@ void SaveFromControls()
     s.symbolHotkey = Button_GetCheck(g_hChkSymbolHotkey) == BST_CHECKED;
     s.traditionalOutput = Button_GetCheck(g_hChkTraditional) == BST_CHECKED;
     s.llmRerank = Button_GetCheck(g_hChkLlmRerank) == BST_CHECKED;
+    s.llmMultiPath = Button_GetCheck(g_hChkLlmMultiPath) == BST_CHECKED;
     wchar_t buf[16] = L"";
     Edit_GetText(g_hEdtCount, buf, 16);
     int n = _wtoi(buf);
@@ -761,6 +764,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CHK_SYMBOLHOTKEY:
         case IDC_CHK_TRADITIONAL:
         case IDC_CHK_LLMRERANK:
+        case IDC_CHK_LLMMULTIPATH:
             if (HIWORD(wParam) == BN_CLICKED) SaveFromControls();
             return 0;
         case IDC_EDT_COUNT:
@@ -982,6 +986,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     // ---- 智能特性 ----
     addSection(L"智能特性");
     g_hChkLlmRerank = addCheck(L"LLM 上下文智能重排（实验：停顿打完一字后按上文重排候选，增加 CPU）", IDC_CHK_LLMRERANK);
+    g_hChkLlmMultiPath = addCheck(L"LLM 多路采样（实验：贪心+采样两路投票，重排更稳，再增 CPU）", IDC_CHK_LLMMULTIPATH);
     HWND hLabCount = CreateWindowExW(0, L"STATIC", L"英文补全候选数（1-9）",
                                      WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
                                      0, 0, 10, rowH, g_hSettings, NULL, hInst, NULL);

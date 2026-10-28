@@ -32,6 +32,9 @@ struct Settings
     bool traditionalOutput = false; // 繁体输出：候选简体→繁体（字符级映射）
     bool llmRerank = false;        // LLM 拼音候选重排：默认关（打字期额外 CPU / 慢机自动降级）；
                                    // 想要上下文语序更自然再手动开启，设置页可勾选，实时生效
+    bool llmMultiPath = false;     // LLM 多路采样（R3 §3）：贪心路跑完再采样路投票/合并候选。
+                                   // 默认关：每次 LLM 调用约 +150ms CPU；seed=hash(prompt) 固定
+                                   // 防候选闪烁；拼音重排只做 Borda 投票，top-1 不一致回退原序
     uint32_t skinIndex = 0;        // 候选窗配色：0 蓝 1 青 2 紫 3 绿 4 橙
 };
 

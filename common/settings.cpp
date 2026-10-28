@@ -55,6 +55,7 @@ Settings LoadSettings()
     if (GetDword(hKey, L"SymbolHotkey", v)) s.symbolHotkey = v != 0;
     if (GetDword(hKey, L"Traditional", v)) s.traditionalOutput = v != 0;
     if (GetDword(hKey, L"LlmRerank", v)) s.llmRerank = v != 0;
+    if (GetDword(hKey, L"LlmMultiPath", v)) s.llmMultiPath = v != 0;
     if (GetDword(hKey, L"SkinIndex", v) && v <= 4) s.skinIndex = v;
 
     RegCloseKey(hKey);
@@ -85,6 +86,7 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"SymbolHotkey", s.symbolHotkey ? 1 : 0);
     SetDword(hKey, L"Traditional", s.traditionalOutput ? 1 : 0);
     SetDword(hKey, L"LlmRerank", s.llmRerank ? 1 : 0);
+    SetDword(hKey, L"LlmMultiPath", s.llmMultiPath ? 1 : 0);
     SetDword(hKey, L"SkinIndex", s.skinIndex);
 
     RegCloseKey(hKey);

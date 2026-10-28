@@ -10,6 +10,7 @@
 #include "predictor.h"
 
 #include "../../common/log.h"
+#include "../../common/settings.h"
 
 #include <windows.h>
 #include <algorithm>
@@ -50,6 +51,19 @@ constexpr uint32_t kRrCtxTokens = 640;       // 重排专用 context 的 n_ctx�
 constexpr float kMinPrefillTps = 300.0f;
 constexpr float kMinGenTps = 60.0f;
 constexpr int kRerankCalibSamples = 3;
+
+// FNV-1a：prompt token 序列 → 采样 seed。同 prompt 同 seed（采样路输出稳定，
+// 防候选闪烁）；prompt 变化 seed 跟着变（探索新分支）。恒非 0。
+uint32_t HashTokens(const std::vector<llama_token>& t, size_t n)
+{
+    uint32_t h = 2166136261u;
+    for (size_t i = 0; i < n && i < t.size(); i++)
+    {
+        h ^= (uint32_t)t[i];
+        h *= 16777619u;
+    }
+    return h ? h : 1u;
+}
 
 std::wstring ExeDir()
 {
@@ -105,6 +119,17 @@ struct LlamaApi
     llama_memory_t (*get_memory)(const llama_context*) = nullptr;
     bool (*memory_seq_rm)(llama_memory_t, llama_seq_id, llama_pos, llama_pos) = nullptr;
     void (*memory_clear)(llama_memory_t, bool) = nullptr;
+    // 采样链（R3 多路采样）：全部可选，缺失 → 采样路自动禁用、贪心路不受影响
+    llama_sampler_chain_params (*sampler_chain_default_params)() = nullptr;
+    llama_sampler* (*sampler_chain_init)(llama_sampler_chain_params) = nullptr;
+    void (*sampler_chain_add)(llama_sampler*, llama_sampler*) = nullptr;
+    int32_t (*sampler_chain_n)(const llama_sampler*) = nullptr;
+    llama_sampler* (*sampler_init_top_k)(int32_t) = nullptr;
+    llama_sampler* (*sampler_init_top_p)(float, size_t) = nullptr;
+    llama_sampler* (*sampler_init_temp)(float) = nullptr;
+    llama_sampler* (*sampler_init_dist)(uint32_t) = nullptr;
+    llama_token (*sampler_sample)(llama_sampler*, llama_context*, int32_t) = nullptr;
+    void (*sampler_free)(llama_sampler*) = nullptr;
 
     bool ok = false;
 
@@ -155,6 +180,16 @@ struct LlamaApi
             { "llama_get_memory",            (void**)&get_memory,          false },
             { "llama_memory_seq_rm",         (void**)&memory_seq_rm,       false },
             { "llama_memory_clear",          (void**)&memory_clear,        false },
+            { "llama_sampler_chain_default_params", (void**)&sampler_chain_default_params, false },
+            { "llama_sampler_chain_init",    (void**)&sampler_chain_init,  false },
+            { "llama_sampler_chain_add",     (void**)&sampler_chain_add,   false },
+            { "llama_sampler_chain_n",       (void**)&sampler_chain_n,     false },
+            { "llama_sampler_init_top_k",    (void**)&sampler_init_top_k,  false },
+            { "llama_sampler_init_top_p",    (void**)&sampler_init_top_p,  false },
+            { "llama_sampler_init_temp",     (void**)&sampler_init_temp,   false },
+            { "llama_sampler_init_dist",     (void**)&sampler_init_dist,   false },
+            { "llama_sampler_sample",        (void**)&sampler_sample,      false },
+            { "llama_sampler_free",          (void**)&sampler_free,        false },
         };
         for (auto& b : binds)
         {
@@ -321,6 +356,23 @@ private:
         }
 
         _ready = true;
+
+        // 采样链自检（R3 多路采样）：四段链构建成功才开采样路；缺任一符号照旧走贪心
+        if (_api.sampler_chain_default_params && _api.sampler_chain_init &&
+            _api.sampler_chain_add && _api.sampler_chain_n &&
+            _api.sampler_init_top_k && _api.sampler_init_top_p &&
+            _api.sampler_init_temp && _api.sampler_init_dist &&
+            _api.sampler_sample && _api.sampler_free)
+        {
+            llama_sampler* ch = MakeSampler(1u);
+            if (ch)
+            {
+                _samplerOk = true;
+                _api.sampler_free(ch);
+            }
+        }
+        LX_LOG(L"llm", L"采样链%s", _samplerOk ? L"可用" : L"不可用（多路采样禁用）");
+
         LX_LOG(L"llm", L"LLM 引擎就绪: %ls", fd.cFileName);
     }
 
@@ -438,6 +490,62 @@ private:
         std::wstring cont = Utf8ToWide(outUtf8.data(), (int)outUtf8.size());
         cont = StripContinuationEcho(cont, tail);
         pred.cands = SplitContinuation(cont);
+
+        // ---- 多路采样（R3 §3，默认关）：贪心路跑完回滚 KV 再跑采样路，合并候选 ----
+        // 门：设置开 + 采样链可用 + 本次 KV 高命中（common≥90%——未命中时全量
+        // prefill 已贵，二路预算不保）+ 贪心耗时 ≤60ms（慢机自动让位）。
+        // fork：seq_rm 到 prompt 末位前一格 → 重 decode 末位拿新鲜 logits →
+        // 采样循环。采样尾留在 KV 也安全（下次入口 seq_rm(prompt.size(),-1) 弃掉）。
+        Settings st = LoadSettings();
+        if (st.llmMultiPath && _samplerOk && kvUsable &&
+            common * 10 >= (size_t)n * 9 && GetTickCount64() - t0 <= 60)
+        {
+            llama_memory_t mem = _api.get_memory(_ctx);
+            if (mem && _api.memory_seq_rm(mem, 0, (llama_pos)n - 1, -1))
+            {
+                llama_sampler* smpl = MakeSampler(HashTokens(tokens, (size_t)n));
+                if (smpl)
+                {
+                    llama_token lastTok = tokens[(size_t)n - 1];
+                    llama_batch lb = _api.batch_get_one(&lastTok, 1);
+                    if (_api.decode(_ctx, lb) == 0)
+                    {
+                        std::string outUtf8B;
+                        for (int step = 0; step < kMaxGenTokens; step++)
+                        {
+                            // sampler_sample 内部读 ctx 末位 logits：先确非空防断言
+                            if (!_api.get_logits_ith(_ctx, -1)) break;
+                            llama_token t = _api.sampler_sample(smpl, _ctx, -1);
+                            if (_api.vocab_is_eog(_vocab, t)) break;
+                            char piece[64] = {};
+                            int np = _api.detokenize(_vocab, &t, 1, piece, sizeof(piece), false, true);
+                            if (np > 0) outUtf8B.append(piece, np);
+                            if (GetTickCount64() - t0 > kBudgetMs) break; // 与贪心共享总预算
+                            llama_batch nb = _api.batch_get_one(&t, 1);
+                            if (_api.decode(_ctx, nb) != 0) { ResetKv(); break; }
+                        }
+                        std::wstring contB = Utf8ToWide(outUtf8B.c_str(), (int)outUtf8B.size());
+                        contB = StripContinuationEcho(contB, tail);
+                        auto extra = SplitContinuation(contB);
+                        size_t added = 0;
+                        for (auto& s : extra)
+                        {
+                            if (pred.cands.size() >= kMaxCands) break;
+                            bool dup = false;
+                            for (auto& e : pred.cands)
+                                if (e == s) { dup = true; break; }
+                            if (!dup) { pred.cands.push_back(s); added++; }
+                        }
+                        LX_LOG(L"llm", L"多路采样合并 +%zu 候选", added);
+                    }
+                    else
+                    {
+                        ResetKv();
+                    }
+                    _api.sampler_free(smpl);
+                }
+            }
+        }
         return pred;
     }
 
@@ -638,30 +746,66 @@ private:
         // EMA 吞吐自动降级（专文 §2.4）：连续标定样本后不达标 → 本会话关重排
         RecordRerankSample((float)(n - common), (float)preMs, (float)genTokens, (float)genMs);
 
-        // 解析数字 + 白名单。重复编号 → 输出混乱，回退；若漏编号（LLM 提前
-        // 收尾），把缺失编号按原序追加末尾（这些候选保持原序，仍优于整体回退）。
-        std::wstring order = Utf8ToWide(outUtf8.c_str(), (int)outUtf8.size());
+        // 解析数字 + 白名单（规则见 ParseOrder）
         std::vector<size_t> res;
-        std::vector<bool> seen(K, false);
-        bool dup = false;
-        const wchar_t* q = order.c_str();
-        while (*q)
+        if (!ParseOrder(outUtf8, K, res)) return {};
+
+        // ---- 多路采样 Borda 投票（R3 §3.3，默认关）----
+        // 门：设置开 + 链可用 + 本轮 prefill 是增量（≤64 token，全量时预算不保）
+        // + 距 deadline 仍余 ~150ms（采样 10-15 token 的生成成本）。
+        // 两路排名取 Borda 均值，并列取贪心路相对序；两路 top-1 不一致 →
+        // 保守回退拼音原序（返回空）。采样失败/部分输出 → 只用贪心路结果。
+        Settings st = LoadSettings();
+        if (st.llmMultiPath && _samplerOk && (size_t)(n - (int)common) <= 64 &&
+            GetTickCount64() + 150 < deadlineMs)
         {
-            while (*q && !iswdigit(*q)) q++;
-            if (!*q) break;
-            long v = 0; int digits = 0;
-            while (iswdigit(*q)) { v = v * 10 + (*q - L'0'); q++; if (++digits > 3) break; }
-            if (v >= 1 && (size_t)v <= K)
+            llama_memory_t mem = _api.get_memory(_rrCtx);
+            if (mem && _api.memory_seq_rm(mem, 0, (llama_pos)n - 1, -1))
             {
-                size_t x = (size_t)(v - 1);
-                if (seen[x]) { dup = true; break; }
-                seen[x] = true;
-                res.push_back(x);
+                llama_sampler* smpl = MakeSampler(HashTokens(tokens, (size_t)n));
+                if (smpl)
+                {
+                    llama_token lastTok = tokens[(size_t)n - 1];
+                    llama_batch lb = _api.batch_get_one(&lastTok, 1);
+                    if (_api.decode(_rrCtx, lb) != 0)
+                    {
+                        ResetRrKv();
+                    }
+                    else
+                    {
+                        std::string outUtf8B;
+                        for (int step = 0; step < kRrMaxGenTokens; step++)
+                        {
+                            if (GetTickCount64() > deadlineMs) break;
+                            // sampler_sample 内部读末位 logits：先确非空防内部断言
+                            if (!_api.get_logits_ith(_rrCtx, -1)) break;
+                            bool needMore = CountNums(outUtf8B) < (int)K;
+                            llama_token t = _api.sampler_sample(smpl, _rrCtx, -1);
+                            // eog：集齐前采到 = 采样路提前收尾（漏编号 ParseOrder 补原序）
+                            if (_api.vocab_is_eog(_vocab, t)) break;
+                            char piece[64] = {};
+                            int np = _api.detokenize(_vocab, &t, 1, piece, sizeof(piece), false, true);
+                            if (np > 0) outUtf8B.append(piece, np);
+                            if (!needMore) break; // 数字已够，不再多采
+                            llama_batch nb = _api.batch_get_one(&t, 1);
+                            if (_api.decode(_rrCtx, nb) != 0) { ResetRrKv(); break; }
+                        }
+                        std::vector<size_t> res2;
+                        if (ParseOrder(outUtf8B, K, res2))
+                        {
+                            std::vector<size_t> merged = BordaMerge(res, res2, K);
+                            if (merged.empty() || merged.front() != res.front())
+                            {
+                                LX_LOG(L"llm", L"重排两路 top-1 不一致，回退原序");
+                                return {};
+                            }
+                            res = merged;
+                        }
+                    }
+                    _api.sampler_free(smpl);
+                }
             }
         }
-        if (dup || res.empty()) return {};
-        for (size_t x = 0; x < K; x++)
-            if (!seen[x]) res.push_back(x);
         return res;
     }
 
@@ -690,6 +834,90 @@ private:
             LX_LOG(L"llm", L"吞吐不达标（prefill=%.1f gen=%.1f t/s），本会话关闭重排",
                    _emaPreTps, _emaGenTps);
         }
+    }
+
+    // 构建采样链：top_k(40) → top_p(0.9,1) → temp(0.7) → dist(seed)。
+    // 链接管各 sampler 所有权（chain_add），末尾只需 free 链本身。
+    // 任一段构建失败 / 链长 ≠4 → 返回空（调用方放弃采样路，贪心路不受影响）。
+    llama_sampler* MakeSampler(uint32_t seed)
+    {
+        llama_sampler_chain_params cp = _api.sampler_chain_default_params();
+        cp.no_perf = true;
+        llama_sampler* ch = _api.sampler_chain_init(cp);
+        if (!ch) return nullptr;
+        llama_sampler* s1 = _api.sampler_init_top_k(40);
+        llama_sampler* s2 = _api.sampler_init_top_p(0.9f, 1);
+        llama_sampler* s3 = _api.sampler_init_temp(0.7f);
+        llama_sampler* s4 = _api.sampler_init_dist(seed);
+        if (!s1 || !s2 || !s3 || !s4)
+        {
+            // 未入链的逐个释放；已入链的由 chain free 兜底
+            if (s1) _api.sampler_free(s1);
+            if (s2) _api.sampler_free(s2);
+            if (s3) _api.sampler_free(s3);
+            if (s4) _api.sampler_free(s4);
+            _api.sampler_free(ch);
+            return nullptr;
+        }
+        _api.sampler_chain_add(ch, s1);
+        _api.sampler_chain_add(ch, s2);
+        _api.sampler_chain_add(ch, s3);
+        _api.sampler_chain_add(ch, s4);
+        if (_api.sampler_chain_n(ch) != 4)
+        {
+            _api.sampler_free(ch);
+            return nullptr;
+        }
+        return ch;
+    }
+
+    // 解析模型输出的数字序：重复编号 / 空 → false（调用方回退原序）；
+    // 漏编号（LLM 提前收尾）把缺失编号按原序追加末尾（仍优于整体回退）。
+    static bool ParseOrder(const std::string& utf8, size_t K, std::vector<size_t>& res)
+    {
+        std::wstring order = Utf8ToWide(utf8.c_str(), (int)utf8.size());
+        std::vector<bool> seen(K, false);
+        bool dup = false;
+        const wchar_t* q = order.c_str();
+        while (*q)
+        {
+            while (*q && !iswdigit(*q)) q++;
+            if (!*q) break;
+            long v = 0; int digits = 0;
+            while (iswdigit(*q)) { v = v * 10 + (*q - L'0'); q++; if (++digits > 3) break; }
+            if (v >= 1 && (size_t)v <= K)
+            {
+                size_t x = (size_t)(v - 1);
+                if (seen[x]) { dup = true; break; }
+                seen[x] = true;
+                res.push_back(x);
+            }
+        }
+        if (dup || res.empty()) return false;
+        for (size_t x = 0; x < K; x++)
+            if (!seen[x]) res.push_back(x);
+        return true;
+    }
+
+    // Borda 计分合并两路全排列：score[x] = Σ(K - 位置)，两路各贡献 1..K 分。
+    // 并列取贪心路相对序（a 为基底 + stable_sort）。a 必须是 0..K-1 全排列
+    //（ParseOrder 补漏后保证）。
+    static std::vector<size_t> BordaMerge(const std::vector<size_t>& a,
+                                          const std::vector<size_t>& b, size_t K)
+    {
+        std::vector<int> posA(K, -1), posB(K, -1);
+        for (size_t i = 0; i < a.size() && i < K; i++) posA[a[i]] = (int)i;
+        for (size_t i = 0; i < b.size() && i < K; i++) posB[b[i]] = (int)i;
+        std::vector<int> score(K, 0);
+        for (size_t x = 0; x < K; x++)
+        {
+            if (posA[x] >= 0) score[x] += (int)K - posA[x];
+            if (posB[x] >= 0) score[x] += (int)K - posB[x];
+        }
+        std::vector<size_t> order = a; // 贪心序为基底：并列时保持贪心相对序
+        std::stable_sort(order.begin(), order.end(),
+                         [&score](size_t x, size_t y) { return score[x] > score[y]; });
+        return order;
     }
 
     // 续写切分为 ≤5 个递增候选：候选 i = 前缀 + 前 i+1 段
@@ -763,6 +991,7 @@ private:
     std::atomic<uint64_t> _rrAbortDeadline{ 0 }; // 重排 prefill 硬闸（0=不中断）
     int _rrSamples = 0;
     float _emaPreTps = 0, _emaGenTps = 0;
+    bool _samplerOk = false; // 采样链自检通过（R3 多路采样可用）
 };
 
 } // namespace
