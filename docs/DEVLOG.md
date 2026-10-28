@@ -245,3 +245,18 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **用户零感知**：HKCU 现值 ShiftToggle=1 无 ToggleMode 键 → 派生 toggleMode=1 = 原 Shift 单击行为不变。
 
 **验证**：regress **ALL PASS**（engine_test 含 latency 绿 / fix_readings / deep_test T16 四断言在派生路径下全过=双读兼容端到端实证 / e2e attempt1）。mode 0/2 的 HKCU 两态路径不测（污染风险，靠代码审读，同 T16 既有口径）。真实 UI 已重启（PID 26956）。
+
+## 2026-10-28 晚（七） · B2 候选窗回显像素取证（验证补遗，收官后收口）
+
+**动机**：B2 落地时窗体绘制无自动化断言（"人眼验收"），本轮用探针+像素分析把回显行的真实渲染补成实证。
+
+**方法**：假客户端探针（fakeclient 改版）——连 `\\.\pipe\LingxiIme` 发 HELLO/ACTIVATE + MSG_CTX（pinyin=1, text="nihao", caret=(200,400)）驱动真实 LingxiUI 候选窗出窗；PowerShell System.Drawing CopyFromScreen 截 caret 下方区域；特征色像素分析（设计里独有的 RGB 值计数+行分布，无需视觉模型）。
+
+**结果（两态对照，因果锁死）**：
+
+- **pinyin 模式**：composing 底色带 RGB(240,244,250) 位于窗顶 42 行横带（6609 像素）→ 其下窗体底色 RGB(250,250,250) 候选区 → accent RGB(0,120,215) 跨回显带（composing 文字用 accent 蓝）+ 延伸首候选行底。回显行绘制/位置/配色三项全符合设计。
+- **en 对照**（flags=0, text="inte"）：compBg=0（无回显带），候选区整体上移 42 行（=回显带高度）——**回显行只在有组合串时出现且候选区同步下推**。
+
+**边界**：探针短暂抢占管道 active，断开后归还真实客户端；截图坐标系受 DPI 虚拟化影响但特征色空间关系不受影响（只看相对行分布）。探针/截图临时产物已清理（tmp 下零残留），像素数据固化于 cur/LOOMY-HANDOFF.md §B2 补遗。
+
+**backlog 终态**：B1/B8/B4/B3/B5(①②)/B2 全部完成且 B2 窗体验证补齐实证，Loomy 体验整改全链收官。

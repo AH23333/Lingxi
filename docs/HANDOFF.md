@@ -1,5 +1,9 @@
 # 交接文档（HANDOFF）
 
+## ⚡ 最新状态速报（2026-10-28 晚·七，B2 窗体像素取证补遗——验证实证收官）
+
+- **B2 回显渲染实证完成**：假客户端探针（MSG_CTX pinyin="nihao"）驱动真实候选窗出窗 + 特征色像素分析——composing 底色带 RGB(240,244,250) 窗顶 42 行横带、其下候选区、accent 蓝字跨回显带；en 对照（flags=0）无回显带且候选区上移 42 行=因果实锤（回显行只在有组合串时出现且候选区同步下推）。B2 落地时"窗体无自动化断言人眼验收"的边界补齐为像素实证。探针产物已清理，数据固化 cur/LOOMY-HANDOFF.md §B2 补遗、DEVLOG 晚（七）小节。**B1/B8/B4/B3/B5(①②)/B2 全部完成，Loomy 整改全链收官。**
+
 ## ⚡ 最新状态速报（2026-10-28 晚，B5 草案② toggleMode 设置升级——Loomy 整改全链终章）
 
 - **toggleMode 完成（B5 草案②，收官后补遗）**：`shiftToggle(bool)` → `toggleMode(0 无/1 Shift/2 Shift 或 Ctrl)`——settings 双读兼容（新键 ToggleMode 优先/旧键 ShiftToggle 派生，保存双写旧版无感）；DLL 切换键状态机扩展 Ctrl（mode 2）+ Shift/Ctrl 交错保护（Ctrl+Shift+K 类快捷键不误切）；设置页复选框→三态下拉。**用户零感知**：现值派生 toggleMode=1 原行为不变。regress ALL PASS（T16 派生路径全过=双读端到端实证）。真实 UI 已重启（PID 26956）。至此 LOOMY §B3-B5 草案①②全落地（③全局热键=R4 尾巴未动）。
