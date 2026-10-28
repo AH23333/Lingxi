@@ -349,3 +349,34 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **验证（本机当晚 left4dead2 后台 + 残留 UI 预热强噪声环境下）**：engine_test/fix_readings 全绿；deep_test 26/26（AV=0）；e2e 全绿（含 `mor` 直通/Tab 补全/international 真词典/中文续写链）；`jintianqi` 时延空载窗口 7.07ms（预算 10ms 内）。**归因方法论**：时序项红先查 `Get-Process | Sort CPU` 后台消费者 + taskkill 残留 LingxiUI，仍红再 stash 旧码重建 A/B——旧码同漂 7.2~14.2ms 同分布=环境非代码（详见 PITFALLS #41/#42）。
 
 **坑固化**：PITFALLS #41（后台负载使时序预算漂移——stash A/B 定责方法）/ #42（残留 LingxiUI 跨 taskkill 存活污染 e2e——测前必杀）。
+
+## 2026-10-28 晚（十二） · 全应用 WinUI 风格重做（去蓝紫，`bc7be9e`）
+
+**背景**：用户最高优先约束——禁止蓝紫色调，尽可能符合 WinUI 风格，覆盖所有 UI（候选窗/设置页/符号面板/词典窗/快捷短语窗）。
+
+**共享设计令牌（新文件 `ui/uistyle.h`）**：
+
+- `SkinDef{accent,hoverLight}`；`inline constexpr kSkins[]` 五皮肤全非蓝紫：**0 翠绿 RGB(16,124,16)（默认）/1 青碧 RGB(3,131,135)/2 橙 RGB(202,80,16)/3 红 RGB(209,52,56)/4 金 RGB(152,111,11)**；`UiSkin(idx)` 越界回退 0。inline constexpr C++17 ODR 安全；候选窗/设置页/符号面板统一从 Settings.skinIndex 取色→全应用统一换肤。
+- 中性灰阶常量：kUiBg(243,243,243)/kUiCard 白/kUiCardBorder(229)/kUiFlyoutBg(253)/kUiFlyoutBorder(224)/kUiText(26)/kUiText2(93)/kUiControlEdge(130)。
+- `UiApplyRoundCorners(hwnd,w,h)`：优先 Win11 DwmSetWindowAttribute(33=DWMWA_WINDOW_CORNER_PREFERENCE, 2=DWMWCP_ROUND) 一次登记（静态 s_dwm[8] 槽+IsWindow 回收），系统抗锯齿且尺寸自动跟随；失败回退 CreateRoundRectRgn(0,0,w+1,h+1,8,8)，调用方每次改尺寸重调。
+
+**候选窗（window.cpp/h）**：删本地 kSkins 改用 uistyle.h；wc.style 加 CS_DROPSHADOW；Init 后 UiApplyRoundCorners(240,120)，LayoutAndPosition/ShowModeToast 尺寸后重设；OnPaint 配色 WinUI 化（dark bg 44/border 66/fg 228，light=flyout 令牌）；行高亮改 **RoundRect 4px 圆角色块内缩 1px**（选中=accent 白字、hover=hoverLight，NULL_PEN 绘制）；组合回显去蓝（dark 文本 RGB(180,180,180)/light accent，bg dark RGB(54)/light kUiBg）；toast 中英分支同令牌。
+
+**设置页（settingsui.cpp）**：
+
+- 布局重构：SECTION 项 y+=rowH+MulDiv(28)，逐项记 it.fy；**卡片开合**（SECTION 开新卡/闭旧卡，几何={pad-8, fy-8, cw-pad+8, bottom+8}，flowEnd=contentEnd+16）；WM_ERASEBKGND 中性底+白卡 RoundRect 16 半径描边 kUiCardBorder 返回 1。
+- **owner-draw**：addCheck 加 BS_OWNERDRAW→DrawOwnerCheck（20px 4 圆角方框：选中=accent+白圆头对勾 ExtCreatePen PS_GEOMETRIC|PS_ENDCAP_ROUND，未选中=kUiControlEdge 1px 描边；先 FillRect kUiCard 盖 BUTTON 默认 BTNFACE 擦除，BM_GETCHECK 取态）；addButton 加 BS_OWNERDRAW+g_accentBtns→DrawAccentBtn（accent 圆角底白字，ODS_SELECTED 加深 25%）；WM_DRAWITEM 按 ODT_BUTTON 分发。
+- WM_CTLCOLORSTATIC（hint→kUiBg+kUiText2，其余→kUiCard+kUiText）/WM_CTLCOLORBTN/WM_CTLCOLOREDIT/WM_CTLCOLORLISTBOX 全接线；g_sectionHwnds 统一 FW_SEMIBOLD 13pt 雅黑段标题；WM_VSCROLL/WM_MOUSEWHEEL/UpdateSettingsScrollbar 重置路径全量 InvalidateRect 防残影（卡片+控件整体位移，局部重绘会留残影）。
+- 皮肤下拉文案 {翠绿,青碧,橙色,红色,金色} 与 kSkins 严格对应；SaveFromControls 末尾 InvalidateRect 换肤即时刷新；用户词典窗 CTLCOLOR 同套（UserDict 类底 g_hBgBrush）。
+
+**符号面板（symbolpanel.cpp）**：白底+RoundRect 16 自绘描边（去 WS_BORDER）；分类选中=hoverLight 全高药丸圆角+accent 字、未选中=kUiText2；CS_DROPSHADOW；ShowSymbolPanel 后 UiApplyRoundCorners、分类切换重设。
+
+**快捷短语窗（hotphraseui.cpp）**：HpFont()（进程内复用雅黑 12pt，GetDpiForSystem，替代 DEFAULT_GUI_FONT）+HpBgBrush()=kUiBg（替代 COLOR_BTNFACE+1 类底）+WM_CTLCOLORSTATIC/EDIT/LISTBOX。
+
+**工程**：`ui/LingxiUI.vcxproj` ClInclude 加 uistyle.h；全提交 `bc7be9e`（7 文件 +414/-77）。
+
+**编译坑**：settingsui.cpp g_hBgBrush/g_hCardBrush/g_hHint 初版声明在布局块（~640 行）而 UserDict 窗（~533 行）先用→C2065；移至文件顶部 globals（g_hFont 旁）修复。
+
+**验证**：tools\build.cmd 全绿（e2e/common/ImeCore/LingxiUI 四目标，无 error/warning）。窗体视觉无自动化断言（沿用 B2 口径），用户当时在用机器（left4dead2）未跑 UI 验证——留用户空闲时人工确认各窗口视觉。
+
+**兼容注记**：老用户 skinIndex=0 原蓝现翠绿，无迁移（可接受）。

@@ -1,5 +1,12 @@
 # 交接文档（HANDOFF）
 
+## ⚡ 最新状态速报（2026-10-28 晚·十二，全应用 WinUI 风格重做——去蓝紫收口）
+
+- **UI WinUI 化全量完成（`bc7be9e`）**：新共享 `ui/uistyle.h` 设计令牌——中性灰阶八常量（kUiBg/kUiCard/kUiCardBorder/kUiFlyoutBg/kUiFlyoutBorder/kUiText/kUiText2/kUiControlEdge）+ 非蓝紫五皮肤（0 翠绿默认/1 青碧/2 橙/3 红/4 金，Settings.skinIndex 全 UI 统一换肤）+ `UiApplyRoundCorners`（Win11 DWMWCP_ROUND 优先一次登记、CreateRoundRectRgn 回退随尺寸重设）。候选窗 DWM 圆角+CS_DROPSHADOW+圆角行高亮（选中 accent 白字/hover hoverLight）+组合回显去蓝；设置页白卡化（SECTION 开合卡片+RoundRect 16 描边+FW_SEMIBOLD 段标题+皮肤色 owner-draw 勾选框/按钮+WM_CTLCOLOR 全套+滚动全量重绘防残影）；符号面板圆角浮层+药丸分类；词典窗/快捷短语窗统一中性底+雅黑。
+- **验证**：tools\build.cmd 全绿（四目标无 error/warning）；窗体视觉无自动化断言（B2 同口径），用户用机中未跑 UI 验证——**留用户空闲时人工确认各窗口视觉**，如需微调再小提交。
+- **编译坑**：settingsui.cpp owner-draw 画刷（g_hBgBrush/g_hCardBrush/g_hHint）初版声明在布局块而 UserDict 窗先用→C2065，移文件顶 globals 修复；docs/源码批量替换沿用 PITFALLS #36/#40B（必 edit 工具+唯一锚）。
+- **待做**：UI 视觉人工确认（用户空闲后）；R3 压测收尾（真机 p50/p95 对标 ≤450ms）；卸载清理/代码签名（M6 尾巴）。
+
 ## ⚡ 最新状态速报（2026-10-28 晚·十一，F AI 预测=R3 多路采样收官——用户六项需求 6/6 全完成）
 
 - **R3 定性纠正 + 多路采样落地（`b3bad05`）**：旧文"R3 未实施"过时——核心（DLL 补发上文 `e328a7d` / 双上下文 KV 隔离+prefill 硬闸+EMA 降级 `4ca0218` / 重排默认关 `684d22a`）前几轮已落地；本轮补最后一块 §3 多路采样：LlamaApi 绑定 10 个 `llama_sampler_*`（全可选，缺则采样路禁用贪心路无恙）+ 续写 fork 采样合并候选（KV 高命中且贪心 ≤60ms 才触发，seq_rm 到末位前一格重 decode 末位取新鲜 logits——直接用残留 logits 会采错位置分布）+ 拼音重排 Borda 投票（并列取贪心序，**top-1 不一致回退原序**）+ seed=FNV-1a(prompt) 防候选闪烁。HKCU `LlmMultiPath` 默认关（+150ms CPU/次实验特性），设置页智能特性区勾选框（IDC 119）。
