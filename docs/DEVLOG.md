@@ -125,3 +125,19 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 - 体验修复：提交键候选有界等待 ≤80ms + 拼音免防抖（快打空格不再上屏字母，每键候选 RTT 均值 57ms）；切分完整/残段分池（长串候选 27→60）；模式检测激活竞态定时器自愈（冷启动 deep_test attempt1 转绿）；
 - 词库管线：多音读音系统补全 tools/fix_readings.py（228 字/239 读音 + --check 闸门进回归）；现代词层 tools/modern_terms.txt（176 词，inject_modern 只升不降、--modern-only 幂等）；engine_test 沙盒化 + 多音/现代词断言 119→142；deep_test 新增 T12/T13 行为场景；
 - 收口前新报反馈全部取证完毕未动刀（Edge 快捷键=main.cpp:205 RegisterHotKey 默认开；中文续写复读=StripPromptEcho 未盖全两形态；i/u/v 首字母词典无行；Shift 单击无感），设计与复现步骤见 cur/LOOMY-HANDOFF.md §3 B3-B8.
+
+## 2026-10-28 晚 · B1 部分提交全链路（cover 协议）
+
+**问题**：长串拼音选短词（如 nihao 选"你"）后剩余拼音被整串清空，"白打"。
+
+**方案（LOOMY-HANDOFF §B1 草案落地）**：候选携带"消耗的原始拼音前缀字符数"（cover），提交后剩余拼音留组合继续。
+
+- 引擎侧（b7d0ee1）：`Prediction.cover` 与 cands 平行；`Generate` 逐路径回放 DP 转移算 coverEnd，`Predict` 经 `inOfCtx` 映射回原始 context 字符数；双拼（键位映射不可逆推）/非 ASCII（UTF-8 变长错位）/用户词典 boost（保守）一律 0=旧行为
+- 协议：MsgCands 帧在字符串列表之后**可选**追加 u16 cover×count（kProtoVer 不变）：旧 DLL 顺序读串即停容忍尾部；新 DLL 读不满按全 0——双向兼容
+- UI 管道：重排按同一排列搬运 cover；**ApplyLearn 学习键改用消耗前缀**（raw.substr(0,cover)）——根治"nihao 选你却记到 nihao→你"的错位学习，学 ni→你 后打 ni 即命中且不影响 nihao 查询
+- DLL：`GetCandidateEx` 单临界区取词与 cover；`PinyinCommitHanzi(hanzi,cover)` 部分消耗时无组合模式改内存串再预测、内联重启组合承载剩余（重启失败回退全清）；空格/Tab/数字/未映射键/鼠标选词全提交点接通；未映射键路径部分提交后不清候选（防与在途回包竞态）
+- 测试：engine_test P6c 系列 +P6c4 pin 你@idx7；deep_test T14 端到端（nihao 按'8'选你→余 hao→空格→你好，无字母残留）
+
+**取证教训**：候选序 probe 必须以 fresh 沙盒实测为准——n/l 模糊音默认开，立号/理好/利好（lihao）插在"你"前面，交接记录的"你@idx6"实为 idx7（'8'）。deep_test 日志走 ANSI 管道中文必乱码，断言取证用码点 hex 转储（T14 模式）。
+
+**验证**：regress ALL PASS（engine_test 147 断言 / fix_readings / deep_test T14 / e2e）。

@@ -3,6 +3,12 @@
 > 最近更新：2026-10-28 凌晨（QC 代理代更：R2-R4 功能面全部落地、Edge 兼容用户实测确认、R3/R5 预探索完成）。**任何代理读完本文档即可直接接手。**
 > 配套阅读：[PROGRESS.md](PROGRESS.md) · [DEVLOG.md](DEVLOG.md) · [PITFALLS.md](PITFALLS.md)（20 条踩坑，#17-#19 为崩溃三段式）· [README.md](../README.md) · 双代理协作目录 [cur/](../cur/)（含 QC 报告与 R2-R5 预探索指南）
 
+## ⚡ 最新状态速报（2026-10-28 晚，B1 部分提交全链路落地）
+
+- **B1 完成**（引擎 `b7d0ee1` + 管道/DLL `f84f049`）：候选携带 cover（消耗的拼音前缀字符数），选短词后剩余拼音留组合继续；学习键改消耗前缀根治错位学习。协议向后兼容（MsgCands 可选尾部，kProtoVer 不变）。regress ALL PASS（engine_test 147 / fix_readings / deep_test T14 端到端 / e2e）。
+- **注意**：候选序 probe 别信历史记录——模糊音默认开，"你"在 nihao 序 idx7（键'8'，engine_test P6c4 pin）；deep_test 日志中文乱码，取证用码点 hex 转储（PITFALLS #29/#30）。
+- backlog 剩余：B8 热键默认关 → B4 英文复读过滤 → B3 i/u/v 首字母 → B5 Shift 断言 → B2 候选窗拼音回显（详见 cur/LOOMY-HANDOFF.md）。
+
 ## ⚡ 最新状态速报（2026-10-28 下午，Loomy 轮）
 
 - 13 提交后工作区干净，regress 三件套+词典闸门全绿；R3 重排从 WIP 到全部落地并按实测**默认关**（打字 CPU 66%->3.5%，候选窗抖动清零）。

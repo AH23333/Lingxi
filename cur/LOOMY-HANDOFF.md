@@ -3,6 +3,8 @@
 > 接手必读顺序：本文件 → `cur/SHUTDOWN-HANDOFF.md`（豆包的历史交接，规则仍有效）→ `cur/QC-REPORT.md` 末尾我的会话记录。
 > 我（Loomy）本轮 = 深度测试+修复+性能+用户体验整改，共 **13 个提交**（d7debbd 之后，含文档同步），全部各自过构建，终态 regress 全链 ALL PASS。
 > 收口新反馈（Edge 插件快捷键 / 中文模式续写复读 / Shift 切换无感 / i-u-v 首字母）**全部取证完毕未动刀**，见 §B4+/§B8/B3/B5；新一轮从 B1（最痛）或 B8（最便宜）开刀。
+>
+> **✅ 2026-10-28 晚更新：B1 已全链路完成并回归全绿**（引擎 `b7d0ee1` + 管道/DLL `f84f049`，本节 §B1 草案全部落地，含学习键修正；deep_test T14 端到端断言）。剩余 backlog：B8 → B4 → B3 → B5 → B2。候选序实测教训见 PITFALLS #29/#30（"你"在 nihao 序 idx7 非 idx6，模糊音插队；日志取证用码点 hex）。
 
 ## 0. 一句话现状
 
@@ -34,7 +36,7 @@
 
 ## 3. 体验整改 backlog（用户原话 → 已侦查根因 → 设计草案）
 
-### B1. 长串按数字选短词后，剩余拼音被清空（"白打"）——用户最痛，优先
+### B1. 长串按数字选短词后，剩余拼音被清空（"白打"）——✅ 已完成（b7d0ee1 引擎 + f84f049 管道/DLL，按下方草案落地，regress ALL PASS）
 - 根因：`composition.cpp PinyinCommitHanzi` 提交即 `_pinyin.clear()` 全清（~432/496 行）；数字/空格/鼠标统一走它。候选本身有"覆盖几个音节"的信息（引擎 `add(word,cost,span,nwords)`，1263/1305），**协议没传**。
 - 草案（全加法，旧 DLL/旧 UI 双向兼容）：
   1. 引擎 `Prediction` 追加 `cover`（每候选 = 消耗的**原始 context 字符串前缀字符数**；在归一化与 raw 间做 `posOf` 回映！引擎内部 `in` 去撇号，DLL 的 `_pinyin` 带撇号——`Predict(context)` 的 context 就是 raw，归一化处记映射）。双拼模式 cover 一律 0（=保持现全清行为，别猜键数映射）。用户词典 boost 候选 cover=0（保守）。
