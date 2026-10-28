@@ -118,6 +118,39 @@ static int ProbePinyin()
     return 0;
 }
 
+// B4 端到端取证：真实装配链（LLM+词表）在英文/中文上下文下的路由与候选纯度。
+// --probe-llm 直连 LlmPredictor 不经链路由，纯 ASCII 过滤/词表优先只能在此验证。
+static int ProbeChain()
+{
+    LX_LOG(L"chain", L"probe: 开始（真实装配链 LLM+词表）");
+    lingxi::IPredictor* c = lingxi::CreatePredictorChain();
+    const wchar_t* ctxs[] = {
+        L"今天天气",           // 中文上下文：LLM 优先
+        L"Today is a nice ",  // 纯 ASCII 词边界：词表优先，LLM 兜底须过滤为 ASCII
+        L"inte",              // 词中：词表补全
+        L"hello wor",         // 词中：词表补全
+    };
+    for (const wchar_t* ctx : ctxs)
+    {
+        uint64_t t0 = GetTickCount64();
+        lingxi::Prediction r = c->Predict(ctx);
+        std::wstring joined;
+        bool ascii = true;
+        for (size_t k = 0; k < r.cands.size(); k++)
+        {
+            if (k) joined += L" | ";
+            joined += r.cands[k];
+            for (wchar_t ch : r.cands[k])
+                if (ch >= 0x80) ascii = false;
+        }
+        LX_LOG(L"chain", L"probe '%ls' -> [%ls] (%u cands, ascii=%d, %llu ms)",
+               ctx, joined.c_str(), (uint32_t)r.cands.size(), (int)ascii,
+               (unsigned long long)(GetTickCount64() - t0));
+    }
+    delete c;
+    return 0;
+}
+
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
 {
     lingxi::InitLogging(); // 按 LINGXI_LOG 环境变量开启热路径诊断日志
@@ -142,6 +175,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     if (argv && argc >= 2 && wcscmp(argv[1], L"--probe-pinyin") == 0)
     {
         int rc = ProbePinyin();
+        LocalFree(argv);
+        return rc;
+    }
+    if (argv && argc >= 2 && wcscmp(argv[1], L"--probe-chain") == 0)
+    {
+        int rc = ProbeChain();
         LocalFree(argv);
         return rc;
     }

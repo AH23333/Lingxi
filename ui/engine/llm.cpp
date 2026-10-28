@@ -436,40 +436,9 @@ private:
         }
 
         std::wstring cont = Utf8ToWide(outUtf8.data(), (int)outUtf8.size());
-        cont = StripPromptEcho(cont, tail);
+        cont = StripContinuationEcho(cont, tail);
         pred.cands = SplitContinuation(cont);
         return pred;
-    }
-
-    // 续写输出回显裁剪：小模型常以"复读上文尾部"开头（prompt 上文是…天气，
-    // 输出以"天气不错…"开头），直接当候选上屏 = 输入框出现完全重复的内容
-    // （用户实测报告）。裁掉 cont 与上文尾部重叠的最大前缀（≤40 字防误伤
-    // 真实重复语义如"很好很好"）。
-    static std::wstring StripPromptEcho(std::wstring cont, const std::wstring& tail)
-    {
-        // 前导空白先行跳过，允许"天气 不错"式带空格回显
-        size_t h = 0;
-        while (h < cont.size() && (cont[h] == L' ' || cont[h] == L'\r' || cont[h] == L'\n' ||
-                                   cont[h] == L'\t'))
-            h++;
-        std::wstring body = cont.substr(h);
-        size_t maxK = body.size() < tail.size() ? body.size() : tail.size();
-        if (maxK > 40) maxK = 40;
-        // 阈值 k≥2：单字重叠歧义太大（叠词续写"很好|很好"会被误切）
-        for (size_t k = maxK; k >= 2; k--)
-        {
-            if (body.compare(0, k, tail, tail.size() - k) == 0)
-            {
-                body.erase(0, k);
-                // 回显后常紧跟标点/空白起头真续写，去干净
-                size_t h2 = 0;
-                while (h2 < body.size() && (body[h2] == L' ' || body[h2] == L'\n'))
-                    h2++;
-                body = body.substr(h2);
-                return body;
-            }
-        }
-        return cont;
     }
 
     // 指令式重排：构造 prompt → 生成数字序 → 白名单校验。
@@ -805,52 +774,6 @@ IPredictor* CreateLlmPredictor()
 
 #endif // LINGXI_HAS_LLAMA
 
-// ---- 降级链（上下文感知）----
-//   光标处于英文单词中间（前缀 ≥2 字符）→ 词表补全优先（replaceLen 语义正确）
-//   词边界 / 中文上下文 → LLM 续写优先；全部无结果 → 无候选
-namespace {
-
-bool IsEnWordChar(wchar_t ch)
-{
-    return (ch >= L'a' && ch <= L'z') || (ch >= L'A' && ch <= L'Z') ||
-           (ch >= L'0' && ch <= L'9') || ch == L'_';
-}
-
-class ChainPredictor : public IPredictor
-{
-public:
-    ChainPredictor(std::vector<IPredictor*>&& chain) : _chain(std::move(chain)) {}
-    ~ChainPredictor()
-    {
-        for (auto* p : _chain) delete p;
-    }
-
-    Prediction Predict(const std::wstring& context) override
-    {
-        size_t i = context.size();
-        while (i > 0 && IsEnWordChar(context[i - 1])) i--;
-        bool midWord = (context.size() - i) >= 2;
-
-        if (midWord && _chain.size() > 1)
-        {
-            // _chain[0]=LLM，_chain[1]=词表：词中用词表补全
-            Prediction pred = _chain[1]->Predict(context);
-            if (!pred.cands.empty()) return pred;
-        }
-        for (auto* p : _chain)
-        {
-            Prediction pred = p->Predict(context);
-            if (!pred.cands.empty()) return pred;
-        }
-        return {};
-    }
-
-private:
-    std::vector<IPredictor*> _chain;
-};
-
-} // namespace
-
 IPredictor* CreatePredictorChain(IPredictor* sharedLlm)
 {
     std::vector<IPredictor*> chain;
@@ -866,7 +789,9 @@ IPredictor* CreatePredictorChain(IPredictor* sharedLlm)
     IPredictor* llmWarm = chain[0];
     std::thread([llmWarm]() { llmWarm->Predict(L""); }).detach();
 #endif
-    return new ChainPredictor(std::move(chain));
+    // 上下文感知路由（词表补全/纯 ASCII 过滤/LLM 优先）在 ngram.cpp 实现，
+    // engine_test 用假引擎单测（B4）
+    return CreateChainPredictor(std::move(chain));
 }
 
 } // namespace lingxi

@@ -69,4 +69,19 @@ public:
 // 通常让返回的 chain 持有）；为空时内部自行创建。
 IPredictor* CreatePredictorChain(IPredictor* sharedLlm = nullptr);
 
+// 续写回显裁剪（B4）：小模型续写常以"复读上文尾部"开头，直接当候选上屏
+// = 输入框出现完全重复的内容（用户实测报告）。裁掉输出与 tail（上文尾部）
+// 重叠的前缀。升级点（B4）：空白/标点归一化比较（回显与尾部只差标点也命中）、
+// 重叠上限抬到 tail 全长、整段复读循环剥干净；保留 k≥2 阈值（单字歧义）。
+// 实现于 ngram.cpp（engine_test 直接单测）。
+std::wstring StripContinuationEcho(std::wstring cont, const std::wstring& tail);
+
+// 上下文感知降级链（实现于 ngram.cpp，engine_test 用假引擎单测路由）：
+//   词中（尾部 ≥2 英文词符）→ 词表补全优先（replaceLen 语义正确）；
+//   纯 ASCII 上下文（整段 < 0x80，B4）→ 词表优先；其余引擎兜底时候选
+//   过滤为纯 ASCII（qwen 续写英文上下文会吐中文候选），全滤空则无候选；
+//   其余（中文上下文/词边界）→ 按链序（LLM 优先）。
+// chain 各元素所有权归返回的 predictor（析构时逐一 delete）。
+IPredictor* CreateChainPredictor(std::vector<IPredictor*>&& chain);
+
 } // namespace lingxi

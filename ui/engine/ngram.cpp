@@ -187,4 +187,159 @@ IPredictor* CreateDefaultPredictor()
     return new WordEngine();
 }
 
+// ---- B4：续写回显裁剪 + 上下文感知降级链 ----
+// （从 llm.cpp 移出：engine_test 直接编译 ngram.cpp，这两块纯逻辑可单测；
+//   llm.cpp 只保留链的装配与 LLM 生成。）
+
+namespace {
+
+// 归一化比较的"可跳过字符"：空白 + 中英常用标点
+bool IsEchoSkippable(wchar_t ch)
+{
+    switch (ch)
+    {
+    case L' ': case L'\r': case L'\n': case L'\t':
+    case L',': case L'.': case L'!': case L'?': case L';': case L':':
+    case L'"': case L'\'':
+    case L'，': case L'。': case L'！': case L'？': case L'；': case L'：':
+    case L'、': case L'…': case L'—': case L'·':
+    case 0x201C: case 0x201D: case 0x2018: case 0x2019: // “ ” ‘ ’
+        return true;
+    default:
+        return false;
+    }
+}
+
+bool IsPureAscii(const std::wstring& s)
+{
+    for (wchar_t ch : s)
+        if ((unsigned short)ch >= 0x80) return false;
+    return true;
+}
+
+// 候选过滤为纯 ASCII（B4：qwen 续写英文上下文会吐中文候选）。
+// cover 与 cands 平行时同步剔除，保持 size()==cands.size() 才有效的约定。
+// 返回过滤后是否仍有候选。
+bool FilterAsciiCands(Prediction& pred)
+{
+    if (pred.cands.empty()) return false;
+    std::vector<std::wstring> cands;
+    std::vector<uint32_t> cover;
+    bool parallel = pred.cover.size() == pred.cands.size();
+    cands.reserve(pred.cands.size());
+    for (size_t k = 0; k < pred.cands.size(); k++)
+    {
+        if (!IsPureAscii(pred.cands[k])) continue;
+        cands.push_back(pred.cands[k]);
+        if (parallel) cover.push_back(pred.cover[k]);
+    }
+    pred.cands = std::move(cands);
+    pred.cover = std::move(cover);
+    return !pred.cands.empty();
+}
+
+// 上下文感知降级链：词中 → 词表补全；纯 ASCII 上下文 → 词表优先 +
+// 兜底候选过滤为纯 ASCII（B4）；其余按链序（LLM 优先）。
+class ChainPredictor : public IPredictor
+{
+public:
+    ChainPredictor(std::vector<IPredictor*>&& chain) : _chain(std::move(chain)) {}
+    ~ChainPredictor()
+    {
+        for (auto* p : _chain) delete p;
+    }
+
+    Prediction Predict(const std::wstring& context) override
+    {
+        size_t i = context.size();
+        while (i > 0 && IsWordChar(context[i - 1])) i--;
+        bool midWord = (context.size() - i) >= 2;
+        bool pureAscii = !context.empty() && IsPureAscii(context);
+
+        if (_chain.size() > 1 && (midWord || pureAscii))
+        {
+            // _chain[0]=LLM，_chain[1]=词表
+            Prediction pred = _chain[1]->Predict(context);
+            if (!pred.cands.empty()) return pred;
+            if (pureAscii)
+            {
+                // B4：词表无果时其余引擎兜底，但候选必须纯 ASCII；
+                // 全滤空 → 无候选（英文打字出中文候选比无候选更糟）
+                for (auto* p : _chain)
+                {
+                    Prediction q = p->Predict(context);
+                    if (FilterAsciiCands(q)) return q;
+                }
+                return {};
+            }
+            // 词中但含 CJK/全角（如"你好ab"）且词表无果：落入链序兜底
+        }
+        for (auto* p : _chain)
+        {
+            Prediction pred = p->Predict(context);
+            if (!pred.cands.empty()) return pred;
+        }
+        return {};
+    }
+
+private:
+    std::vector<IPredictor*> _chain;
+};
+
+} // namespace
+
+std::wstring StripContinuationEcho(std::wstring cont, const std::wstring& tail)
+{
+    // 归一 tail：剥掉尾部空白/标点（回显常与上文尾部只差一个标点形态）
+    std::wstring norm = tail;
+    while (!norm.empty() && IsEchoSkippable(norm.back())) norm.pop_back();
+    if (norm.empty()) return cont;
+
+    std::wstring body = cont;
+    bool any = false;
+    // 循环剥：输出 = 整段复读 tail 重复 N 遍的形态要剥干净。
+    // 只在上轮命中为整段全匹配（k == norm.size()）时续剥：部分重叠
+    // （如"很好很好"接"干得很好"）一次即止，避免误伤真实叠词语义。
+    for (int round = 0; round < 8 && !body.empty(); round++)
+    {
+        // 归一比较起点：跳过前导空白/标点（"，天气"式回显）
+        size_t pb = 0;
+        while (pb < body.size() && IsEchoSkippable(body[pb])) pb++;
+        if (pb == body.size())
+        {
+            // 整段都是空白/标点：首轮保持原样（无回显证据），其后清空
+            if (!any) return cont;
+            body.clear();
+            break;
+        }
+        size_t avail = body.size() - pb;
+        size_t maxK = avail < norm.size() ? avail : norm.size();
+        bool matched = false;
+        bool full = false;
+        // k≥2 阈值：单字重叠歧义太大（叠词续写"很好|很好"会被误切）
+        for (size_t k = maxK; k >= 2; k--)
+        {
+            if (body.compare(pb, k, norm, norm.size() - k) == 0)
+            {
+                body.erase(0, pb + k);
+                // 回显后常紧跟标点/空白起头真续写，去干净
+                size_t h2 = 0;
+                while (h2 < body.size() && IsEchoSkippable(body[h2])) h2++;
+                body.erase(0, h2);
+                matched = true;
+                full = (k == norm.size());
+                any = true;
+                break;
+            }
+        }
+        if (!matched || !full) break;
+    }
+    return any ? body : cont;
+}
+
+IPredictor* CreateChainPredictor(std::vector<IPredictor*>&& chain)
+{
+    return new ChainPredictor(std::move(chain));
+}
+
 } // namespace lingxi

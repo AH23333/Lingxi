@@ -113,6 +113,29 @@ static LatencyStats MeasureLatency(lingxi::IPredictor* p, const std::wstring& ct
     return st;
 }
 
+// B4 测试替身：固定候选的假预测器（ChainPredictor 路由单测）
+class FakePredictor : public lingxi::IPredictor
+{
+public:
+    explicit FakePredictor(std::vector<std::wstring> cands) : _cands(std::move(cands)) {}
+    lingxi::Prediction Predict(const std::wstring&) override
+    {
+        lingxi::Prediction p;
+        p.cands = _cands;
+        return p;
+    }
+private:
+    std::vector<std::wstring> _cands;
+};
+
+static bool AllAscii(const std::vector<std::wstring>& cands)
+{
+    for (const auto& c : cands)
+        for (wchar_t ch : c)
+            if ((unsigned short)ch >= 0x80) return false;
+    return true;
+}
+
 int wmain()
 {
     lingxi::InitLogging();
@@ -857,6 +880,130 @@ int wmain()
             }
 
             delete py;
+        }
+    }
+
+    // ===== B4：续写回显裁剪 + 上下文感知降级链 =====
+    {
+        // E1. StripContinuationEcho：回显形态矩阵
+        {
+            struct ECase { const wchar_t* cont; const wchar_t* tail; const wchar_t* expect; };
+            const ECase cases[] = {
+                // 基础部分重叠：以上文尾部开头 → 裁掉重叠（旧版已覆盖的形态）
+                {L"天气不错，气温晴", L"今天天气", L"不错，气温晴"},
+                // 标点差形态：上文尾部带标点而输出不带（旧版漏掉的回显形态）
+                {L"天气不错", L"今天天气不错，", L""},
+                // 整段复读 ×2：循环剥干净（旧版只剥一轮，残余仍是复读）
+                {L"今天天气不错今天天气不错", L"今天天气不错", L""},
+                // 整段复读 + 真续写：只剥复读部分
+                {L"今天天气不错今天更冷", L"今天天气不错", L"今天更冷"},
+                // 无回显：保持原样
+                {L"晴，气温不错", L"今天天气", L"晴，气温不错"},
+                // 叠词保护：部分重叠只剥一轮，保留"很好"
+                {L"很好很好", L"干得很好", L"很好"},
+                // k≥2 阈值留缝：单字重叠不裁（回归即文档）
+                {L"好，再见", L"天气好", L"好，再见"},
+                // 前导标点回显："，天气"式也算复读
+                {L"，天气不错", L"今天天气", L"不错"},
+            };
+            for (const auto& cs : cases)
+            {
+                std::wstring got = lingxi::StripContinuationEcho(cs.cont, cs.tail);
+                bool ok = got == cs.expect;
+                wchar_t detail[192];
+                _snwprintf_s(detail, _TRUNCATE, L"'%ls' tail='%ls' -> '%ls' (expect '%ls')",
+                             cs.cont, cs.tail, got.c_str(), cs.expect);
+                Report(ok, "echo strip", detail);
+            }
+        }
+
+        // E2. 链路由：纯 ASCII 上下文 → 词表优先（不出 LLM 中文候选）
+        {
+            std::vector<lingxi::IPredictor*> chain;
+            chain.push_back(new FakePredictor({L"中文词"}));
+            chain.push_back(new FakePredictor({L"hello there"}));
+            lingxi::IPredictor* c = lingxi::CreateChainPredictor(std::move(chain));
+            lingxi::Prediction r = c->Predict(L"Today is a nice ");
+            bool ok = !r.cands.empty() && r.cands[0] == L"hello there";
+            wchar_t detail[160];
+            _snwprintf_s(detail, _TRUNCATE, L"first='%ls'",
+                         r.cands.empty() ? L"" : r.cands[0].c_str());
+            Report(ok, "chain: pure-ascii ctx prefers wordlist", detail);
+            delete c;
+        }
+
+        // E3. 中文上下文：LLM 优先（链序保持，不被 ASCII 过滤误伤）
+        {
+            std::vector<lingxi::IPredictor*> chain;
+            chain.push_back(new FakePredictor({L"中文词"}));
+            chain.push_back(new FakePredictor({L"hello there"}));
+            lingxi::IPredictor* c = lingxi::CreateChainPredictor(std::move(chain));
+            lingxi::Prediction r = c->Predict(L"你好，今天");
+            bool ok = !r.cands.empty() && r.cands[0] == L"中文词";
+            wchar_t detail[160];
+            _snwprintf_s(detail, _TRUNCATE, L"first='%ls'",
+                         r.cands.empty() ? L"" : r.cands[0].c_str());
+            Report(ok, "chain: cjk ctx keeps LLM first", detail);
+            delete c;
+        }
+
+        // E4. 纯 ASCII + 词表空：LLM 兜底候选过滤为纯 ASCII
+        {
+            std::vector<lingxi::IPredictor*> chain;
+            chain.push_back(new FakePredictor({L"中文词", L"sunny day", L"很好"}));
+            chain.push_back(new FakePredictor({}));
+            lingxi::IPredictor* c = lingxi::CreateChainPredictor(std::move(chain));
+            lingxi::Prediction r = c->Predict(L"Today is a nice ");
+            bool ok = r.cands.size() == 1 && r.cands[0] == L"sunny day";
+            wchar_t detail[160];
+            _snwprintf_s(detail, _TRUNCATE, L"cands=%zu first='%ls'",
+                         r.cands.size(), r.cands.empty() ? L"" : r.cands[0].c_str());
+            Report(ok, "chain: ascii filter drops cjk cands", detail);
+            delete c;
+        }
+
+        // E5. 纯 ASCII + 词表空 + LLM 全中文：无候选（不出中文垃圾）
+        {
+            std::vector<lingxi::IPredictor*> chain;
+            chain.push_back(new FakePredictor({L"中文词", L"很好"}));
+            chain.push_back(new FakePredictor({}));
+            lingxi::IPredictor* c = lingxi::CreateChainPredictor(std::move(chain));
+            lingxi::Prediction r = c->Predict(L"Today is a nice ");
+            wchar_t detail[96];
+            _snwprintf_s(detail, _TRUNCATE, L"cands=%zu", r.cands.size());
+            Report(r.cands.empty(), "chain: all-cjk LLM -> no candidates", detail);
+            delete c;
+        }
+
+        // E6. 词中 + 真词表：inte 走词表补全（replaceLen 语义）
+        {
+            std::vector<lingxi::IPredictor*> chain;
+            chain.push_back(new FakePredictor({L"中文词"}));
+            chain.push_back(lingxi::CreateDefaultPredictor());
+            lingxi::IPredictor* c = lingxi::CreateChainPredictor(std::move(chain));
+            lingxi::Prediction r = c->Predict(L"inte");
+            bool ok = !r.cands.empty() && _wcsnicmp(r.cands[0].c_str(), L"inte", 4) == 0 &&
+                      r.replaceLen == 4 && AllAscii(r.cands);
+            wchar_t detail[160];
+            _snwprintf_s(detail, _TRUNCATE, L"first='%ls' replaceLen=%u",
+                         r.cands.empty() ? L"" : r.cands[0].c_str(), r.replaceLen);
+            Report(ok, "chain: midword uses wordlist completion", detail);
+            delete c;
+        }
+
+        // E7. 真词表 + 纯 ASCII 词边界：候选为空或纯 ASCII（不出中文）
+        {
+            std::vector<lingxi::IPredictor*> chain;
+            chain.push_back(new FakePredictor({L"中文词"}));
+            chain.push_back(lingxi::CreateDefaultPredictor());
+            lingxi::IPredictor* c = lingxi::CreateChainPredictor(std::move(chain));
+            lingxi::Prediction r = c->Predict(L"Today is a nice ");
+            bool ok = AllAscii(r.cands); // 空集也纯 ASCII
+            wchar_t detail[160];
+            _snwprintf_s(detail, _TRUNCATE, L"cands=%zu first='%ls'",
+                         r.cands.size(), r.cands.empty() ? L"" : r.cands[0].c_str());
+            Report(ok, "chain: real wordlist pure-ascii boundary", detail);
+            delete c;
         }
     }
 
