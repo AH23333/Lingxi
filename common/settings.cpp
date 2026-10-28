@@ -43,7 +43,13 @@ Settings LoadSettings()
     if (GetDword(hKey, L"Paused", v)) s.paused = v != 0;
     if (GetDword(hKey, L"CnPunct", v)) s.cnPunct = v != 0;
     if (GetDword(hKey, L"FuzzyPinyin", v)) s.fuzzyPinyin = v != 0;
-    if (GetDword(hKey, L"ShiftToggle", v)) s.shiftToggle = v != 0;
+    // 中英切换键（B5 草案②）：新键 ToggleMode 优先；无/越界则旧键 ShiftToggle
+    // （bool）派生 0/1；两键均缺 = 默认 1（Shift 切换，与历史行为一致）
+    DWORD tm = 0;
+    if (GetDword(hKey, L"ToggleMode", tm) && tm <= 2)
+        s.toggleMode = tm;
+    else if (GetDword(hKey, L"ShiftToggle", v))
+        s.toggleMode = v != 0 ? 1 : 0;
     if (GetDword(hKey, L"VMode", v)) s.vMode = v != 0;
     if (GetDword(hKey, L"Shuangpin", v)) s.shuangpin = v != 0;
     if (GetDword(hKey, L"SymbolHotkey", v)) s.symbolHotkey = v != 0;
@@ -70,7 +76,10 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"Paused", s.paused ? 1 : 0);
     SetDword(hKey, L"CnPunct", s.cnPunct ? 1 : 0);
     SetDword(hKey, L"FuzzyPinyin", s.fuzzyPinyin ? 1 : 0);
-    SetDword(hKey, L"ShiftToggle", s.shiftToggle ? 1 : 0);
+    // 双键兼容：ShiftToggle（旧 bool）与新 ToggleMode 同步写——旧版 UI/DLL 读旧键
+    // 仍得正确的开/关语义（仅"Shift 或 Ctrl"细模式对旧版退化为"开"）
+    SetDword(hKey, L"ShiftToggle", s.toggleMode != 0 ? 1 : 0);
+    SetDword(hKey, L"ToggleMode", s.toggleMode);
     SetDword(hKey, L"VMode", s.vMode ? 1 : 0);
     SetDword(hKey, L"Shuangpin", s.shuangpin ? 1 : 0);
     SetDword(hKey, L"SymbolHotkey", s.symbolHotkey ? 1 : 0);

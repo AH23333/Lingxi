@@ -18,7 +18,10 @@ struct Settings
     bool paused = false;          // 暂停预测：完全直通，不出任何候选（临时需要时用）
     bool cnPunct = true;          // 中文标点：中文模式下 . , / ; 等映射为全角标点
     bool fuzzyPinyin = true;      // 模糊音：z/zh、c/ch、s/sh、n/l、前/后鼻音互通（精确优先）
-    bool shiftToggle = true;      // 无拼音时单击 Shift 切换中/英文
+    uint32_t toggleMode = 1;      // 中英切换键（B5 草案②）：0 无 1 Shift 2 Shift 或 Ctrl。
+                                  // 无拼音时单击切换中/英文（临时英文）并弹"中/英"提示。
+                                  // 注册表双键兼容：ToggleMode（新，优先）+ ShiftToggle
+                                  // （旧 bool，仍写——旧版 UI/DLL 只读它，两边语义一致）。
     bool vMode = true;            // v 模式：中文下首字母 v 直通英文
     bool shuangpin = false;       // 小鹤双拼：每音节两键（声母键+韵母键）
     bool symbolHotkey = false;   // 全局热键 Ctrl+Shift+B 调出符号面板（独占该组合键）。

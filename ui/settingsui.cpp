@@ -159,7 +159,7 @@ constexpr int IDC_CMB_FONTSIZE = 105;
 constexpr int IDC_CMB_DARK = 106;
 constexpr int IDC_CHK_CNPUNCT = 107;
 constexpr int IDC_CHK_FUZZY = 108;
-constexpr int IDC_CHK_SHIFTTOGGLE = 109;
+constexpr int IDC_CMB_TOGGLEMODE = 117; // B5 草案②：中英切换键（旧 109 复选框弃用）
 constexpr int IDC_CHK_VMODE = 110;
 constexpr int IDC_BTN_USERDICT = 111;
 constexpr int IDC_CHK_SHUANGPIN = 112;
@@ -172,8 +172,9 @@ HWND g_hMain = nullptr;    // 隐藏消息窗口（托盘宿主）
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
 HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
      g_hCmbDark = nullptr, g_hCmbFontSize = nullptr, g_hCmbSkin = nullptr,
+     g_hCmbToggleMode = nullptr,
      g_hChkCnPunct = nullptr, g_hChkFuzzy = nullptr,
-     g_hChkShiftToggle = nullptr, g_hChkVMode = nullptr,
+     g_hChkVMode = nullptr,
      g_hChkShuangpin = nullptr, g_hChkSymbolHotkey = nullptr, g_hChkTraditional = nullptr,
      g_hChkLlmRerank = nullptr;
 HFONT g_hFont = nullptr;
@@ -193,7 +194,7 @@ void LoadToControls()
     Button_SetCheck(g_hChkEn, s.enCompletion ? BST_CHECKED : BST_UNCHECKED);
     Button_SetCheck(g_hChkCnPunct, s.cnPunct ? BST_CHECKED : BST_UNCHECKED);
     Button_SetCheck(g_hChkFuzzy, s.fuzzyPinyin ? BST_CHECKED : BST_UNCHECKED);
-    Button_SetCheck(g_hChkShiftToggle, s.shiftToggle ? BST_CHECKED : BST_UNCHECKED);
+    ComboBox_SetCurSel(g_hCmbToggleMode, (int)(s.toggleMode <= 2 ? s.toggleMode : 1));
     Button_SetCheck(g_hChkVMode, s.vMode ? BST_CHECKED : BST_UNCHECKED);
     Button_SetCheck(g_hChkShuangpin, s.shuangpin ? BST_CHECKED : BST_UNCHECKED);
     Button_SetCheck(g_hChkSymbolHotkey, s.symbolHotkey ? BST_CHECKED : BST_UNCHECKED);
@@ -220,7 +221,8 @@ void SaveFromControls()
     s.enCompletion = Button_GetCheck(g_hChkEn) == BST_CHECKED;
     s.cnPunct = Button_GetCheck(g_hChkCnPunct) == BST_CHECKED;
     s.fuzzyPinyin = Button_GetCheck(g_hChkFuzzy) == BST_CHECKED;
-    s.shiftToggle = Button_GetCheck(g_hChkShiftToggle) == BST_CHECKED;
+    int tsel = ComboBox_GetCurSel(g_hCmbToggleMode);
+    if (tsel >= 0 && tsel <= 2) s.toggleMode = (uint32_t)tsel;
     s.vMode = Button_GetCheck(g_hChkVMode) == BST_CHECKED;
     s.shuangpin = Button_GetCheck(g_hChkShuangpin) == BST_CHECKED;
     s.symbolHotkey = Button_GetCheck(g_hChkSymbolHotkey) == BST_CHECKED;
@@ -241,9 +243,9 @@ void SaveFromControls()
     if (sel >= 0) s.darkMode = (uint32_t)sel;
     SaveSettings(s);
     if (g_settingsChanged) g_settingsChanged();
-    LX_LOG(L"ui", L"设置已保存: pinyin=%d count=%u dark=%u en=%d cnPunct=%d fuzzy=%d shift=%d v=%d",
+    LX_LOG(L"ui", L"设置已保存: pinyin=%d count=%u dark=%u en=%d cnPunct=%d fuzzy=%d toggleMode=%u v=%d",
            (int)s.pinyinEnabled, s.candidateCount, s.darkMode, (int)s.enCompletion,
-           (int)s.cnPunct, (int)s.fuzzyPinyin, (int)s.shiftToggle, (int)s.vMode);
+           (int)s.cnPunct, (int)s.fuzzyPinyin, (unsigned)s.toggleMode, (int)s.vMode);
 }
 
 // ---------------- 用户词典管理窗口 ----------------
@@ -447,7 +449,6 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CHK_EN:
         case IDC_CHK_CNPUNCT:
         case IDC_CHK_FUZZY:
-        case IDC_CHK_SHIFTTOGGLE:
         case IDC_CHK_VMODE:
         case IDC_CHK_SHUANGPIN:
         case IDC_CHK_SYMBOLHOTKEY:
@@ -461,6 +462,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CMB_DARK:
         case IDC_CMB_FONTSIZE:
         case IDC_CMB_SKIN:
+        case IDC_CMB_TOGGLEMODE:
             if (HIWORD(wParam) == CBN_SELCHANGE) SaveFromControls();
             return 0;
         case IDC_BTN_USERDICT:
@@ -493,7 +495,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     if (auto pGetDpi = (UINT(WINAPI*)())GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForSystem"))
         dpi = pGetDpi();
     int scale = (int)dpi;
-    int W = MulDiv(440, scale, 96), H = MulDiv(704, scale, 96);
+    int W = MulDiv(440, scale, 96), H = MulDiv(742, scale, 96);
     int x = MulDiv(16, scale, 96), y = MulDiv(16, scale, 96);
     int rowH = MulDiv(30, scale, 96);
 
@@ -529,7 +531,16 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_hChkEn = mkCheck(L"英文逐键补全（词中自动补全英文单词）", IDC_CHK_EN);
     g_hChkFuzzy = mkCheck(L"模糊音（z/zh、c/ch、s/sh、n/l、前后鼻音互通，精确优先）", IDC_CHK_FUZZY);
     g_hChkCnPunct = mkCheck(L"中文标点（. , / ; 等自动转全角，Shift 出 ？：》《 等）", IDC_CHK_CNPUNCT);
-    g_hChkShiftToggle = mkCheck(L"Shift 单击切换中/英文（无拼音时单击 Shift，显示中/英提示）", IDC_CHK_SHIFTTOGGLE);
+    // B5 草案②：中英切换键（旧"Shift 单击"复选框升级三态下拉）
+    mkStatic(L"中英切换键（无拼音时单击切换，显示中/英提示）", 0);
+    g_hCmbToggleMode = CreateWindowExW(0, L"COMBOBOX", L"",
+                                       WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+                                       x, y, MulDiv(160, scale, 96), rowH * 4,
+                                       g_hSettings, (HMENU)(INT_PTR)IDC_CMB_TOGGLEMODE, hInst, NULL);
+    ComboBox_AddString(g_hCmbToggleMode, L"关闭");
+    ComboBox_AddString(g_hCmbToggleMode, L"Shift");
+    ComboBox_AddString(g_hCmbToggleMode, L"Shift 或 Ctrl");
+    y += rowH + MulDiv(6, scale, 96);
     g_hChkVMode = mkCheck(L"v 模式（中文下首字母 v 直通英文，如 vhello 出 hello）", IDC_CHK_VMODE);
     g_hChkShuangpin = mkCheck(L"小鹤双拼（每音节两键：声母+韵母，零声母按韵母首字母补齐）", IDC_CHK_SHUANGPIN);
     g_hChkSymbolHotkey = mkCheck(L"符号面板热键 Ctrl+Shift+B（全局独占，会占用应用同款快捷键如 Edge 插件；默认关，面板可从托盘打开）", IDC_CHK_SYMBOLHOTKEY);

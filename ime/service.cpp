@@ -655,12 +655,18 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM
            (uint32_t)wParam, (int)_pinyinMode, (int)_tempEnglish, (int)_vMode, (int)_fActivated);
     MaybeRedetectPinyinMode(); // 个别应用不走 TestKeyDown
 
-    // Shift 单击检测：记录 Shift 按下；Shift 与其他键组合则标记 used
-    if (wParam == VK_SHIFT)
+    // 中英切换键单击检测（toggleMode：1 Shift / 2 Shift 或 Ctrl）：记录按下；
+    // 与其他键组合（含 Shift/Ctrl 交错，如 Ctrl+Shift+K 应用快捷键）则标记 used
+    if (wParam == VK_SHIFT || wParam == VK_CONTROL)
     {
-        _shiftDown = true;
-        _shiftUsed = false;
-        _shiftWasActive = PinyinActive();
+        if (_shiftDown)
+            _shiftUsed = true; // 两个切换键先后按下 = 组合使用，KeyUp 不切换
+        else
+        {
+            _shiftDown = true;
+            _shiftUsed = false;
+            _shiftWasActive = PinyinActive();
+        }
     }
     else if (_shiftDown)
         _shiftUsed = true;
@@ -711,11 +717,13 @@ STDMETHODIMP CTextService::OnTestKeyUp(ITfContext*, WPARAM, LPARAM, BOOL* pfEate
 STDMETHODIMP CTextService::OnKeyUp(ITfContext*, WPARAM wParam, LPARAM, BOOL* pfEaten)
 {
     *pfEaten = FALSE;
-    // Shift 单击（未与其他键组合、按下前后均无拼音活动）：在中文/临时英文间切换
-    if (wParam == VK_SHIFT && _shiftDown)
+    // 中英切换键单击（未与其他键组合、按下前后均无拼音活动、当前模式允许该键）：
+    // 在中文/临时英文间切换。toggleMode：0 无 1 Shift 2 Shift 或 Ctrl。
+    if (_shiftDown && (wParam == VK_SHIFT || wParam == VK_CONTROL))
     {
-        if (!_shiftUsed && !_shiftWasActive && !PinyinActive() && _pinyinMode &&
-            LoadSettings().shiftToggle)
+        uint32_t tm = LoadSettings().toggleMode;
+        bool allowed = (wParam == VK_SHIFT) ? (tm >= 1) : (tm >= 2);
+        if (allowed && !_shiftUsed && !_shiftWasActive && !PinyinActive() && _pinyinMode)
         {
             _tempEnglish = !_tempEnglish;
             LX_LOG(L"key", L"Shift toggle -> tempEnglish=%d", (int)_tempEnglish);
