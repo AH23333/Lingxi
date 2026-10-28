@@ -170,6 +170,9 @@ struct Candidate
     int units = 1;   // 该路径的总音节单元数
     int words = 1;   // 词链词数（整词=1，越少越优）
     int tier = 0;    // 切分路径层：0=最自然切分，越大越碎
+    // 该候选消耗的规范化输入前缀字符数（in 下标；0=未计算）。
+    // Predict 再经 inOfCtx 映射回原始 context 字符数填入 Prediction.cover。
+    int coverEnd = 0;
 };
 
 // ---------------------------------------------------------------------------
@@ -188,6 +191,24 @@ public:
         _fuzzy = st.fuzzyPinyin; // 开关实时生效
         std::string raw = ToUtf8(context);
         if (raw.empty()) return p;
+        // B1 部分提交 cover：仅全 ASCII 且非双拼时提供。双拼键位→全拼映射
+        // 不可逆推（cover 会指错位置）；非 ASCII 字符 UTF-8 变长会让 in 下标
+        // 与 context 错位。两种情况一律不提供（消费方按 0 处理=旧行为）。
+        bool coverOk = !st.shuangpin && raw.size() == context.size();
+        std::string inForCover;
+        std::vector<uint32_t> inOfCtx; // in 下标 → 原始 context 下标（撇号计入）
+        if (coverOk)
+        {
+            inForCover = NormalizeIn(raw);
+            inOfCtx.reserve(inForCover.size());
+            for (size_t i = 0; i < raw.size(); i++)
+            {
+                char c = Lower(raw[i]);
+                if ((c >= 'a' && c <= 'z') || raw[i] == '\'' || raw[i] == '\u2019')
+                    inOfCtx.push_back((uint32_t)i);
+            }
+            if (inOfCtx.size() != inForCover.size()) coverOk = false;
+        }
         if (st.shuangpin) raw = ShuangpinToQuanpin(raw); // 双拼→全拼
 
         std::vector<SegPath> paths = EnumeratePaths(raw);
@@ -209,17 +230,23 @@ public:
             LX_LOGV(L"py", L"path cost=%d %hs", pp.cost, desc.c_str());
         }
 
-        std::vector<Candidate> out = Generate(paths);
+        std::vector<Candidate> out = Generate(paths, coverOk ? &inForCover : nullptr);
         for (const auto& c : out)
             LX_LOGV(L"py", L"cand cost=%.2f %hs", c.cost, ToUtf8(c.word).c_str());
 
-        // 去重（保序，已按优先级排序）
+        // 去重（保序，已按优先级排序）；cover 经 inOfCtx 映射回 context 字符数
         std::unordered_set<std::wstring> seen;
+        std::vector<uint32_t> covers;
+        covers.reserve(out.size());
         for (auto& c : out)
         {
             if (c.word.empty() || seen.count(c.word)) continue;
             seen.insert(c.word);
+            uint32_t cv = 0;
+            if (coverOk && c.coverEnd > 0 && (size_t)c.coverEnd <= inOfCtx.size())
+                cv = inOfCtx[(size_t)c.coverEnd - 1] + 1;
             p.cands.push_back(c.word);
+            covers.push_back(cv);
             if (p.cands.size() >= kPredictMaxCandidates) break;
         }
 
@@ -253,21 +280,36 @@ public:
                                  return a.word < b.word;
                              });
             std::vector<std::wstring> reordered;
+            std::vector<uint32_t> reorderedCover;
             reordered.reserve(p.cands.size() + ups.size());
+            reorderedCover.reserve(p.cands.size() + ups.size());
             std::unordered_set<std::wstring> promoted;
             for (const auto& up : ups)
-                if (promoted.insert(up.word).second) reordered.push_back(up.word);
-            for (const auto& w : p.cands)
-                if (promoted.insert(w).second) reordered.push_back(w);
+                if (promoted.insert(up.word).second)
+                {
+                    reordered.push_back(up.word);
+                    reorderedCover.push_back(0); // 用户词典 boost：cover 未知，保守全清
+                }
+            for (size_t k = 0; k < p.cands.size(); k++)
+                if (promoted.insert(p.cands[k]).second)
+                {
+                    reordered.push_back(p.cands[k]);
+                    reorderedCover.push_back(covers[k]);
+                }
             if (reordered.size() > kPredictMaxCandidates)
+            {
                 reordered.resize(kPredictMaxCandidates);
+                reorderedCover.resize(kPredictMaxCandidates);
+            }
             p.cands = std::move(reordered);
+            covers = std::move(reorderedCover);
         }
 
         if (st.traditionalOutput)
             for (auto& w : p.cands) w = ToTraditional(w);
 
         p.replaceLen = 0;
+        p.cover = std::move(covers);
         return p;
     }
 
@@ -555,9 +597,10 @@ private:
     // rank 小于此值的高频词预生成全部混合简拼模式；长尾词仅全拼+全简拼。
     static constexpr int kFullPatternRank = 50000;
 
-    std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
+    // 规范化：仅保留 a-z（小写）；撇号（ASCII/弯体）作为切分边界保留。
+    // 预测与 cover 映射共用同一口径（同字符同序，仅过滤）。
+    static std::string NormalizeIn(const std::string& rawIn)
     {
-        // 规范化：仅保留 a-z；撇号作为边界（空转移）
         std::string in;
         in.reserve(rawIn.size());
         for (char ch : rawIn)
@@ -566,6 +609,12 @@ private:
             if (c >= 'a' && c <= 'z') in.push_back(c);
             else if (ch == '\'' || ch == '\u2019') in.push_back('\'');
         }
+        return in;
+    }
+
+    std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
+    {
+        std::string in = NormalizeIn(rawIn);
         int n = (int)in.size();
 
         std::vector<std::vector<SegPath>> dp(n + 1);
@@ -1158,8 +1207,11 @@ private:
 
     // -----------------------------------------------------------------------
     // 候选生成
+    // inForCover：规范化输入串（与 EnumeratePaths 内部 in 同一来源）；
+    // 非空时逐候选计算 coverEnd（消耗的前缀 in 字符数），空则全部 0。
     // -----------------------------------------------------------------------
-    std::vector<Candidate> Generate(const std::vector<SegPath>& paths)
+    std::vector<Candidate> Generate(const std::vector<SegPath>& paths,
+                                    const std::string* inForCover)
     {
         std::vector<Candidate> all;
         // 最自然切分（最长音节、最少简拼）的路径 cost 作为 tier 0 基准；
@@ -1194,11 +1246,30 @@ private:
                 if (prefixAllInit && initHead >= 3) continue;
             }
 
+            // 逐单元回放在 in 上的消耗终点：撇号空转移跳过、单元文本按长度
+            // 前进——与 EnumeratePaths 的 DP 转移严格一致，落点即 DP 位置。
+            std::vector<int> unitEnd;
+            if (inForCover && !inForCover->empty())
+            {
+                unitEnd.assign(n + 1, 0);
+                int pos = 0;
+                const std::string& inNorm = *inForCover;
+                for (int k = 0; k < n; k++)
+                {
+                    while (pos < (int)inNorm.size() && inNorm[pos] == '\'') pos++;
+                    pos += (int)units[k].text.size();
+                    unitEnd[k + 1] = pos;
+                }
+            }
+            auto coverOf = [&](int k) -> int {
+                return (int)unitEnd.size() > k ? unitEnd[k] : 0;
+            };
+
             // 收集候选并记录覆盖单元数、词数与切分层，供分层排序。
-            auto add = [&](std::wstring word, double cost, int covered, int words)
+            auto add = [&](std::wstring word, double cost, int covered, int words, int coverEnd)
             {
                 if (!word.empty())
-                    all.push_back({ std::move(word), cost, covered, n, words, tier });
+                    all.push_back({ std::move(word), cost, covered, n, words, tier, coverEnd });
             };
 
             // 匹配缓存：每条路径内 (i,span) 只做一次 MatchWords，避免 O(n^3) 重复
@@ -1260,7 +1331,7 @@ private:
             // 不做逐字声母硬拼（重码率极高，且 xyzxyz 之类应判为英文）。
             if (dp[0].valid && dp[0].firstIdx >= 0 &&
                 !(allInit && dp[0].nWords != 1))
-                add(reconstruct(dp, n, 0), dp[0].cost, n, dp[0].nWords);
+                add(reconstruct(dp, n, 0), dp[0].cost, n, dp[0].nWords, coverOf(n));
 
             // 2) 首词不同的整句变体（用于给出同拼音的其他整词）
             for (int span = 1; span <= 4 && span <= n; span++)
@@ -1282,7 +1353,7 @@ private:
                         nwords += dp[span].nWords;
                     }
                     if (allInit && nwords != 1) continue; // 纯简拼只给整词，不拼尾巴
-                    add(s, c, n, nwords);
+                    add(s, c, n, nwords, coverOf(n));
                     added++;
                 }
             }
@@ -1302,7 +1373,7 @@ private:
                     if (added >= limit) break;
                     double uncovered = (double)(n - span) * 8.0;
                     double c = WordCost(w.idx) + w.penalty + kWordCountCost + uncovered;
-                    add(_entries[w.idx].word, c, span, 1);
+                    add(_entries[w.idx].word, c, span, 1, coverOf(span));
                     added++;
                 }
             }
@@ -1343,7 +1414,7 @@ private:
                     {
                         if (added >= 6) break;
                         double c = headCost + WordCost(ci) + 2.0 + kWordCountCost;
-                        add(head + _entries[ci].word, c, n, headWords + 1);
+                        add(head + _entries[ci].word, c, n, headWords + 1, coverOf(n));
                         added++;
                     }
                 }

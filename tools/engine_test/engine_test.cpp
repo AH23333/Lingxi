@@ -568,6 +568,56 @@ int wmain()
                 Report(boundary && capped, "pinyin: page boundary & cap", detail);
             }
 
+            // P6c. B1 部分提交 cover：候选携带"消耗的原始拼音前缀字符数"。
+            // "nihao"→"你" 消耗 "ni"(2)；"你好" 消耗全部(5)。
+            {
+                lingxi::Prediction r = py->Predict(L"nihao");
+                bool parallel = r.cover.size() == r.cands.size();
+                uint32_t coverNi = 0, coverNihao = 0;
+                for (size_t k = 0; k < r.cands.size() && k < r.cover.size(); k++)
+                {
+                    if (r.cands[k] == L"你") coverNi = r.cover[k];
+                    else if (r.cands[k] == L"你好") coverNihao = r.cover[k];
+                }
+                wchar_t detail[160];
+                _snwprintf_s(detail, _TRUNCATE, L"你@%u 你好@%u cover=%zu cands=%zu",
+                             coverNi, coverNihao, r.cover.size(), r.cands.size());
+                Report(parallel && coverNi == 2, "cover: nihao '你' consumes 2 ('ni')", detail);
+                Report(coverNihao == 5, "cover: nihao '你好' consumes 5 (all)", detail);
+            }
+
+            // P6c2. cover：长串部分词——"jintianqi"→"今天" 消耗 "jintian"(7)
+            {
+                lingxi::Prediction r = py->Predict(L"jintianqi");
+                bool parallel = r.cover.size() == r.cands.size();
+                uint32_t coverJt = 0;
+                bool hasJt = false;
+                for (size_t k = 0; k < r.cands.size() && k < r.cover.size(); k++)
+                    if (r.cands[k] == L"今天") { hasJt = true; coverJt = r.cover[k]; break; }
+                wchar_t detail[160];
+                _snwprintf_s(detail, _TRUNCATE, L"今天@%u has=%d cover=%zu cands=%zu",
+                             coverJt, (int)hasJt, r.cover.size(), r.cands.size());
+                Report(parallel && hasJt && coverJt == 7,
+                       "cover: jintianqi '今天' consumes 7 ('jintian')", detail);
+            }
+
+            // P6c3. 双拼不提供 cover（键位→全拼不可逆推）：全 0 或空
+            {
+                lingxi::Settings s0 = lingxi::LoadSettings();
+                lingxi::Settings s1 = s0;
+                s1.shuangpin = true;
+                lingxi::SaveSettings(s1);
+                lingxi::Prediction r = py->Predict(L"jbtm");
+                bool allZero = true;
+                for (uint32_t cv : r.cover)
+                    if (cv != 0) { allZero = false; break; }
+                wchar_t detail[96];
+                _snwprintf_s(detail, _TRUNCATE, L"cover=%zu cands=%zu",
+                             r.cover.size(), r.cands.size());
+                Report(allZero, "cover: shuangpin provides none (all zero)", detail);
+                lingxi::SaveSettings(s0);
+            }
+
             // P6b. 翻页页码纯函数 NextPageStart：边界/夹取（不依赖引擎数据）
             {
                 struct Case { size_t total; uint32_t cur; int delta; uint32_t expect; };

@@ -15,6 +15,11 @@ struct Prediction
 {
     std::vector<std::wstring> cands; // 按优先级排序，第 0 项为首选；最多 kPredictMaxCandidates
     uint32_t replaceLen = 0;         // 上屏时需先删掉光标前的字符数（英文前缀补全用）
+    // 拼音候选部分提交（B1）：与 cands 平行的"该候选消耗的原始拼音前缀字符数"。
+    // 约定：size()==cands.size() 才有效；元素 0 = 未知/不适用（提交后全清，旧行为）。
+    // 0 < cover < 串长 → 选该词后剩余拼音留在组合里继续输入（"白打"根治）。
+    // 双拼模式引擎不提供（键位→全拼映射不可逆推），恒为空/0。
+    std::vector<uint32_t> cover;
 };
 
 class IPredictor
