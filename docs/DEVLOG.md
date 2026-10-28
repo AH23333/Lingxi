@@ -213,3 +213,20 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **flaky 归因记录（PITFALLS #33）**：T16 加入后 20 轮里 attempt1 偶发挂 1~7 个，取证确认全部为既有漂移非新回归——失败首发位置在 T14/T15（新增测试之前），且全部失败与单因一致（T14 "你hao"=部分提交后新候选 vs 空格 WaitForLatestCandidates(80ms) 竞态→CommitRaw 回退；attempt1 挂 7=T15 中段 _pinyinMode 漂移后下游全直通，T16b/c/d 失败均其症状）。attempt 间自愈（3 attempt 设计），全轮最终绿。
 
 真实 UI 已重启（PID 18700，晚于 DLL 时间戳）。
+
+## 2026-10-28 晚（五） · B2 候选窗拼音回显（backlog 收官）
+
+**范围**：LOOMY §B2 草案全落地——非 inline 模式下用户看不到自己输入的拼音，候选窗首行回显组合串（weasel 参照：WeaselUI/HorizontalLayout.cpp:18 非 inline preedit 首行模式）。
+
+**实现（纯 UI 内部，不走协议，DLL 零改动）**：
+
+- `CandWindow::Show` 签名加 `const std::wstring& composing`（window.h/window.cpp）；`Hide` 清 `_composing`；新成员 `_composing`（临界区保护，与 _cands 同生命周期）
+- `PipeServer::PredictProc`：`_wnd->Show(..., e.pinyin ? e.text : std::wstring())`——拼音请求带组合串，英文补全/续写传空（无组合）
+- `StartAsyncRerank` 签名穿透 composing（按值捕获进重排线程 lambda，同 ver 不跳变，重排更新候选窗时回显不闪）；该分支 `e.pinyin` 必真，直接传 `e.text`
+- `LayoutAndPosition`：composing 非空时高度 `+ itemH`；回显行文本（组合串+全角冒号）参与宽度竞争（长拼音撑宽窗口）
+- `OnPaint`：首行绘制 `composing + "："`——底色与候选区微区分（GDI 无 alpha，dark RGB(53,53,53)/light RGB(240,244,250) 一档实色近似半透明），文字色 dark 用浅蓝 RGB(150,190,255)/light 用 accent
+- **行判定偏移**（草案风险项：窗口高度变化影响交互定位）：`WM_MOUSEMOVE` hover 与 `WM_LBUTTONUP` 点击的行号计算减去 `pad + compH` 偏移——点回显行不选中任何候选（row 负数落 valid=false）
+
+**验证**：构建全过；regress deep_test/e2e/fix_readings PASS，engine_test 唯一红=latency（13.3ms 已知本机漂移，B2 纯 UI 改动、engine_test 不加载 UI 代码，逻辑排除）。窗体绘制无自动化断言（草案风险注记），靠真机人眼验收——真实 UI 已重启（PID 29372）。
+
+**backlog 状态**：B1/B8/B4/B3/B5/B2 全部完成，Loomy 体验整改收官。

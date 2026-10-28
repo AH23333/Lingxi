@@ -1,5 +1,11 @@
 # 交接文档（HANDOFF）
 
+## ⚡ 最新状态速报（2026-10-28 晚，B2 候选窗拼音回显——Loomy backlog 收官）
+
+- **B2 完成（backlog 收官）**：非 inline 模式候选窗首行回显拼音组合串——`CandWindow::Show` 加 composing 参数（纯 UI 内部不走协议，DLL 零改动），PredictProc 传 `e.pinyin ? e.text : L""`，重排线程同 ver 穿透不跳变；高度 +1 行、回显行宽度参与竞争、hover/点击行判定同步偏移（点回显行不选词）。GDI 无 alpha 用一档实色近似半透明区分。窗体绘制无自动化断言（人眼验收），regress 功能面全 PASS（latency 红=已知漂移）。真实 UI 已重启（PID 29372）。**B1/B8/B4/B3/B5/B2 全部完成**，Loomy 体验整改收官。
+- **B5（草案①）亦完成**：deep_test T16 四断言（单击切临时英文/再单击切回/Shift 组合使用不误切/组合中单击不丢组合），TapKey/RawKeyUp 新辅助；**顺带修真 bug**：组合中 `KeyDown(VK_SHIFT)` 落 HandlePinyinKey unmapped-default 误提交当前首选——分发层单列放行修复（weasel preserved key 等价语义），T16d 即其回归断言。flaky 归因方法论（失败首发位置+单因一致性）固化 PITFALLS #33。草案②（toggleMode 设置页升级）待用户拍板、③（全局热键）=R4 尾巴未动。
+- 潜在后续（backlog 外）：LOOMY §B5 草案② toggleMode 设置页升级；§B6 词库质量类通道（fix_readings/modern_terms）常备。
+
 ## ⚡ 最新状态速报（2026-10-28 晚，B5 Shift 切换断言 + 组合中 VK_SHIFT 误提交修复）
 
 - **B5（草案①）完成**：deep_test T16 四断言（单击切临时英文/再单击切回/Shift 组合使用不误切/组合中单击不丢组合），TapKey/RawKeyUp 新辅助；LX_LOG 取证 `Shift toggle` 翻转对。**顺带修真 bug**：组合中 `KeyDown(VK_SHIFT)` 落 HandlePinyinKey unmapped-default 误提交当前首选——分发层单列放行修复（weasel preserved key 等价语义），T16d 即其回归断言。flaky 归因方法论（失败首发位置+单因一致性）固化 PITFALLS #33。草案②（toggleMode 设置页升级）待用户拍板、③（全局热键）=R4 尾巴未动。真实 UI 已重启（PID 18700）。

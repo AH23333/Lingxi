@@ -45,10 +45,10 @@
   4. `LearnRec` 存 cover；`ApplyLearn` 学习键改用**消耗前缀**（原来整条 raw 记到"自动"这种部分词=错位学习，顺带修掉）。
 - 回归：engine_test 断言 `Predict("nihao")` 的"你"候选 cover==1、"你好"==5；deep_test T14：打 `nihao`→数字选"你"→ 组合余 `hao` 自动再预测→空格上屏"好"。
 
-### B2. 看不到自己已输入的拼音（默认非 inline 无任何回显）
-- 现状：`window.cpp` 只画候选+页码，无组合串；`CandWindow::Show(caret,cands,dark,ver)` 签名没有 text。
-- 草案：Show 加 `const std::wstring& composing` 参数（**纯 UI 内部**，不走协议）；`PredictProc` 传 `e.pinyin ? e.text : L""`；`StartAsyncRerank` 捕获同样的 raw 传头（同 ver 不跳变）；`LayoutAndPosition` 高 +1 行、`OnPaint` 首行绘制 `composing + "："`（下划线风格/半透明底色区分候选）。
-- 风险：窗口高度变化影响翻转定位（已有翻转逻辑）；deep_test 无窗体断言，靠人眼+截图。
+### B2. 看不到自己已输入的拼音（默认非 inline 无任何回显）——✅ 已完成（2026-10-28 晚，backlog 收官）
+- **✅ 按草案全落地**：`CandWindow::Show` 加 `const std::wstring& composing`（纯 UI 内部不走协议，DLL 零改动）；`PredictProc` 传 `e.pinyin ? e.text : std::wstring()`（英文补全/续写无组合传空）；`StartAsyncRerank` 签名穿透 composing 按值捕获进重排线程（同 ver 不跳变，重排更新不闪回显）；`LayoutAndPosition` 高 +1 行且回显行宽度参与竞争（长拼音撑宽）；`OnPaint` 首行绘制 `composing + "："`——GDI 无 alpha，dark RGB(53,53,53)/light RGB(240,244,250) 一档实色近似半透明，文字 dark 浅蓝/light accent。
+- **风险项落地**（草案"窗口高度变化影响翻转定位"）：hover（WM_MOUSEMOVE）与点击（WM_LBUTTONUP）行判定减 `pad + compH` 偏移，点回显行不选中任何候选；翻转定位用总高 `_height` 自适应无需改。
+- **验证边界**（草案"deep_test 无窗体断言，靠人眼+截图"）：regress 功能面全 PASS（deep_test/e2e/fix_readings；engine_test 唯一红=latency 已知本机漂移，B2 纯 UI 改动 engine_test 不加载 UI 代码逻辑排除）；窗体绘制人眼验收，真实 UI 已重启（PID 29372）。
 
 ### B3. 首字母 i/u/v 特殊拼音"键死"——与微软模式对齐
 - 用户原话"输入 i、v、u 等特殊拼音会导致其他部分按键无法使用"。
