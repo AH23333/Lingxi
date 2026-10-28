@@ -42,7 +42,26 @@ IPredictor* CreatePinyinPredictor();
 // 任一资源缺失 → 返回 nullptr（调用方自然落到词表引擎）。
 IPredictor* CreateLlmPredictor();
 
+// 拼音候选重排器：根据已上屏上文，用 LLM 对候选做指令式重排。
+// 与 LlmPredictor 共享同一份模型/上下文（不重复加载）。
+class ILlmReranker
+{
+public:
+    virtual ~ILlmReranker() = default;
+    // committedCtx=已上屏上文；cands=拼音候选（原始顺序）。
+    // 返回候选下标的重排（长度须等于 cands.size()）；失败/超时/未就绪返回空 = 保持原序。
+    virtual std::vector<size_t> Rerank(const std::wstring& committedCtx,
+                                       const std::vector<std::wstring>& cands,
+                                       uint64_t deadlineMs) = 0;
+    // 调用方（管道层）捕获 llama 内部硬件异常时熔断：本会话永久禁用 LLM
+    // （不重启不重试），续写链自然落到词表引擎。默认空实现（非 LLM 实现无所谓）。
+    virtual void MarkBroken() {}
+    virtual bool Broken() const { return false; }
+};
+
 // 装配降级链：LLM（若可用）→ 词表。返回值所有权归调用方。
-IPredictor* CreatePredictorChain();
+// sharedLlm 非空时复用该 LLM 实例（不取得所有权，由调用方保证其生命周期，
+// 通常让返回的 chain 持有）；为空时内部自行创建。
+IPredictor* CreatePredictorChain(IPredictor* sharedLlm = nullptr);
 
 } // namespace lingxi

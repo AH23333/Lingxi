@@ -5,16 +5,68 @@
 #include "../common/settings.h"
 #include "../common/log.h"
 
+#include <thread>
+
 namespace lingxi {
 
-constexpr uint32_t kDebounceMs = 120;   // 预测防抖
+constexpr uint32_t kDebounceMs = 120;   // 预测防抖（仅英文/续写：拼音引擎 µs 级，无需防抖）
 constexpr size_t kMaxQueue = 8;         // 有界队列
+constexpr uint32_t kRerankSettleMs = 120;   // 触发后先观察：被新键取代则立即退出（合并连击）
+constexpr uint32_t kRerankBudgetMs = 900;    // 两阶段重排总预算（不阻塞首次候选）
 
-bool PipeServer::Start(CandWindow* wnd, IPredictor* engine, IPredictor* pinyinEngine)
+namespace {
+
+// ---- SEH 外壳（专文 §7：llama 内部 AV 不能带崩 LingxiUI）----
+// 规则：__try 所在函数不得有需析构的局部对象（MSVC C2712），全部经 POD
+// 参数指针传递；C++ 临时对象只存在于被调函数帧。
+
+struct RerankArgs
+{
+    ILlmReranker* r;
+    const std::wstring* ctx;
+    const std::vector<std::wstring>* cands;
+    uint64_t deadline;
+    std::vector<size_t>* out;
+};
+void RerankBody(void* a)
+{
+    auto* p = (RerankArgs*)a;
+    *p->out = p->r->Rerank(*p->ctx, *p->cands, p->deadline);
+}
+bool RerankSeh(RerankArgs* a)
+{
+    __try { RerankBody(a); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+
+struct PredictArgs
+{
+    IPredictor* p;
+    const std::wstring* text;
+    Prediction* out;
+};
+void PredictBody(void* a)
+{
+    auto* p = (PredictArgs*)a;
+    *p->out = p->p->Predict(*p->text);
+}
+bool PredictSeh(PredictArgs* a)
+{
+    __try { PredictBody(a); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+
+} // namespace
+
+bool PipeServer::Start(CandWindow* wnd, IPredictor* engine, IPredictor* pinyinEngine,
+                       ILlmReranker* reranker)
 {
     _wnd = wnd;
     _engine = engine;
     _pinyinEngine = pinyinEngine;
+    _reranker = reranker;
     InitializeCriticalSection(&_cs);
     _csInit = true;
     _hStop = CreateEventW(NULL, TRUE, FALSE, NULL);
@@ -22,12 +74,12 @@ bool PipeServer::Start(CandWindow* wnd, IPredictor* engine, IPredictor* pinyinEn
 
     _wnd->SetPickHandler([this](uint32_t ver, uint32_t idx) {
         // 鼠标点击：先转发给宿主上屏，再作为选字反馈喂给拼音引擎自学习
-        ClientCtx* a = nullptr;
+        ClientPtr a;
         EnterCriticalSection(&_cs);
         a = _active;
         LeaveCriticalSection(&_cs);
         SendPick(ver, idx);
-        if (a) ApplyLearn(a, ver, idx);
+        if (a) ApplyLearn(a.get(), ver, idx);
     });
 
     _hThread = CreateThread(NULL, 0, s_AcceptProc, this, 0, NULL);
@@ -110,23 +162,28 @@ void PipeServer::AcceptProc()
         CloseHandle(ov.hEvent);
 
         LX_LOG(L"ui", L"宿主客户端已接入 pipe=%p", h);
-        auto* c = new ClientCtx();
+        ClientPtr c = std::make_shared<ClientCtx>();
         c->hPipe = h;
         c->owner = this;
-        HANDLE t = CreateThread(NULL, 0, s_ClientProc, c, 0, NULL);
-        if (t) CloseHandle(t);
-        else { CloseHandle(h); delete c; }
+        auto* param = new ClientPtr(c); // 客户端线程持一份引用
+        HANDLE t = CreateThread(NULL, 0, s_ClientProc, param, 0, NULL);
+        if (!t)
+        {
+            delete param; // 引用归零 → ClientCtx 析构并关闭句柄
+            LX_LOG(L"ui", L"客户端线程创建失败");
+        }
     }
 }
 
 DWORD WINAPI PipeServer::s_ClientProc(LPVOID p)
 {
-    auto* c = (ClientCtx*)p;
-    c->owner->ClientProc(c);
+    auto* sp = (ClientPtr*)p;
+    (*sp)->owner->ClientProc(*sp);
+    delete sp;
     return 0;
 }
 
-void PipeServer::ClientProc(ClientCtx* c)
+void PipeServer::ClientProc(ClientPtr c)
 {
     for (;;)
     {
@@ -137,22 +194,28 @@ void PipeServer::ClientProc(ClientCtx* c)
         HandleMsg(c, type, body);
     }
 
-    // 标记死亡并摘除活动标记（预测工作线程据此丢弃结果）
+    // 标记死亡并摘除活动标记（预测工作线程据此丢弃结果）。
+    // 注意：不在此处 CloseHandle——引用者（队列/重排线程）可能仍在使用；
+    // 句柄关闭在 ClientCtx 析构（最后一个引用释放）时统一执行。
     c->alive = false;
     bool wasActive = false;
     EnterCriticalSection(&_cs);
     wasActive = (_active == c);
     c->active = false;
     if (wasActive) _active = nullptr;
+    // 队列里属于本客户端的未决请求一并摘除（否则死客户端引用滞留到下次输入）
+    for (auto it = _queue.begin(); it != _queue.end();)
+    {
+        if (it->c == c) it = _queue.erase(it);
+        else ++it;
+    }
     LeaveCriticalSection(&_cs);
     if (wasActive) _wnd->Hide();
 
-    CloseHandle(c->hPipe);
     LX_LOG(L"ui", L"宿主客户端断开");
-    delete c;
 }
 
-void PipeServer::HandleMsg(ClientCtx* c, uint8_t type, const std::vector<uint8_t>& body)
+void PipeServer::HandleMsg(ClientPtr c, uint8_t type, const std::vector<uint8_t>& body)
 {
     const uint8_t* p = body.data();
     const uint8_t* end = p + body.size();
@@ -188,14 +251,20 @@ void PipeServer::HandleMsg(ClientCtx* c, uint8_t type, const std::vector<uint8_t
     {
         MsgPage pg{};
         if (ReadPod(p, end, pg))
+        {
+            c->gen.fetch_add(1); // 翻页：进行中的重排结果过期
             _wnd->SetPage(pg.ver, pg.pageStart);
+        }
         break;
     }
     case MSG_PICKED:
     {
         MsgPick pk{}; // 复用 ver+index 结构
         if (ReadPod(p, end, pk))
-            ApplyLearn(c, pk.ver, pk.index);
+        {
+            c->gen.fetch_add(1); // 已选词：进行中的重排结果过期
+            ApplyLearn(c.get(), pk.ver, pk.index);
+        }
         break;
     }
     case MSG_MODE_TOAST:
@@ -209,7 +278,7 @@ void PipeServer::HandleMsg(ClientCtx* c, uint8_t type, const std::vector<uint8_t
     }
 }
 
-void PipeServer::Activate(ClientCtx* c)
+void PipeServer::Activate(const ClientPtr& c)
 {
     EnterCriticalSection(&_cs);
     _active = c;
@@ -218,7 +287,7 @@ void PipeServer::Activate(ClientCtx* c)
     LX_LOG(L"ui", L"客户端激活 pipe=%p", c->hPipe);
 }
 
-void PipeServer::Deactivate(ClientCtx* c)
+void PipeServer::Deactivate(const ClientPtr& c)
 {
     bool wasActive = false;
     EnterCriticalSection(&_cs);
@@ -229,7 +298,7 @@ void PipeServer::Deactivate(ClientCtx* c)
     if (wasActive) _wnd->Hide();
 }
 
-void PipeServer::HandleCtx(ClientCtx* c, const std::vector<uint8_t>& body)
+void PipeServer::HandleCtx(ClientPtr c, const std::vector<uint8_t>& body)
 {
     // 双格式解析（按"POD 尺寸 + 字符串长度与帧总长自洽"判别）：
     //   V2 = 本版 MsgCtx（含 ctxChars）+ [可选 ctx 串] + text 串；
@@ -297,9 +366,9 @@ void PipeServer::HandleCtx(ClientCtx* c, const std::vector<uint8_t>& body)
     EnqueuePredict(c, m.ver, text, c->dark, rc, (m.flags & CTX_F_PINYIN) != 0, ctx);
 }
 
-void PipeServer::EnqueuePredict(ClientCtx* c, uint32_t ver, const std::wstring& text,
-                                bool dark, const RECT& caret, bool pinyin,
-                                const std::wstring& ctx)
+void PipeServer::EnqueuePredict(const ClientPtr& c, uint32_t ver, const std::wstring& text,
+                                 bool dark, const RECT& caret, bool pinyin,
+                                 const std::wstring& ctx)
 {
     PendingPredict e;
     e.c = c;
@@ -340,7 +409,9 @@ void PipeServer::PredictProc()
 
         PendingPredict e;
         bool have = false;
-        // 取最新请求 + 120ms 防抖合并（打字是连续事件，等一等收后面的更新）
+        // 取最新请求 + 防抖合并（打字是连续事件，等一等收后面的更新）。
+        // 拼音请求不防抖：引擎 µs 级，"取最新"本身已合并——候选即时性优先
+        // （120ms 防抖曾让快打+空格抢在候选回包前上屏字母原文）。
         for (;;)
         {
             {
@@ -354,6 +425,7 @@ void PipeServer::PredictProc()
                 LeaveCriticalSection(&_cs);
             }
             if (!have) break;
+            if (e.pinyin) break; // 拼音：立刻处理
             uint64_t age = GetTickCount64() - e.enqueuedAt;
             if (age >= kDebounceMs) break;
             Sleep((DWORD)(kDebounceMs - age));
@@ -363,11 +435,26 @@ void PipeServer::PredictProc()
         if (WaitForSingleObject(_hStop, 0) != WAIT_TIMEOUT) break;
 
         // 预测期间不持任何锁（引擎可能耗时 300ms）
-        // 拼音模式走专用引擎（组合字母串→汉字），否则走上下文降级链
+        // 拼音模式走专用引擎（组合字母串→汉字），否则走上下文降级链。
+        // 降级链含 LLM（llama 第三方代码）：SEH 捕获硬件异常 → 本会话熔断，
+        // 续写自然落到词表引擎；拼音引擎异常只丢当前帧（不熔断）。
         uint64_t tPred = GetTickCount64();
-        Prediction pred = (e.pinyin && _pinyinEngine)
-                              ? _pinyinEngine->Predict(e.text)
-                              : _engine->Predict(e.text);
+        Prediction pred;
+        {
+            IPredictor* eng = (e.pinyin && _pinyinEngine) ? _pinyinEngine : _engine;
+            PredictArgs pa{ eng, &e.text, &pred };
+            if (!PredictSeh(&pa))
+            {
+                pred = Prediction{};
+                if (eng == _engine && _reranker)
+                {
+                    _reranker->MarkBroken();
+                    LX_LOG(L"pipe", L"预测引擎异常，LLM 已熔断（本会话词表兜底）");
+                }
+                else
+                    LX_LOG(L"pipe", L"拼音引擎异常，本帧丢弃");
+            }
+        }
         if (WaitForSingleObject(_hStop, 0) != WAIT_TIMEOUT) break;
         LX_LOG(L"pipe", L"预测 ver=%u pinyin=%d 耗时=%llums -> %u 候选",
                e.ver, (int)e.pinyin, (unsigned long long)(GetTickCount64() - tPred),
@@ -419,8 +506,77 @@ void PipeServer::PredictProc()
             e.c->lastLearn.cands = pred.cands;
             LeaveCriticalSection(&_cs);
         }
-        SendCandidates(e.c, e.ver, pred);
+        SendCandidates(e.c.get(), e.ver, pred);
+
+        // 两阶段重排：原序已显示，后台按上文重排 top-8（不阻塞首次候选）。
+        // 门槛：≥2 候选（单候选重排是纯浪费）；ctx 非空（无上文时 LLM 无从判断
+        // 连贯性，prompt 退化为频度复读，省一次调用）；陈旧闸 ≤400ms。
+        if (e.pinyin && _reranker && st.llmRerank && !_reranker->Broken() &&
+            pred.cands.size() >= 2 && !e.ctx.empty() &&
+            GetTickCount64() - e.enqueuedAt <= 400)
+        {
+            uint32_t myGen = e.c->gen.fetch_add(1) + 1; // 本次预测占一个交互代
+            uint32_t mySeq = e.c->rrSeq.fetch_add(1) + 1; // 使更早的重排线程作废（合并）
+            StartAsyncRerank(e.c, e.ver, pred.cands, dark, e.caret, e.ctx, myGen, mySeq);
+        }
     }
+}
+
+bool PipeServer::RerankStillCurrent(ClientCtx* c, uint32_t ver, uint32_t gen, uint32_t seq)
+{
+    EnterCriticalSection(&_cs);
+    bool ok = c->alive && _active.get() == c && c->lastLearn.ver == ver &&
+              c->gen.load() == gen && c->rrSeq.load() == seq;
+    LeaveCriticalSection(&_cs);
+    return ok;
+}
+
+void PipeServer::StartAsyncRerank(const ClientPtr& c, uint32_t ver,
+                                  const std::vector<std::wstring>& cands,
+                                  bool dark, const RECT& caret,
+                                  const std::wstring& ctx, uint32_t gen, uint32_t seq)
+{
+    // 按值捕获全部上下文（线程独立，不依赖栈/队列）；c 为 shared_ptr 引用——
+    // 客户端断线时 ClientCtx 不会被提前释放，本线程用完才归还（防悬垂）。
+    std::thread([this, c, ver, cands, dark, caret, ctx, gen, seq]() {
+        // 合并连击：先观察一小段。若期间用户又敲了新键（新重排序号已占位），
+        // 本线程立刻退出——拼音每键即时预测后，只有最后一键触发的重排有活干。
+        Sleep(kRerankSettleMs);
+        if (WaitForSingleObject(_hStop, 0) != WAIT_TIMEOUT) return;
+        if (!c->alive || c->rrSeq.load() != seq) return;
+
+        // 重排总预算 900ms（两阶段，不阻塞首次候选）；deadline 为绝对时刻
+        uint64_t deadline = GetTickCount64() + kRerankBudgetMs;
+        if (!RerankStillCurrent(c.get(), ver, gen, seq)) return;
+
+        std::vector<size_t> order;
+        RerankArgs ra{ _reranker, &ctx, &cands, deadline, &order };
+        if (!RerankSeh(&ra))
+        {
+            _reranker->MarkBroken(); // llama 内部 AV：本会话熔断，不再重试
+            LX_LOG(L"pipe", L"重排引擎异常，本次回退原序（LLM 已熔断）");
+            return;
+        }
+        if (order.empty()) return;
+
+        // 核对：客户端仍在、仍活跃、ver 未被新预测覆盖、期间无翻页/选词/新重排
+        if (!RerankStillCurrent(c.get(), ver, gen, seq)) return;
+
+        // 重组：重排 top-K + 其余候选保持原序
+        size_t k = min(cands.size(), order.size());
+        std::vector<std::wstring> reordered;
+        reordered.reserve(cands.size());
+        for (size_t idx : order) reordered.push_back(cands[idx]);
+        for (size_t i = k; i < cands.size(); i++) reordered.push_back(cands[i]);
+
+        Prediction pred2;
+        pred2.cands = reordered;
+        pred2.replaceLen = 0;
+        // 回到第一页并更新候选窗（同 ver，宿主无需感知）
+        _wnd->Show(caret, reordered, dark, ver);
+        SendCandidates(c.get(), ver, pred2);
+        LX_LOG(L"pipe", L"LLM 重排生效(两阶段) ver=%u k=%u", ver, (uint32_t)k);
+    }).detach();
 }
 
 void PipeServer::SendCandidates(ClientCtx* c, uint32_t ver, const Prediction& pred)
@@ -438,7 +594,7 @@ void PipeServer::SendCandidates(ClientCtx* c, uint32_t ver, const Prediction& pr
 
 void PipeServer::SendPick(uint32_t ver, uint32_t index)
 {
-    ClientCtx* a = nullptr;
+    ClientPtr a;
     EnterCriticalSection(&_cs);
     a = _active;
     LeaveCriticalSection(&_cs);
@@ -452,7 +608,7 @@ void PipeServer::SendPick(uint32_t ver, uint32_t index)
 // 符号面板：把符号文本发给当前活跃客户端，DLL 侧经封送窗口插入。
 void PipeServer::SendInsertText(const std::wstring& text)
 {
-    ClientCtx* a = nullptr;
+    ClientPtr a;
     EnterCriticalSection(&_cs);
     a = _active;
     LeaveCriticalSection(&_cs);

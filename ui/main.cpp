@@ -168,13 +168,18 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     if (!wnd.Init(hInst))
         return 1;
 
-    // 预测降级链：LLM（若 llama.dll/模型就绪）→ 词表引擎（永远可用）
-    lingxi::IPredictor* engine = lingxi::CreatePredictorChain();
+    // 共享 LLM 实例：同时用于续写链与拼音候选重排（只加载一次模型）
+    lingxi::IPredictor* sharedLlm = lingxi::CreateLlmPredictor();
+    lingxi::ILlmReranker* reranker = nullptr;
+    if (sharedLlm)
+        reranker = dynamic_cast<lingxi::ILlmReranker*>(sharedLlm);
+    // 预测降级链：LLM（共享）→ 词表引擎（永远可用）；chain 持有 sharedLlm 所有权
+    lingxi::IPredictor* engine = lingxi::CreatePredictorChain(sharedLlm);
     // M5 拼音引擎（zh-CN profile 组合模式下使用；数据缺失时为 null，拼音直拼兜底）
     lingxi::IPredictor* pinyinEngine = lingxi::CreatePinyinPredictor();
 
     lingxi::PipeServer server;
-    if (!server.Start(&wnd, engine, pinyinEngine))
+    if (!server.Start(&wnd, engine, pinyinEngine, reranker))
         return 1; // 已有实例在运行（或内部错误）
 
     if (hReady) SetEvent(hReady); // 管道服务已监听；句柄随进程存活，不主动关
