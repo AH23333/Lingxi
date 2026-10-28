@@ -68,9 +68,10 @@
 - 新反馈（Edge 插件快捷键被吞）**15:52 已核实**：全局键占用只有 `main.cpp:205-207` 的 `RegisterHotKey(Ctrl+Shift+B, MOD_NOREPEAT)`，**默认开**（settings.h `symbolHotkey=true`）；DLL 侧 grep 证实**无** `SetWindowsHookEx`（不是钩子链问题）。归因步骤：Edge 里先关设置项复现；仍失效再查中文模式下 TestKeyDown 的 eaten 面。修复（下一轮小步做）：symbolHotkey **默认关**（对齐"不默认强加全局占用"的既定原则，类比 llmRerank）+ 设置页文案注明该组合键为系统级独占 + deep_test T17：符号热键开/关两态下 F5/Ctrl+Shift+B/Win 组合在组合态不被 DLL 吞的断言。
 - **✅ B8 已完成（`06548a8`）**：默认关 + 文案（注明 Edge 冲突/托盘入口）落地；用户 HKCU 旧默认残留 SymbolHotkey=1 已清 0 并重启真实 UI（热键即时释放）。T17 未做：需在测试内编排 HKCU 两态+UI 重启，ROI 低，验证靠设置页开关+Edge 实测即可。
 
-### B5. 中文切换只有 Win+Space 硬切——Shift 单击用户无感 + 自定义诉求（未动，见上）
-- 现状：shiftToggle（Shift 单击）已实现且默认 true（OnKeyDown VK_SHIFT 单按→`_tempEnglish`+WM_APP_LX_MODE→`SendModeToggleToast`）；用户没感知到 = 要么没装上成功（老 DLL 驻留！§2），要么单击判定窗口太苛刻。
-- 草案：①deep_test T16 断言"zh 模式+空组合→单击 Shift→再打字母直通且候选不弹"（现 T0 对照测过 toast，选路没测全）；②设置页把 `shiftToggle(bool)` 升级 `toggleMode(0无/1左Shift/2 Shift或Ctrl)`——`settings.h` 加字段 + `settings.cpp` 双读兼容（旧键仍写）；③全局自定义热键（注册表可配 Ctrl+Shift+Space）= R4 尾巴大项，别在收尾轮动。
+### B5. 中文切换只有 Win+Space 硬切——Shift 单击用户无感 + 自定义诉求——✅ 草案①已完成（2026-10-28 晚）
+- **✅ 草案①（deep_test T16）已完成**：四断言——空组合单击 Shift 切临时英文（字母 eaten=FALSE 直通）/再单击切回（字母进组合）/Shift 按住期间打字（_shiftUsed 路径 KeyUp 不翻转）/组合中单击 Shift 不丢组合不误提交；新辅助 TapKey（完整单击 down+up）+ RawKeyUp。**顺带修真 bug**：组合中 `KeyDown(VK_SHIFT)` 落 HandlePinyinKey unmapped-default 误提交当前首选（用户"按 Shift 打大写"被打断）——分发层单列 VK_SHIFT 放行修复（Ctrl/Alt 本体被 CtrlOrAltDown keystate 覆盖、Shift 无覆盖需单列；weasel preserved key 等价语义）；T16d 即该修复回归断言。LX_LOG 取证 `Shift toggle -> tempEnglish=1/0` 翻转对。flaky 归因（失败首发位置+单因一致性）固化 PITFALLS #33。真实 UI 已重启（PID 18700）。
+- 现状补充（修后）：shiftToggle 单击链路日志级确认工作正常；用户无感主因历史判断不变（老 DLL 驻留，§2）。
+- 未做：**草案②**（设置页 shiftToggle 升级 toggleMode 0无/1左Shift/2 Shift或Ctrl——settings.h 加字段+settings.cpp 双读兼容）待用户拍板工作量小可下轮；**草案③** 全局自定义热键=R4 尾巴大项，收尾轮别动。
 
 ### B6. 词库质量类
 - fix_readings + modern_terms 是**仅有的两条改数据通道**，都不手改 `bin\*\data` 生成物副本（会被 build 覆盖/漂移，本轮实证过）。新词进 `tools/modern_terms.txt` 一行 → `build_pinyin --modern-only` 幂等生效 → engine 断言收口。

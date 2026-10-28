@@ -187,3 +187,11 @@
 - **症状**：deep_test `pinyin mode settle` FAIL（probe_q_eaten=0）连续 6+ 轮全红（T0-T15 全空、e2e pass-through 三连败），同二进制 30 分钟前刚 22/22 全绿——间歇楔死、重试壳都救不回（单 attempt 内永不再自愈的假象）。
 - **排查取证（顺序即方法论）**：①InitSinks 日志三 hr 全 S_OK 排除注册失败；②拼音模式=1 且 PinyinKeyEaten 对无修饰字母必吃，锁定"键没到 DLL"；③OnTestKeyDown/OnKeyDown 入口日志（LX_LOG 门控）楔死时零键事件=msctf 没派发；④GetActiveProfile 楔死时返回灵犀自己——"被微软拼音抢占"假设证伪（前台线程 HKL=0x08040804、灵犀不在 WinUserLanguageList 都曾是误导线索）；⑤决定性证据：settle 15 次探测全红的 attempt，1 秒后 T2 起全过——旧 API 激活后 msctf 按键派发有**可变长就绪延迟**（1s～60s+，随 ctfmon/负载漂移），settle 的 3 秒窗口常不够。
 - **正确做法**：程序化激活一律 `ITfInputProcessorProfileMgr::ActivateProfile`（Win8+，走完整输入法切换路径，ctfmon 侧状态同步完整；initguid.h 先包含则全部 GUID 直接可用），旧 `ITfInputProcessorProfiles::ActivateLanguageProfile` 仅做回退；就绪探测窗口给足（deep_test settle 15s）；楔死取证三件套：sink 注册 hr、GetActiveProfile、OnTestKeyDown 入口日志——"注册 ✓+active ✓+零派发"即本坑签名。修后 deep_test 6 连 22/22、regress ALL PASS。
+
+## B5 收口轮（2026-10-28 晚）
+
+### 33. 新增测试后断言连环红：先看失败首发位置+单因一致性，再定回归/漂移；修饰键本体绝不能落"unmapped 提交"路径 ⭐️
+- **症状A（bug）**：组合中 tap Shift 会把当前**首选误上屏**——`KeyDown(VK_SHIFT)` 落 `HandlePinyinKey` `default:` 的"unmapped 提交首选"回退（该回退本意是标点/未知键收组合，不是给修饰键的）。用户"按 Shift 想打大写"场景组合被打断。
+- **修法**：修饰键本体在分发层单列放行。Ctrl/Alt 本体在 KeyDown 时 keystate 已置位、被 `CtrlOrAltDown()` 闸自然覆盖，**Shift 无此覆盖必须单列**（`wParam == VK_SHIFT → *pfEaten = FALSE; return`，放 CtrlOrAltDown 闸后）。weasel 参照：VK_SHIFT 注册为 preserved key 单独处理，不当普通键分发——普通 key sink 架构下的等价语义就是分发层放行。
+- **症状B（归因方法论）**：T16 加入后 deep_test attempt1 偶发挂 1~7 个（T14/T15/T10/T12/T16 混杂），像极了新测试污染。取证三板斧：①**失败首发位置**——挂的 T14/T15 在 T16 之前，T16 不可能是因；②**单因一致性**——attempt1 挂 7 个全部与"_pinyinMode 漂移/候选超时"单因一致（vEaten=0、bPass=0、mid=0 都是直通症状），无第二解释需求；③**LX_LOG 取证**——`Shift toggle -> tempEnglish=1/0` 翻转对正常、OnTestKeyDown 的 vk/py/tmpEn/v/fAct 列直接读漂移值。结论：既有 flaky（T14 "你hao"=部分提交后新候选 vs 空格 `WaitForLatestCandidates(80ms)` 竞态→CommitRaw 回退；T10/T12=激活/模式漂移）暴露增多，非 T16 回归，attempt 间自愈后全绿。
+- **正确做法**：新增测试后连环红，先问"失败首发在新增测试之前吗？"——在之前直接排除新回归假设；再看失败组能否被**一个单因**解释（能=漂移/竞态，不能=真回归）；最后 LX_LOG 拿状态列实证。别一红就回滚自己的改动。

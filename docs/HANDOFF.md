@@ -1,5 +1,10 @@
 # 交接文档（HANDOFF）
 
+## ⚡ 最新状态速报（2026-10-28 晚，B5 Shift 切换断言 + 组合中 VK_SHIFT 误提交修复）
+
+- **B5（草案①）完成**：deep_test T16 四断言（单击切临时英文/再单击切回/Shift 组合使用不误切/组合中单击不丢组合），TapKey/RawKeyUp 新辅助；LX_LOG 取证 `Shift toggle` 翻转对。**顺带修真 bug**：组合中 `KeyDown(VK_SHIFT)` 落 HandlePinyinKey unmapped-default 误提交当前首选——分发层单列放行修复（weasel preserved key 等价语义），T16d 即其回归断言。flaky 归因方法论（失败首发位置+单因一致性）固化 PITFALLS #33。草案②（toggleMode 设置页升级）待用户拍板、③（全局热键）=R4 尾巴未动。真实 UI 已重启（PID 18700）。
+- backlog 剩余：**B2 候选窗拼音回显**（B1/B8/B4/B3/B5 已完成，见下方各 ✅ 行与 cur/LOOMY-HANDOFF.md）。
+
 > 最近更新：2026-10-28 凌晨（QC 代理代更：R2-R4 功能面全部落地、Edge 兼容用户实测确认、R3/R5 预探索完成）。**任何代理读完本文档即可直接接手。**
 > 配套阅读：[PROGRESS.md](PROGRESS.md) · [DEVLOG.md](DEVLOG.md) · [PITFALLS.md](PITFALLS.md)（20 条踩坑，#17-#19 为崩溃三段式）· [README.md](../README.md) · 双代理协作目录 [cur/](../cur/)（含 QC 报告与 R2-R5 预探索指南）
 

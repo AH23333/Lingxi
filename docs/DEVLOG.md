@@ -193,3 +193,23 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **修复**：deep_test/e2e 程序化激活从旧 `ITfInputProcessorProfiles::ActivateLanguageProfile` 换成 Win8+ `ITfInputProcessorProfileMgr::ActivateProfile`（走完整输入法切换路径，ctfmon 侧状态同步完整；旧 API 只做线程内 profile 激活，派发就绪无保证），回退旧 API 兜底；deep_test settle 探测窗口 3s→15s 覆盖残余就绪延迟；settle 失败诊断追加 GetActiveProfile 取证。
 
 **验证**：deep_test 修复后 **6 连 22/22 全绿**；regress 一键回归 **ALL PASS**（engine_test 174+ 断言含 latency 绿 / fix_readings / deep_test T15 / e2e attempt1 直接过）。真实环境 UI 已重启（StartTime 晚于 DLL 构建时间戳，PITFALLS #27 复核过）。教训固化 PITFALLS #32。
+
+## 2026-10-28 晚（四） · B5 Shift 单击切换断言 + 组合中 VK_SHIFT 误提交修复
+
+**范围**：LOOMY §B5 草案①（T16 断言）。草案②（shiftToggle→toggleMode 设置页升级）与③（全局热键）本轮未动——②是设置页 UI 改动待用户拍板，③=R4 尾巴大项明确收尾轮不动。
+
+**顺带真 bug 修复（composition.cpp）**：写 T16 前审读链路发现——组合中 `KeyDown(VK_SHIFT)` 落 `HandlePinyinKey` `default:` 的"unmapped 提交首选"路径（composition.cpp:864），**组合中 tap Shift 会把当前首选误上屏**（用户"按 Shift 想打大写"场景被打断）。修法：HandlePinyinKey 在 CtrlOrAltDown 闸后单列 `wParam == VK_SHIFT` 原样放行——Ctrl/Alt 本体在 KeyDown 时 keystate 已置位、被 CtrlOrAltDown 覆盖，Shift 无该覆盖需单列（weasel 参照：KeyEventSink.cpp:189 将 VK_SHIFT 注册为 preserved key 单独处理，不当普通键分发）。修复只动分发层，OnKeyUp 的单击翻转判定（_shiftDown/_shiftUsed/_shiftWasActive）不变。
+
+**deep_test T16（4 Report，TapKey/RawKeyUp 两个新辅助）**：
+
+- TapKey（TestKeyDown+KeyDown+KeyUp 完整单击）+ RawKeyUp（裸 KeyUp，配合 TypeKey 组"按住期间打字"序列）
+- T16a 空组合单击 Shift→切临时英文（'a' TestKeyDown/KeyDown 均 eaten=FALSE 直通）
+- T16b 再单击切回中文（'a' 进组合 eaten=TRUE，Esc 可清）
+- T16c Shift 按住期间打字→KeyUp 不翻转（模拟限制：GetKeyState(VK_SHIFT) 不随 pKm 模拟变，断言对象是 DLL 内部 _shiftUsed 判定非真实 Shift+字母直通）
+- T16d 组合中单击 Shift：组合不丢（'i' 续组合）+ **首选不被误提交**（t2 空=VK_SHIFT 修复回归断言）
+
+**验证**：deep_test attempt1 全绿 PASS=26 FAIL=0（22+4）；20 轮循环里 T16 自身零失败，LX_LOG 取证 `Shift toggle -> tempEnglish=1/0` 三次翻转对。regress：fix_readings/deep_test/e2e PASS，engine_test 唯一红=latency（A/B：同二进制 run1 6.9ms PASS / run2 13.1ms FAIL=已知本机漂移非回归）。
+
+**flaky 归因记录（PITFALLS #33）**：T16 加入后 20 轮里 attempt1 偶发挂 1~7 个，取证确认全部为既有漂移非新回归——失败首发位置在 T14/T15（新增测试之前），且全部失败与单因一致（T14 "你hao"=部分提交后新候选 vs 空格 WaitForLatestCandidates(80ms) 竞态→CommitRaw 回退；attempt1 挂 7=T15 中段 _pinyinMode 漂移后下游全直通，T16b/c/d 失败均其症状）。attempt 间自愈（3 attempt 设计），全轮最终绿。
+
+真实 UI 已重启（PID 18700，晚于 DLL 时间戳）。
