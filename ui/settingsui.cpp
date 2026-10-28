@@ -605,6 +605,146 @@ void CreateUserDictWindow(HINSTANCE hInst)
 
 // ---------------- 设置窗口 ----------------
 
+// 流式重排布局：控件注册进 g_layout（WRAP 可换行并排 / SECTION 段标题独行
+// / BOTTOM 锚底），LayoutSettings() 按客户区宽度流式排布——窗口加宽自动
+// 折成多列，拖拽缩放（WS_THICKFRAME）有实际意义。
+namespace {
+
+enum LayoutFlags
+{
+    IT_WRAP = 1,    // 可与相邻项并排，放不下换行
+    IT_SECTION = 2, // 段标题：强制新行
+    IT_BOTTOM = 8,  // 锚定窗口底部（保存提示等）
+};
+
+struct CtlItem
+{
+    HWND h = nullptr;   // 主控件
+    HWND h2 = nullptr;  // 可选副控件（标签+下拉成对时：h=标签 h2=下拉）
+    int pw = 0;         // 首选宽
+    int ph = 0;         // 高
+    int lw = 0;         // 成对项的标签宽（其余 0）
+    int flags = 0;
+};
+
+std::vector<CtlItem> g_layout;
+HBRUSH g_hBgBrush = nullptr;
+int g_setMinW = 0, g_setMinH = 0; // WM_GETMINMAXINFO 下限（DPI 缩放后）
+int g_setDpi = 96;
+int g_scrollY = 0; // 设置页纵向滚动偏移（内容超出客户区时）
+
+int MeasureTextW(HWND owner, HFONT f, const wchar_t* text)
+{
+    HDC dc = GetDC(owner);
+    HGDIOBJ old = SelectObject(dc, f);
+    SIZE sz{};
+    GetTextExtentPoint32W(dc, text, (int)wcslen(text), &sz);
+    SelectObject(dc, old);
+    ReleaseDC(owner, dc);
+    return sz.cx;
+}
+
+int LayoutSettings()
+{
+    if (!g_hSettings) return 0;
+    RECT rc{};
+    GetClientRect(g_hSettings, &rc);
+    int cw = rc.right, ch = rc.bottom;
+    if (cw <= 0 || ch <= 0) return 0;
+    int pad = MulDiv(16, g_setDpi, 96), gap = MulDiv(10, g_setDpi, 96);
+
+    // 底部锚定项先收集：内容流排完后放 max(内容尾, 客户底-高-pad)
+    int bottomH = 0;
+    for (const auto& it : g_layout)
+        if (it.flags & IT_BOTTOM) bottomH += it.ph;
+
+    int x = pad, y = pad, rowH = 0;
+    int contentEnd = 0;
+    for (const auto& it : g_layout)
+    {
+        if (it.flags & IT_BOTTOM) continue;
+        int w = it.pw;
+        if (it.flags & IT_SECTION) // 段标题：独行占满整行
+        {
+            w = cw - pad * 2;
+            x = pad;
+            y += rowH + (rowH ? gap * 2 : 0);
+            rowH = 0;
+        }
+        else if (x > pad && x + w > cw - pad)
+        {
+            x = pad; // 放不下：换行
+            y += rowH + gap;
+            rowH = 0;
+        }
+        if (w > cw - pad * 2) w = cw - pad * 2;
+        if (it.h2)
+        {
+            // 约定：h=标签（实测宽 lw），h2=控件（填满剩余）
+            MoveWindow(it.h, x, y - g_scrollY, it.lw, it.ph, TRUE);
+            MoveWindow(it.h2, x + it.lw + gap, y - g_scrollY, w - it.lw - gap, it.ph, TRUE);
+        }
+        else
+        {
+            MoveWindow(it.h, x, y - g_scrollY, w, it.ph, TRUE);
+        }
+        rowH = (rowH > it.ph) ? rowH : it.ph;
+        x += w + gap;
+        contentEnd = (contentEnd > y + rowH) ? contentEnd : y + rowH;
+    }
+    // 锚底项：不早于内容尾+间距，不晚于客户底-高-pad（内容短时贴底不滚动）
+    int flowEnd = contentEnd + gap;
+    int anchor = g_scrollY + ch - bottomH - pad;
+    int hintY = (flowEnd > anchor) ? flowEnd : anchor;
+    int by = hintY;
+    for (const auto& it : g_layout)
+    {
+        if (!(it.flags & IT_BOTTOM)) continue;
+        MoveWindow(it.h, pad, by - g_scrollY, cw - pad * 2, it.ph, TRUE);
+        by += it.ph;
+    }
+    if (hintY > anchor) return by + pad; // 内容超出：虚拟内容总高
+    return ch; // 内容贴底：恰好占满客户区，不触发滚动
+}
+
+// 滚动条开关+范围同步：内容超出客户区才显示 WS_VSCROLL（FRAMECHANGED 会
+// 再触发一次 WM_SIZE→LayoutSettings，样式已一致，收敛）
+void UpdateSettingsScrollbar(int contentH)
+{
+    if (!g_hSettings) return;
+    RECT rc{};
+    GetClientRect(g_hSettings, &rc);
+    int clientH = rc.bottom;
+    bool needScroll = contentH > clientH;
+    LONG_PTR style = GetWindowLongPtrW(g_hSettings, GWL_STYLE);
+    bool hasScroll = (style & WS_VSCROLL) != 0;
+    if (needScroll != hasScroll)
+    {
+        SetWindowLongPtrW(g_hSettings, GWL_STYLE,
+                          needScroll ? (style | WS_VSCROLL) : (style & ~WS_VSCROLL));
+        SetWindowPos(g_hSettings, NULL, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER | SWP_FRAMECHANGED);
+    }
+    if (!needScroll)
+    {
+        if (g_scrollY != 0) { g_scrollY = 0; LayoutSettings(); }
+        return;
+    }
+    SCROLLINFO si{};
+    si.cbSize = sizeof(si);
+    si.fMask = SIF_RANGE | SIF_PAGE | SIF_POS;
+    si.nMin = 0;
+    si.nMax = contentH;
+    si.nPage = clientH > 0 ? (UINT)clientH : 1;
+    int maxPos = contentH - clientH;
+    if (g_scrollY > maxPos) g_scrollY = maxPos;
+    if (g_scrollY < 0) g_scrollY = 0;
+    si.nPos = g_scrollY;
+    SetScrollInfo(g_hSettings, SB_VERT, &si, TRUE);
+}
+
+} // namespace
+
 LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg)
@@ -641,6 +781,72 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         }
         break;
 
+    case WM_SIZE:
+        UpdateSettingsScrollbar(LayoutSettings()); // 缩放→重排→滚动范围同步
+        return 0;
+    case WM_VSCROLL:
+    {
+        SCROLLINFO si{};
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_ALL;
+        GetScrollInfo(hwnd, SB_VERT, &si);
+        int line = MulDiv(30, g_setDpi, 96);
+        int pos = (int)si.nPos;
+        switch (LOWORD(wParam))
+        {
+        case SB_LINEUP: pos -= line; break;
+        case SB_LINEDOWN: pos += line; break;
+        case SB_PAGEUP: pos -= (int)si.nPage; break;
+        case SB_PAGEDOWN: pos += (int)si.nPage; break;
+        case SB_THUMBTRACK:
+        case SB_THUMBPOSITION: pos = (int)si.nTrackPos; break;
+        default: return 0;
+        }
+        int maxPos = (int)si.nMax - (int)si.nPage;
+        if (maxPos < 0) maxPos = 0;
+        if (pos < 0) pos = 0;
+        if (pos > maxPos) pos = maxPos;
+        if (pos != g_scrollY)
+        {
+            g_scrollY = pos;
+            UpdateSettingsScrollbar(LayoutSettings());
+        }
+        return 0;
+    }
+    case WM_MOUSEWHEEL:
+    {
+        int delta = (short)HIWORD(wParam); // 正=前滚(向上)
+        SCROLLINFO si{};
+        si.cbSize = sizeof(si);
+        si.fMask = SIF_ALL;
+        GetScrollInfo(hwnd, SB_VERT, &si);
+        int pos = g_scrollY - (delta / 40) * MulDiv(30, g_setDpi, 96); // 120→3 行
+        int maxPos = (int)si.nMax - (int)si.nPage;
+        if (maxPos < 0) maxPos = 0;
+        if (pos < 0) pos = 0;
+        if (pos > maxPos) pos = maxPos;
+        if (pos != g_scrollY)
+        {
+            g_scrollY = pos;
+            UpdateSettingsScrollbar(LayoutSettings());
+        }
+        return 0;
+    }
+    case WM_GETMINMAXINFO:
+    {
+        // 宽度下限=最窄可读；高度任意（超出靠纵向滚动）；上限防失控
+        auto* mmi = (MINMAXINFO*)lParam;
+        mmi->ptMinTrackSize.x = g_setMinW;
+        mmi->ptMinTrackSize.y = g_setMinH;
+        mmi->ptMaxTrackSize.x = MulDiv(1600, g_setDpi, 96);
+        mmi->ptMaxTrackSize.y = MulDiv(2200, g_setDpi, 96);
+        return 0;
+    }
+    case WM_CTLCOLORSTATIC:
+        // 浅底配色：静态文本/复选框文字统一灰黑，背景与窗口底色一致
+        SetBkColor((HDC)wParam, RGB(248, 250, 252));
+        SetTextColor((HDC)wParam, RGB(64, 68, 78));
+        return (LRESULT)g_hBgBrush;
     case WM_CLOSE:
         ShowWindow(hwnd, SW_HIDE); // 关闭=隐藏，保留控件状态
         return 0;
@@ -657,128 +863,155 @@ void CreateSettingsWindow(HINSTANCE hInst)
     wc.hInstance = hInst;
     wc.hIcon = g_hIcon;
     wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
+    if (!g_hBgBrush)
+        g_hBgBrush = CreateSolidBrush(RGB(248, 250, 252));
+    wc.hbrBackground = g_hBgBrush; // 浅底配色；缩放时正确擦除背景
     wc.lpszClassName = kSettingsWndClass;
     RegisterClassExW(&wc);
 
-    // 客户区 380x300，随 DPI 简单缩放（96 基准）
+    // 随 DPI 简单缩放（96 基准）；WS_THICKFRAME 可拖拽缩放，WM_SIZE 流式重排
     UINT dpi = 96;
     if (auto pGetDpi = (UINT(WINAPI*)())GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForSystem"))
         dpi = pGetDpi();
     int scale = (int)dpi;
-    int W = MulDiv(440, scale, 96), H = MulDiv(742, scale, 96);
-    int x = MulDiv(16, scale, 96), y = MulDiv(16, scale, 96);
+    g_setDpi = (int)dpi;
     int rowH = MulDiv(30, scale, 96);
+    int comboListUnits = 8; // 下拉弹开高度=行高倍数（条目多）
 
     // 关键：创建子控件期间 Edit 会触发 EN_CHANGE、复选框初始为未勾选，若此时
     // 回写会把所有设置污染为 0。整个控件创建期间屏蔽保存，直到 LoadToControls
     // 正确加载后才放开（LoadToControls 结束时会把 g_updating 复位为 false）。
     g_updating = true;
+    g_layout.clear();
 
     g_hSettings = CreateWindowExW(0, kSettingsWndClass, L"灵犀输入法设置",
-                                  WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-                                  CW_USEDEFAULT, CW_USEDEFAULT, W, H, NULL, NULL, hInst, NULL);
+                                  WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
+                                  WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME,
+                                  CW_USEDEFAULT, CW_USEDEFAULT,
+                                  MulDiv(680, scale, 96), MulDiv(560, scale, 96),
+                                  NULL, NULL, hInst, NULL);
 
     g_hFont = CreateFontW(-MulDiv(12, scale, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                           CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
 
-    auto mkStatic = [&](const wchar_t* text, int id) {
-        HWND h = CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE,
-                                 x, y, W - x * 2, rowH, g_hSettings, (HMENU)(INT_PTR)id, hInst, NULL);
-        y += rowH;
+    // ---- 注册式创建：所有控件进 g_layout，位置由 LayoutSettings() 统一排布 ----
+    auto addSection = [&](const wchar_t* text) {
+        HWND h = CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT,
+                                 0, 0, 10, rowH, g_hSettings, NULL, hInst, NULL);
+        g_layout.push_back({ h, nullptr, MulDiv(10, scale, 96), rowH, 0, IT_SECTION });
         return h;
     };
-    auto mkCheck = [&](const wchar_t* text, int id) {
+    auto addCheck = [&](const wchar_t* text, int id) {
         HWND h = CreateWindowExW(0, L"BUTTON", text,
                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
-                                 x, y, W - x * 2, rowH, g_hSettings, (HMENU)(INT_PTR)id, hInst, NULL);
-        y += rowH + MulDiv(4, scale, 96);
+                                 0, 0, 10, rowH, g_hSettings, (HMENU)(INT_PTR)id, hInst, NULL);
+        // 首选宽=文字实测+勾选框留白；放不下自动换行/截断
+        int tw = MeasureTextW(g_hSettings, g_hFont, text) + MulDiv(30, scale, 96);
+        g_layout.push_back({ h, nullptr, tw, rowH, 0, IT_WRAP });
+        return h;
+    };
+    // 标签+下拉成对：一个布局单元，标签左（实测宽+垂直居中）、控件填余宽
+    auto addComboPair = [&](const wchar_t* label, int id, int comboW, int listUnits,
+                            void (*fill)(HWND)) -> HWND {
+        HWND hLab = CreateWindowExW(0, L"STATIC", label,
+                                    WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+                                    0, 0, 10, rowH, g_hSettings, NULL, hInst, NULL);
+        HWND hCmb = CreateWindowExW(0, L"COMBOBOX", L"",
+                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
+                                    0, 0, 10, rowH * listUnits, g_hSettings,
+                                    (HMENU)(INT_PTR)id, hInst, NULL);
+        if (fill) fill(hCmb);
+        int labW = MeasureTextW(g_hSettings, g_hFont, label) + MulDiv(8, scale, 96);
+        g_layout.push_back({ hLab, hCmb, labW + MulDiv(10, scale, 96) + comboW,
+                             rowH, labW, IT_WRAP });
+        return hCmb;
+    };
+    auto addButton = [&](const wchar_t* text, int id, int w) {
+        HWND h = CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                 0, 0, 10, rowH, g_hSettings, (HMENU)(INT_PTR)id, hInst, NULL);
+        g_layout.push_back({ h, nullptr, w, rowH, 0, IT_WRAP });
         return h;
     };
 
-    mkStatic(L"拼音（zh-CN 配置下生效）", 0);
-    g_hChkPinyin = mkCheck(L"拼音组合模式（字母上屏汉字，空格/数字选择；关闭则字母直通+英文补全）", IDC_CHK_PINYIN);
-    g_hChkEn = mkCheck(L"英文逐键补全（词中自动补全英文单词）", IDC_CHK_EN);
-    g_hChkFuzzy = mkCheck(L"模糊音（z/zh、c/ch、s/sh、n/l、前后鼻音互通，精确优先）", IDC_CHK_FUZZY);
-    g_hChkCnPunct = mkCheck(L"中文标点（. , / ; 等自动转全角，Shift 出 ？：》《 等）", IDC_CHK_CNPUNCT);
-    // B5 草案②：中英切换键（旧"Shift 单击"复选框升级三态下拉）
-    mkStatic(L"中英切换键（无拼音时单击切换，显示中/英提示）", 0);
-    g_hCmbToggleMode = CreateWindowExW(0, L"COMBOBOX", L"",
-                                       WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
-                                       x, y, MulDiv(160, scale, 96), rowH * 4,
-                                       g_hSettings, (HMENU)(INT_PTR)IDC_CMB_TOGGLEMODE, hInst, NULL);
-    ComboBox_AddString(g_hCmbToggleMode, L"关闭");
-    ComboBox_AddString(g_hCmbToggleMode, L"Shift");
-    ComboBox_AddString(g_hCmbToggleMode, L"Shift 或 Ctrl");
-    ComboBox_AddString(g_hCmbToggleMode, L"CapsLock");
-    ComboBox_AddString(g_hCmbToggleMode, L"Ctrl");
-    y += rowH + MulDiv(6, scale, 96);
-    g_hChkVMode = mkCheck(L"v 模式（中文下首字母 v 直通英文，如 vhello 出 hello）", IDC_CHK_VMODE);
-    g_hChkShuangpin = mkCheck(L"小鹤双拼（每音节两键：声母+韵母，零声母按韵母首字母补齐）", IDC_CHK_SHUANGPIN);
-    g_hChkSymbolHotkey = mkCheck(L"符号面板热键 Ctrl+Shift+B（全局独占，会占用应用同款快捷键如 Edge 插件；默认关，面板可从托盘打开）", IDC_CHK_SYMBOLHOTKEY);
-    g_hChkTraditional = mkCheck(L"繁体输出（候选简体字转为繁体）", IDC_CHK_TRADITIONAL);
-    g_hChkLlmRerank = mkCheck(L"LLM 上下文智能重排（实验：停顿打完一字后按上文重排候选，增加 CPU）", IDC_CHK_LLMRERANK);
+    // ---- 输入 ----
+    addSection(L"输入");
+    g_hChkPinyin = addCheck(L"拼音组合模式（字母上屏汉字，空格/数字选择；关闭则字母直通+英文补全）", IDC_CHK_PINYIN);
+    g_hChkEn = addCheck(L"英文逐键补全（词中自动补全英文单词）", IDC_CHK_EN);
+    g_hChkFuzzy = addCheck(L"模糊音（z/zh、c/ch、s/sh、n/l、前后鼻音互通，精确优先）", IDC_CHK_FUZZY);
+    g_hChkCnPunct = addCheck(L"中文标点（. , / ; 等自动转全角，Shift 出 ？：》《 等）", IDC_CHK_CNPUNCT);
+    g_hChkVMode = addCheck(L"v 模式（中文下首字母 v 直通英文，如 vhello 出 hello）", IDC_CHK_VMODE);
+    g_hChkShuangpin = addCheck(L"小鹤双拼（每音节两键：声母+韵母，零声母按韵母首字母补齐）", IDC_CHK_SHUANGPIN);
+    g_hChkTraditional = addCheck(L"繁体输出（候选简体字转为繁体）", IDC_CHK_TRADITIONAL);
+    // B5 草案②+自定义扩展：中英切换键五态下拉
+    auto fillToggle = [](HWND h) {
+        for (const wchar_t* s : { L"关闭", L"Shift", L"Shift 或 Ctrl", L"CapsLock", L"Ctrl" })
+            ComboBox_AddString(h, s);
+    };
+    g_hCmbToggleMode = addComboPair(L"中英切换键（单击切换，显示中/英提示）",
+                                    IDC_CMB_TOGGLEMODE, MulDiv(150, scale, 96), comboListUnits, fillToggle);
+    g_hChkSymbolHotkey = addCheck(L"符号面板热键 Ctrl+Shift+B（全局独占，默认关，面板可从托盘打开）", IDC_CHK_SYMBOLHOTKEY);
 
-    y += MulDiv(6, scale, 96);
-    mkStatic(L"英文补全候选数（1-9，仅英文逐键补全时生效）", 0);
+    // ---- 外观 ----
+    addSection(L"外观");
+    auto fillDark = [](HWND h) {
+        for (const wchar_t* s : { L"跟随应用", L"浅色", L"深色" })
+            ComboBox_AddString(h, s);
+    };
+    g_hCmbDark = addComboPair(L"候选窗明暗", IDC_CMB_DARK, MulDiv(150, scale, 96), comboListUnits, fillDark);
+    auto fillFont = [](HWND h) {
+        for (uint32_t z : {12u, 14u, 16u, 18u, 20u, 24u, 28u, 32u})
+        {
+            wchar_t b[8];
+            _snwprintf_s(b, _TRUNCATE, L"%u", z);
+            ComboBox_AddString(h, b);
+        }
+    };
+    g_hCmbFontSize = addComboPair(L"候选字号", IDC_CMB_FONTSIZE, MulDiv(100, scale, 96), comboListUnits, fillFont);
+    auto fillSkin = [](HWND h) {
+        for (const wchar_t* s : { L"蓝色", L"青色", L"紫色", L"绿色", L"橙色" })
+            ComboBox_AddString(h, s);
+    };
+    g_hCmbSkin = addComboPair(L"界面配色", IDC_CMB_SKIN, MulDiv(100, scale, 96), comboListUnits, fillSkin);
+
+    // ---- 词典与工具 ----
+    addSection(L"词典与工具");
+    addButton(L"用户词典与自定义词条...", IDC_BTN_USERDICT, MulDiv(210, scale, 96));
+    addButton(L"快捷短语...", IDC_BTN_HOTPHRASES, MulDiv(140, scale, 96));
+
+    // ---- 智能特性 ----
+    addSection(L"智能特性");
+    g_hChkLlmRerank = addCheck(L"LLM 上下文智能重排（实验：停顿打完一字后按上文重排候选，增加 CPU）", IDC_CHK_LLMRERANK);
+    HWND hLabCount = CreateWindowExW(0, L"STATIC", L"英文补全候选数（1-9）",
+                                     WS_CHILD | WS_VISIBLE | SS_LEFT | SS_CENTERIMAGE,
+                                     0, 0, 10, rowH, g_hSettings, NULL, hInst, NULL);
     g_hEdtCount = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"9",
                                   WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_NUMBER,
-                                  x, y, MulDiv(60, scale, 96), rowH, g_hSettings, (HMENU)(INT_PTR)IDC_EDT_COUNT, hInst, NULL);
-    y += rowH + MulDiv(8, scale, 96);
-
-    mkStatic(L"候选窗明暗", 0);
-    g_hCmbDark = CreateWindowExW(0, L"COMBOBOX", L"",
-                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
-                                 x, y, MulDiv(160, scale, 96), rowH * 4, g_hSettings, (HMENU)(INT_PTR)IDC_CMB_DARK, hInst, NULL);
-    ComboBox_AddString(g_hCmbDark, L"跟随应用");
-    ComboBox_AddString(g_hCmbDark, L"浅色");
-    ComboBox_AddString(g_hCmbDark, L"深色");
-    y += rowH + MulDiv(6, scale, 96);
-
-    // 候选字号（12-32，即时生效）
-    mkStatic(L"候选字号", 0);
-    g_hCmbFontSize = CreateWindowExW(0, L"COMBOBOX", L"",
-                                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
-                                     x, y, MulDiv(100, scale, 96), rowH * 6,
-                                     g_hSettings, (HMENU)(INT_PTR)IDC_CMB_FONTSIZE, hInst, NULL);
-    for (uint32_t z : {12u, 14u, 16u, 18u, 20u, 24u, 28u, 32u})
+                                  0, 0, 10, rowH, g_hSettings,
+                                  (HMENU)(INT_PTR)IDC_EDT_COUNT, hInst, NULL);
     {
-        wchar_t b[8];
-        _snwprintf_s(b, _TRUNCATE, L"%u", z);
-        ComboBox_AddString(g_hCmbFontSize, b);
+        int labW = MeasureTextW(g_hSettings, g_hFont, L"英文补全候选数（1-9）") + MulDiv(8, scale, 96);
+        g_layout.push_back({ hLabCount, g_hEdtCount, labW + MulDiv(10, scale, 96) + MulDiv(64, scale, 96),
+                             rowH, labW, IT_WRAP });
     }
-    y += rowH + MulDiv(6, scale, 96);
 
-    // 界面配色（候选窗强调色，即时生效）
-    mkStatic(L"界面配色", 0);
-    g_hCmbSkin = CreateWindowExW(0, L"COMBOBOX", L"",
-                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | CBS_DROPDOWNLIST,
-                                 x, y, MulDiv(100, scale, 96), rowH * 6,
-                                 g_hSettings, (HMENU)(INT_PTR)IDC_CMB_SKIN, hInst, NULL);
-    for (const wchar_t* s : {L"蓝色", L"青色", L"紫色", L"绿色", L"橙色"})
-        ComboBox_AddString(g_hCmbSkin, s);
-    y += rowH + MulDiv(6, scale, 96);
-
-    // 用户词典管理：查看/删除/清空/导入导出已学习词条
-    CreateWindowExW(0, L"BUTTON", L"用户词典管理...",
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                    x, y, MulDiv(180, scale, 96), rowH, g_hSettings,
-                    (HMENU)(INT_PTR)IDC_BTN_USERDICT, hInst, NULL);
-    // 快捷短语：自定义多组全局热键一键输入句式/句子
-    CreateWindowExW(0, L"BUTTON", L"快捷短语...",
-                    WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                    x + MulDiv(190, scale, 96), y, MulDiv(180, scale, 96), rowH, g_hSettings,
-                    (HMENU)(INT_PTR)IDC_BTN_HOTPHRASES, hInst, NULL);
-
-    y += rowH + MulDiv(10, scale, 96);
-    mkStatic(L"修改即时生效并自动保存。重建输入法后需重启应用才会加载新版本。", 0);
+    // ---- 底部提示（锚底，缩放时始终可见）----
+    HWND hHint = CreateWindowExW(0, L"STATIC",
+        L"修改即时生效并自动保存。重建输入法后需重启应用才会加载新版本。",
+        WS_CHILD | WS_VISIBLE | SS_LEFT, 0, 0, 10, rowH, g_hSettings, NULL, hInst, NULL);
+    g_layout.push_back({ hHint, nullptr, MulDiv(10, scale, 96), rowH, 0, IT_BOTTOM });
 
     EnumChildWindows(g_hSettings, [](HWND h, LPARAM lp) -> BOOL {
         SendMessageW(h, WM_SETFONT, (WPARAM)lp, TRUE);
         return TRUE;
     }, (LPARAM)g_hFont);
 
+    // 宽度下限=最窄可读；高度下限宽松（内容超出靠纵向滚动）
+    g_setMinW = MulDiv(460, scale, 96);
+    g_setMinH = MulDiv(380, scale, 96);
+
     LoadToControls();
+    UpdateSettingsScrollbar(LayoutSettings());
     ShowWindow(g_hSettings, SW_SHOW);
     SetForegroundWindow(g_hSettings);
 }
