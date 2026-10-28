@@ -22,6 +22,44 @@
 
 #include "../../common/guids.h"
 
+// ==================== HKCU 设置固定（T16 前置）====================
+// DLL 每事件实时读 HKCU（service.cpp LoadSettings()），环境 ToggleMode 若被
+// 设置页烟测改为 3(CapsLock)/4(Ctrl)，Shift 切换语义不再成立→T16 必挂。
+// 测试前 pin=1（默认 Shift），结束还原原值；旧键 ShiftToggle 同步（口径同
+// common/settings.cpp 双键兼容）。崩溃残留值=1=默认，无污染风险。
+
+static bool OpenLingxiReg(HKEY* phk)
+{
+    return RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\LingxiIme", 0, NULL,
+                           REG_OPTION_NON_VOLATILE, KEY_READ | KEY_WRITE, NULL, phk, NULL) == ERROR_SUCCESS;
+}
+
+static bool PinToggleMode(DWORD mode, DWORD* pOld)
+{
+    HKEY hk = nullptr;
+    if (!OpenLingxiReg(&hk)) return false;
+    DWORD old = 1, cb = sizeof(old), type = 0;
+    if (RegQueryValueExW(hk, L"ToggleMode", NULL, &type, (LPBYTE)&old, &cb) != ERROR_SUCCESS)
+        old = 1; // 无值=默认 Shift
+    if (pOld) *pOld = old;
+    bool ok = RegSetValueExW(hk, L"ToggleMode", 0, REG_DWORD,
+                             (const BYTE*)&mode, sizeof(mode)) == ERROR_SUCCESS;
+    DWORD st = (mode != 0) ? 1 : 0;
+    RegSetValueExW(hk, L"ShiftToggle", 0, REG_DWORD, (const BYTE*)&st, sizeof(st));
+    RegCloseKey(hk);
+    return ok;
+}
+
+static void RestoreToggleMode(DWORD old)
+{
+    HKEY hk = nullptr;
+    if (!OpenLingxiReg(&hk)) return;
+    RegSetValueExW(hk, L"ToggleMode", 0, REG_DWORD, (const BYTE*)&old, sizeof(old));
+    DWORD st = (old != 0) ? 1 : 0;
+    RegSetValueExW(hk, L"ShiftToggle", 0, REG_DWORD, (const BYTE*)&st, sizeof(st));
+    RegCloseKey(hk);
+}
+
 // ==================== VEH 取证 + 计数 ====================
 
 static volatile LONG g_avCount = 0;
@@ -1193,9 +1231,9 @@ int wmain()
                     { VK_BACK,   L"iu", 0x6709 }, // 退格退出 → 有
                 };
                 for (const auto& ec : exits)
-                {
-                    EnsurePinyinMode(pKm);
-                    ClearFocusedText(pTm);
+            {
+                EnsurePinyinMode(pKm);
+                ClearFocusedText(pTm);
                     TypeKey(pKm, (WPARAM)L'v', true);   // 进 vMode
                     PumpMessages();
                     TypeKey(pKm, ec.exitKey, false);    // 退出键放行，vMode 结束
@@ -1220,6 +1258,8 @@ int wmain()
             // 满足"未组合使用(!_shiftUsed)+按下时无组合(!_shiftWasActive)+当前无组合
             // (!PinyinActive)+zh 模式+shiftToggle 开"时翻转 _tempEnglish（临时英文）。
             {
+                DWORD oldTm = 1;
+                bool tmPinned = PinToggleMode(1, &oldTm); // 固定 Shift 切换语义
                 EnsurePinyinMode(pKm);
                 ClearFocusedText(pTm);
 
@@ -1276,6 +1316,7 @@ int wmain()
                 _snwprintf_s(d16d, _TRUNCATE, L"nOk=%d tap3=%d t2[%u]=%s iOk=%d",
                              (int)nOk, (int)tap3, (unsigned)t2.size(), hexOf15(t2).c_str(), (int)iOk);
                 Report(nOk && tap3 && t2.empty() && iOk, L"T16 组合中单击Shift不丢组合不误提交", d16d);
+                if (tmPinned) RestoreToggleMode(oldTm);
             }
         }
     } while (false);
