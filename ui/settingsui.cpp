@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 #include <functional>
+#include <unordered_map>
 
 #include "../common/log.h"
 #include "../common/settings.h"
@@ -108,7 +109,6 @@ bool WriteFileBytes(const std::wstring& path, const std::string& data)
 }
 
 struct UdEntry { std::wstring word; std::wstring key; int count; };
-
 // 解析用户词典文本为条目（兼容 UTF-8 BOM）。
 std::vector<UdEntry> ParseUserDict(const std::string& raw)
 {
@@ -150,6 +150,68 @@ std::string SerializeUserDict(const std::vector<UdEntry>& entries)
         out.push_back('\n');
     }
     return out;
+}
+
+// 拼音推断：zh_pinyin.txt（data\，词条\t空格分隔读音）懒加载缓存。
+// 整词精确命中优先；否则逐字取单字条目首见读音连写。推断失败返回空串
+// （此时要求用户手填拼音）。键口径与引擎一致：小写、无空格/撇号连写。
+struct PinyinInfer
+{
+    std::unordered_map<std::wstring, std::wstring> phrase; // 多字词→连写键
+    std::unordered_map<wchar_t, std::wstring> single;      // 单字→首选读音
+};
+
+const PinyinInfer& GetPinyinInfer()
+{
+    static PinyinInfer inf = [] {
+        PinyinInfer r;
+        wchar_t exe[MAX_PATH] = {};
+        GetModuleFileNameW(NULL, exe, MAX_PATH);
+        wchar_t* slash = wcsrchr(exe, L'\\');
+        if (slash) slash[1] = 0;
+        std::string raw;
+        if (!ReadFileBytes(std::wstring(exe) + L"data\\zh_pinyin.txt", raw)) return r;
+        std::wstring text = Utf8ToW(raw);
+        size_t pos = 0;
+        while (pos < text.size())
+        {
+            size_t eol = text.find(L'\n', pos);
+            if (eol == std::wstring::npos) eol = text.size();
+            std::wstring line = text.substr(pos, eol - pos);
+            pos = eol + 1;
+            if (!line.empty() && line.back() == L'\r') line.pop_back();
+            size_t tab = line.find(L'\t');
+            if (tab == std::wstring::npos) continue;
+            std::wstring word = line.substr(0, tab);
+            std::wstring key;
+            for (wchar_t ch : line.substr(tab + 1))
+                if (ch != L' ' && ch != L'\'') key.push_back((wchar_t)towlower(ch));
+            if (word.empty() || key.empty()) continue;
+            if (word.size() == 1)
+            {
+                if (!r.single.count(word[0])) r.single.emplace(word[0], key);
+            }
+            else
+                r.phrase.emplace(std::move(word), std::move(key));
+        }
+        return r;
+    }();
+    return inf;
+}
+
+std::wstring InferPinyinKey(const std::wstring& word)
+{
+    const PinyinInfer& inf = GetPinyinInfer();
+    auto it = inf.phrase.find(word);
+    if (it != inf.phrase.end()) return it->second;
+    std::wstring key;
+    for (wchar_t ch : word)
+    {
+        auto sit = inf.single.find(ch);
+        if (sit == inf.single.end()) return L"";
+        key += sit->second;
+    }
+    return key;
 }
 
 
@@ -259,6 +321,11 @@ constexpr int IDC_UD_CLEAR = 303;
 constexpr int IDC_UD_IMPORT = 304;
 constexpr int IDC_UD_EXPORT = 305;
 constexpr int IDC_UD_CLOSE = 306;
+constexpr int IDC_UD_WORD = 307;  // 自定义词条输入框
+constexpr int IDC_UD_KEY = 308;   // 拼音输入框（空=自动推断）
+constexpr int IDC_UD_ADD = 309;   // 添加/已存在则提升
+constexpr int IDC_UD_BOOST = 310; // 提升选中（+1000，排到更前）
+constexpr int IDC_UD_LOWER = 311; // 降低选中（-1000，下限 1）
 
 HWND g_hUserDict = nullptr;
 HWND g_hUdList = nullptr;
@@ -347,7 +414,7 @@ void UdImport()
 
 void UdExport()
 {
-    wchar_t path[MAX_PATH] = L"userdict_export.txt";
+    wchar_t path[MAX_PATH] = L"";
     OPENFILENAMEW ofn{ sizeof(ofn) };
     ofn.hwndOwner = g_hUserDict;
     ofn.lpstrFilter = L"文本文件 (*.txt)\0*.txt\0所有文件 (*.*)\0*.*\0";
@@ -358,6 +425,82 @@ void UdExport()
     if (!GetSaveFileNameW(&ofn)) return;
     std::string raw;
     if (ReadFileBytes(UserDictPathW(), raw)) WriteFileBytes(path, raw);
+}
+
+// 自定义词条：手动添加候选词（词+拼音，拼音留空自动推断）。
+// 新词条 count=1000（进入引擎置顶区，按次数排位）；同词同键已存在 → +1000 提升。
+void UdAddWord()
+{
+    wchar_t word[128] = {}, key[256] = {};
+    GetDlgItemTextW(g_hUserDict, IDC_UD_WORD, word, 128);
+    GetDlgItemTextW(g_hUserDict, IDC_UD_KEY, key, 256);
+    std::wstring w = word;
+    std::wstring k;
+    for (wchar_t ch : std::wstring(key))
+        if ((ch >= L'a' && ch <= L'z') || (ch >= L'A' && ch <= L'Z'))
+            k.push_back((wchar_t)towlower(ch));
+    if (w.empty())
+    {
+        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"请填写词条（如：灵犀输入法）");
+        return;
+    }
+    if (k.empty())
+        k = InferPinyinKey(w);
+    if (k.empty())
+    {
+        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC,
+                        L"无法自动推断该词拼音（含词典外字符），请手动填写拼音");
+        return;
+    }
+    std::string raw;
+    std::vector<UdEntry> entries;
+    if (ReadFileBytes(UserDictPathW(), raw)) entries = ParseUserDict(raw);
+    bool merged = false;
+    for (auto& e : entries)
+        if (e.word == w && e.key == k) { e.count += 1000; merged = true; break; }
+    if (!merged) entries.push_back({ w, k, 1000 });
+    if (!WriteFileBytes(UserDictPathW(), SerializeUserDict(entries)))
+    {
+        MessageBoxW(g_hUserDict, L"用户词典写入失败（文件被占用或无权限），修改未保存。",
+                    L"灵犀输入法", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    if (g_reloadUserDict) g_reloadUserDict();
+    RefreshUdList();
+    SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC,
+        merged ? L"词条已存在，已提升其排序（+1000）"
+               : L"已添加：输入对应拼音时该词将固定出现在候选置顶区");
+    SetDlgItemTextW(g_hUserDict, IDC_UD_WORD, L"");
+    SetDlgItemTextW(g_hUserDict, IDC_UD_KEY, L"");
+    LX_LOG(L"ui", L"自定义词条添加: %ls (key=%ls merged=%d)", w.c_str(), k.c_str(), (int)merged);
+}
+
+// 提升/降低选中词条排序（改 count；提升=+1000 排更前，降低=-1000 下限 1）
+void UdNudgeSelected(int delta)
+{
+    int sel = (int)SendMessageW(g_hUdList, LB_GETCURSEL, 0, 0);
+    if (sel < 0)
+    {
+        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"请先在列表中选择词条");
+        return;
+    }
+    std::string raw;
+    std::vector<UdEntry> entries;
+    if (ReadFileBytes(UserDictPathW(), raw)) entries = ParseUserDict(raw);
+    if (sel >= (int)entries.size()) return;
+    entries[sel].count += delta;
+    if (entries[sel].count < 1) entries[sel].count = 1;
+    if (!WriteFileBytes(UserDictPathW(), SerializeUserDict(entries)))
+    {
+        MessageBoxW(g_hUserDict, L"用户词典写入失败（文件被占用或无权限），修改未保存。",
+                    L"灵犀输入法", MB_OK | MB_ICONWARNING);
+        return;
+    }
+    if (g_reloadUserDict) g_reloadUserDict();
+    RefreshUdList();
+    SendMessageW(g_hUdList, LB_SETCURSEL, sel, 0);
+    SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC,
+        delta > 0 ? L"已提升排序（+1000）" : L"已降低排序（-1000，下限 1）");
 }
 
 LRESULT CALLBACK UserDictWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -371,6 +514,9 @@ LRESULT CALLBACK UserDictWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_UD_CLEAR: UdClearAll(); return 0;
         case IDC_UD_IMPORT: UdImport(); return 0;
         case IDC_UD_EXPORT: UdExport(); return 0;
+        case IDC_UD_ADD: UdAddWord(); return 0;
+        case IDC_UD_BOOST: UdNudgeSelected(1000); return 0;
+        case IDC_UD_LOWER: UdNudgeSelected(-1000); return 0;
         case IDC_UD_CLOSE: ShowWindow(hwnd, SW_HIDE); return 0;
         }
         break;
@@ -396,35 +542,54 @@ void CreateUserDictWindow(HINSTANCE hInst)
     UINT dpi = 96;
     if (auto pGetDpi = (UINT(WINAPI*)())GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForSystem"))
         dpi = pGetDpi();
-    int W = MulDiv(420, dpi, 96), H = MulDiv(400, dpi, 96);
+    int W = MulDiv(520, dpi, 96), H = MulDiv(480, dpi, 96);
     int btnH = MulDiv(28, dpi, 96);
     int pad = MulDiv(12, dpi, 96);
 
-    g_hUserDict = CreateWindowExW(0, kUserDictWndClass, L"用户词典管理",
+    g_hUserDict = CreateWindowExW(0, kUserDictWndClass, L"用户词典与自定义词条管理",
                                   WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
                                   CW_USEDEFAULT, CW_USEDEFAULT, W, H, NULL, NULL, hInst, NULL);
 
     CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
                     pad, pad, W - pad * 2, btnH, g_hUserDict, (HMENU)(INT_PTR)IDC_UD_STATIC, hInst, NULL);
+    // 自底向上：按钮行 → 自定义词条输入行 → 列表占满余下空间
+    int rowBtnY = H - btnH - pad;
+    int inputY = rowBtnY - btnH - 6;
     int listTop = pad + btnH + 4;
-    int btnRowY = H - btnH - pad - 8;
     g_hUdList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
                                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
-                                pad, listTop, W - pad * 2, btnRowY - listTop - 8,
+                                pad, listTop, W - pad * 2, inputY - listTop - 8,
                                 g_hUserDict, (HMENU)(INT_PTR)IDC_UD_LIST, hInst, NULL);
+
+    // 自定义词条输入行：词条 + 拼音（留空自动推断）+ 添加（已存在则提升排序）
+    HWND hWord = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                 pad, inputY, MulDiv(160, dpi, 96), btnH, g_hUserDict,
+                                 (HMENU)(INT_PTR)IDC_UD_WORD, hInst, NULL);
+    SendMessageW(hWord, 0x1501 /*EM_SETCUEBANNERW*/, TRUE, (LPARAM)L"自定义词条，如：灵犀输入法");
+    HWND hKey = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                pad + MulDiv(168, dpi, 96), inputY, MulDiv(180, dpi, 96), btnH,
+                                g_hUserDict, (HMENU)(INT_PTR)IDC_UD_KEY, hInst, NULL);
+    SendMessageW(hKey, 0x1501 /*EM_SETCUEBANNERW*/, TRUE, (LPARAM)L"拼音，留空自动推断");
+    CreateWindowExW(0, L"BUTTON", L"添加",
+                    WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                    pad + MulDiv(356, dpi, 96), inputY, MulDiv(80, dpi, 96), btnH, g_hUserDict,
+                    (HMENU)(INT_PTR)IDC_UD_ADD, hInst, NULL);
 
     struct Btn { const wchar_t* text; int id; };
     Btn btns[] = {
+        { L"提升选中", IDC_UD_BOOST }, { L"降低选中", IDC_UD_LOWER },
         { L"删除选中", IDC_UD_DEL }, { L"清空", IDC_UD_CLEAR },
         { L"导入", IDC_UD_IMPORT }, { L"导出", IDC_UD_EXPORT },
         { L"关闭", IDC_UD_CLOSE },
     };
-    int bw = (W - pad * 2 - 8 * 4) / 5;
-    for (int i = 0; i < 5; i++)
+    int bw = (W - pad * 2 - 6 * 6) / 7;
+    for (int i = 0; i < 7; i++)
     {
-        int bx = pad + i * (bw + 8);
+        int bx = pad + i * (bw + 6);
         CreateWindowExW(0, L"BUTTON", btns[i].text, WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                        bx, btnRowY, bw, btnH, g_hUserDict,
+                        bx, rowBtnY, bw, btnH, g_hUserDict,
                         (HMENU)(INT_PTR)btns[i].id, hInst, NULL);
     }
 
