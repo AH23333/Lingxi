@@ -230,3 +230,18 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **验证**：构建全过；regress deep_test/e2e/fix_readings PASS，engine_test 唯一红=latency（13.3ms 已知本机漂移，B2 纯 UI 改动、engine_test 不加载 UI 代码，逻辑排除）。窗体绘制无自动化断言（草案风险注记），靠真机人眼验收——真实 UI 已重启（PID 29372）。
 
 **backlog 状态**：B1/B8/B4/B3/B5/B2 全部完成，Loomy 体验整改收官。
+
+## 2026-10-28 晚（六） · B5 草案② toggleMode 设置升级（收官后补遗）
+
+**范围**：LOOMY §B5 草案②——`shiftToggle(bool)` 升级 `toggleMode(0 无/1 Shift/2 Shift 或 Ctrl)`，用户可自定义中英切换键。
+
+**实现（三级生效模型内：设置+键盘侧同轮）**：
+
+- `settings.h`：删 `bool shiftToggle`，加 `uint32_t toggleMode = 1`（注释含注册表双键说明）
+- `settings.cpp` 双读兼容：新键 `ToggleMode` 优先（≤2 有效）；无/越界由旧键 `ShiftToggle`（bool）派生 0/1；两键均缺=默认 1（Shift，历史行为）。保存双写：`ShiftToggle = (toggleMode != 0)` + `ToggleMode`——旧版 UI/DLL 读旧键仍得正确开关语义（"Shift 或 Ctrl"细模式对旧版退化为"开"）
+- DLL `service.cpp` OnKeyDown/OnKeyUp：切换键状态机从 VK_SHIFT 扩展到 VK_SHIFT+VK_CONTROL；KeyUp 按模式判键——Shift 在 mode≥1 允许、Ctrl 仅 mode≥2；**交错保护**：Shift/Ctrl 先后按下（Ctrl+Shift+K 类应用快捷键）视为组合使用标 used 不切换（原 `wParam==VK_SHIFT` 单键判定顺带覆盖此场景，扩展到 Ctrl 后必须显式处理）。service.h 注释更新（成员名 `_shiftDown/_shiftUsed/_shiftWasActive` 保留，语义扩为"切换键"）
+- 设置页 `settingsui.cpp`：复选框（IDC_CHK_SHIFTTOGGLE=109 弃用）→ 三态下拉 IDC_CMB_TOGGLEMODE=117（关闭/Shift/Shift 或 Ctrl），CBN_SELCHANGE 即时保存；窗口高 704→742 补偿标签+下拉两行
+
+**用户零感知**：HKCU 现值 ShiftToggle=1 无 ToggleMode 键 → 派生 toggleMode=1 = 原 Shift 单击行为不变。
+
+**验证**：regress **ALL PASS**（engine_test 含 latency 绿 / fix_readings / deep_test T16 四断言在派生路径下全过=双读兼容端到端实证 / e2e attempt1）。mode 0/2 的 HKCU 两态路径不测（污染风险，靠代码审读，同 T16 既有口径）。真实 UI 已重启（PID 26956）。

@@ -72,6 +72,7 @@
 - **✅ 草案①（deep_test T16）已完成**：四断言——空组合单击 Shift 切临时英文（字母 eaten=FALSE 直通）/再单击切回（字母进组合）/Shift 按住期间打字（_shiftUsed 路径 KeyUp 不翻转）/组合中单击 Shift 不丢组合不误提交；新辅助 TapKey（完整单击 down+up）+ RawKeyUp。**顺带修真 bug**：组合中 `KeyDown(VK_SHIFT)` 落 HandlePinyinKey unmapped-default 误提交当前首选（用户"按 Shift 打大写"被打断）——分发层单列 VK_SHIFT 放行修复（Ctrl/Alt 本体被 CtrlOrAltDown keystate 覆盖、Shift 无覆盖需单列；weasel preserved key 等价语义）；T16d 即该修复回归断言。LX_LOG 取证 `Shift toggle -> tempEnglish=1/0` 翻转对。flaky 归因（失败首发位置+单因一致性）固化 PITFALLS #33。真实 UI 已重启（PID 18700）。
 - 现状补充（修后）：shiftToggle 单击链路日志级确认工作正常；用户无感主因历史判断不变（老 DLL 驻留，§2）。
 - 未做：**草案②**（设置页 shiftToggle 升级 toggleMode 0无/1左Shift/2 Shift或Ctrl——settings.h 加字段+settings.cpp 双读兼容）待用户拍板工作量小可下轮；**草案③** 全局自定义热键=R4 尾巴大项，收尾轮别动。
+- **✅ 2026-10-28 晚（六）草案② 亦已完成**：`shiftToggle(bool)` → `toggleMode(0 无/1 Shift/2 Shift 或 Ctrl)`——settings.cpp 双读（新键 ToggleMode 优先/旧键 ShiftToggle 派生/保存双写，旧版 UI/DLL 无感，"Shift 或 Ctrl"对旧版退化为开）；DLL OnKeyDown/OnKeyUp 切换键状态机扩展 VK_CONTROL（mode 2 才允许 Ctrl）+ Shift/Ctrl 交错保护（Ctrl+Shift+K 类先后按下标 used 不误切）；设置页复选框(109)→三态下拉(117) 关闭/Shift/Shift 或 Ctrl。用户 HKCU 现值派生 toggleMode=1 零感知。regress ALL PASS（deep_test T16 在派生路径全过=双读兼容端到端实证；mode 0/2 HKCU 两态不测靠代码审读，同 T16 既有口径）。至此 §B5 草案①②全落地，仅③（R4 尾巴）悬置。
 
 ### B6. 词库质量类
 - fix_readings + modern_terms 是**仅有的两条改数据通道**，都不手改 `bin\*\data` 生成物副本（会被 build 覆盖/漂移，本轮实证过）。新词进 `tools/modern_terms.txt` 一行 → `build_pinyin --modern-only` 幂等生效 → engine 断言收口。
