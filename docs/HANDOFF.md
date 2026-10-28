@@ -1,5 +1,11 @@
 # 交接文档（HANDOFF）
 
+## ⚡ 最新状态速报（2026-10-28 晚·九，32 位 TIP 落地——R5 工程化整节完成）
+
+- **32 位 TIP（WOW64）全链完成（`88b9252`）**：ImeCore/common 加 Win32 配置（输出 `bin\<C>32\`，x64 零变化）→ `SysWOW64\regsvr32` 注册进 WOW6432Node 与 x64 共存（本机已注册，WOW6432Node CTF TIP Enable=1 实证）→ EnsureUIRunning 回退链（32 位 DLL 目录无 x64 UI 时回退 `..\Debug\`，真机实证杀 UI 后 `[pipe] 已拉起 LingxiUI.exe（32 位回退路径）` 自愈）。真机三环取证（tools\host32.cpp 探针留存）：加载 `bin\Debug32\ImeCore.dll dir32=1` / 管道已连接 / 回退自愈。**弯路**：Win11 24H2 `SysWOW64\notepad.exe` 是商店应用跳板存根（真身 64 位），探索文建议的验证路径不成立——自建 32 位文本宿主才有效；**TIP 实例化必须有焦点上下文**（窗口+ThreadMgr+TestStore+AssociateFocus），裸 ActivateProfile 不加载 DLL。regress ALL PASS，真实 UI 已重启（PID 9628）。
+- **R5 工程化整节 ✅**：32 位 TIP + WER LocalDumps（本机已配，崩溃自动落全量 dump）+ SignalNamedEvent P2 + 卸载增强 + regress 常备。**剩余大项仅 R3 LLM**（方案就绪未实施，cur/GLM_EXPLORATION_R3_LLM.md，前置堵点：拼音模式 DLL 补发上文）。
+- **本机 32 位注册是活跃状态变更**：32 位应用（WOW64 宿主）现会加载 `bin\Debug32\ImeCore.dll` 使用灵犀；卸载走 `tools\unregister.cmd`（双位数都清）。
+
 ## ⚡ 最新状态速报（2026-10-28 晚·八，R5 稳定性收口——WER 崩溃转储落地）
 
 - **WER LocalDumps 本机落地**：tools\setup_dumps.cmd（脚本早备好从未执行）提权跑通并实证 HKLM——`LocalDumps\LingxiUI.exe` DumpFolder=%TEMP%\lingxi-dumps / DumpType=2 全量 / DumpCount=5，**此后 LingxiUI 崩溃自动落全量 dump**。DLL 侧不装 VEH/UEF 铁律不变。

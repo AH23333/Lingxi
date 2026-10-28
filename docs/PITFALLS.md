@@ -202,3 +202,10 @@
 - **症状**：`powershell "$env:APPDATA='C:\...'; Start-Process ..."` 想给内层设 APPDATA，外层先把 `$env:APPDATA` 展开成字面路径，内层收到 `C:\...='C:\...'` 报 CommandNotFoundException，但 `;` 后的 Start-Process 照常执行——**目标进程起来了、环境变量却没设成**，看起来成功实则配置没生效。
 - **根因**：外层 PowerShell 对双引号字符串做插值，`$env:APPDATA` 在传给内层之前已被展开；内层根本没收到赋值语句。
 - **正确做法**：嵌套 powershell 的命令体一律**单引号包裹**（`powershell '$env:APPDATA=''C:\...''; ...'`），或干脆避免嵌套——直接在当前层 `$env:APPDATA='...'; Start-Process ...` 同进程执行即可（本工具 shell 的 APPDATA 本就是用户真实值，多数"重启真实 UI"场景根本无需覆盖）。检查内层是否真执行了赋值：看输出里有没有赋值语句被当命令名报错的痕迹。
+
+## 32 位 TIP 轮（2026-10-28 晚）
+
+### 35. Win11 24H2 的 SysWOW64\notepad.exe 是商店应用跳板存根；TIP 实例化必须有焦点上下文 ⭐️
+- **症状A（假验证）**：探索文建议"用 `C:\Windows\SysWOW64\notepad.exe` 打字看日志 [pipe] 已连接"验证 32 位 TIP——实测存根 3 秒即退（`Start-Process -PassThru` 的进程 HasExited=True），真身是 **64 位**商店 Notepad；后续 AppActivate(死 PID) 失败、SendKeys 打到别处，首测 44 行日志全是 64 位 DLL 发的，32 位验证形同虚设。
+- **症状B（DLL 不加载）**：自建 32 位宿主只做 `CoInitialize + ProfileMgr::ActivateProfile`（hr=0）——ImeCore.dll 根本不在进程内，模块枚举 exit=4。**TIP 实例化必须有焦点上下文**：窗口 + `ITfThreadMgr::Activate` + `CreateDocumentMgr/CreateContext(TestStore)/Push` + `AssociateFocus` + `SetFocus`，msctf 才会在本进程 CoCreateInstance TIP（deep_test 骨架即为此而生，裸激活不算数）。
+- **正确做法**：验证 32 位 TIP 用 `tools\host32.cpp`（文本宿主+ProfileMgr+模块枚举断言 `dir32=1`，x86 交叉编译 `vcvarsamd64_x86` + `/std:c++17`）；日志归因用"基线长度截取增量"而非行号（LX_LOG 无 PID 前缀）；凡是"启动一个 exe 验证加载"的测试，先核验该进程没被跳板/别名替换（`$p.HasExited`、主模块 PE Machine=014C）。

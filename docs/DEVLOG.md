@@ -273,3 +273,29 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **验证**：build Debug 全过；regress **ALL PASS**（engine_test / fix_readings --check / deep_test / e2e attempt1）；真实 UI 已用真实 APPDATA 重启（PID 20772， StartTime 晚于构建）。本工具 shell 的 APPDATA 实测即用户真实 Roaming 路径（嵌套 powershell 覆盖语句被外层插值吃掉的坑固化 PITFALLS #34）。
 
 **R5 剩余**：32 位 TIP（vcxproj 加 Win32 配置 + EnsureUIRunning 回退链，unregister.cmd 已前向兼容 Debug32 路径）；R3 LLM 整句重排仍为方案就绪未实施（前置堵点：拼音模式 DLL 补发上文）。
+
+## 2026-10-28 晚（九） · R5 32 位 TIP（WOW64）全链落地
+
+**范围**：cur/GLM_EXPLORATION_R2R5.md R5"32 位 TIP"节——半天预估项，本轮全链完成（构建/注册/回退链/验证工具/真机三环取证）。
+
+**实现**：
+
+- `ime/ImeCore.vcxproj` + `common/common.vcxproj`：加 `Debug|Win32` + `Release|Win32` 配置；Win32 输出分离到 `bin\<C>32\`（用 `MSBuildThisFileDirectory` 免 SolutionDir 依赖——直编 vcxproj 时该属性为空，路径会塌到项目目录）；x64 产物路径与构建零变化（条件属性组只对 Win32 生效）。
+- `ime/pipeclient.cpp` `EnsureUIRunning` 回退链（探索文点名的"唯一代码坑"）：32 位 DLL 目录（`bin\Debug32\`）没有 x64 `LingxiUI.exe`——同目录尝试失败后按 DLL 自身配置名（路径含 `Debug32`→`Debug`）回退 `..\Debug\LingxiUI.exe`（32 位进程拉起 x64 exe 合法），仍失败降级纯直通（既有安全路径）。
+- `tools/build32.cmd`：仅编 ImeCore+common（vcvars64 下 msbuild `/p:Platform=Win32` 自动选 Hostx64\x86 交叉工具链），LingxiUI/engine/e2e 保持 x64。
+- `tools/register.cmd` 扩展：64 位注册后若 `bin\<C>32\ImeCore.dll` 存在则 `SysWOW64\regsvr32` 注册 32 位（WOW6432Node 视图，与 x64 注册共存）；`tools/unregister.cmd` 早已前向兼容 Debug32 路径。
+- `tools/host32.cpp` 探针留存：32 位安装验证宿主——deep_test 同款文本宿主骨架（窗口+ThreadMgr+TestStore+AssociateFocus，**TIP 实例化必须有焦点上下文**，裸 ActivateProfile 不加载 DLL）+ ProfileMgr 激活 + 模块枚举断言 `loaded ImeCore ... dir32=1`。x86 交叉编译（`vcvarsamd64_x86` + `/std:c++17`，log.h 内联变量需 C++17）。
+
+**真机三环取证**（LINGXI_LOG=1 增量归因，日志同文件 [host32] 标记行+[pipe] 行）：
+
+1. **加载环**：host32（PE 014C 真 32 位）内 `loaded ImeCore: ...\bin\Debug32\ImeCore.dll (dir32=1)`——32 位 msctf 经 WOW6432Node CLSID 正确加载 32 位 DLL。
+2. **管道环**：`[pipe] 管道已连接` + ActivateEx/TextEditSink/拼音模式全流程在 32 位进程内跑通，连上 x64 UI。
+3. **回退环**：杀 UI 后 host32 重跑 → `[pipe] 已拉起 LingxiUI.exe（32 位回退路径）` + UI 自动回归——EnsureUIRunning 回退链真机实证。
+
+注册实证：`HKLM\SOFTWARE\WOW6432Node\Microsoft\CTF\TIP\{CLSID}` Enable=1 + `WOW6432Node\Classes\CLSID\...\InprocServer32` → Debug32 DLL；64 位注册不动。
+
+**弯路（记入取舍）**：Win11 24H2 的 `SysWOW64\notepad.exe` 是商店应用跳板存根（3 秒即退，真身 64 位商店 Notepad）——探索文建议的"SysWOW64 notepad 打字看日志"验证不成立（首测日志实为 64 位 DLL 发的，SendKeys 还可能打到别处）；自建 host32 才是诚实路径。
+
+**验证**：build32 + build（x64）双过；PE 位数核验（Debug32=014C / Debug=8664）；regress **ALL PASS**（engine_test/fix_readings/deep_test/e2e attempt1）；真实 UI 已重启（PID 9628）。
+
+**R5 终态**：稳定性（WER+P2）✅ + 32 位 TIP ✅ + 卸载增强 ✅ + regress 常备 ✅——**R5 工程化整节完成**。剩余大项仅 R3 LLM（方案就绪未实施）。
