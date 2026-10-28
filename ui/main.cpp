@@ -49,6 +49,10 @@ DWORD WINAPI NotifyThreadProc(LPVOID p)
 }
 
 // 打开（必要时等待）命名事件并触发，供第二个实例调用。
+// 遗留 P2 修复（cur/GLM_EXPLORATION_R2R5.md R5"顺手"条）：主实例持有单实例
+// Mutex 但通知事件尚未创建（冷启动 LLM 加载可达数秒）时，4 秒等待耗尽不再
+// 静默丢命令——弹一次提示让用户知道命令没送达（每次进程存活至多一次，
+// --symbols + --settings 双超时也只弹一盒）。
 static void SignalNamedEvent(const wchar_t* name)
 {
     HANDLE evt = NULL;
@@ -58,7 +62,16 @@ static void SignalNamedEvent(const wchar_t* name)
         if (evt) break;
         Sleep(100); // 主实例可能还在启动
     }
-    if (evt) { SetEvent(evt); CloseHandle(evt); }
+    if (evt) { SetEvent(evt); CloseHandle(evt); return; }
+    LX_LOG(L"ui", L"SignalNamedEvent: 4s 超时，主实例未就绪 (%ls)", name);
+    static bool warned = false;
+    if (!warned)
+    {
+        warned = true;
+        MessageBoxW(NULL,
+            L"灵犀输入法主程序仍在启动中，请稍后重试。",
+            L"灵犀输入法", MB_OK | MB_ICONINFORMATION | MB_SETFOREGROUND);
+    }
 }
 
 static int ProbeLlm()
