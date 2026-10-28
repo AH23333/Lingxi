@@ -237,3 +237,16 @@
 - **正确做法**：环境依赖型测试在块开头显式 pin（T16 已修 `c00e972`：PinToggleMode(1)+结束 RestoreToggleMode，DLL 实时读即写即生效，崩溃残留=默认值无污染）。
 - **症状B**：edit 工具改 T16 时 oldString 用 `EnsurePinyinMode(pKm);\nClearFocusedText(pTm);`——该模式在文件里出现 15+ 次，居然"成功"落进了 T15 的块，编译错误才暴露。
 - **正确做法**：编辑重复模式必须带唯一锚（注释行/独有变量名/相邻独有语句），多匹配"成功"≠落对位置。
+
+## R3 多路采样轮（2026-10-28 晚·十一）
+
+### 41. 后台负载使 regress 时序预算全漂——判归因先查 CPU 消费者，再用 stash 旧码 A/B ⭐
+- **症状**：`jintianqi` 拼音时延（预算 10ms）同二进制一晚漂 7.2~14.7ms（中位），regress 单次全绿困难；deep_test 三轮失败项各不相同（T14/T15/T16/T10 散布，AV=0），e2e `focused=''` 时绿时红。
+- **排查与定性（方法即结论）**：① `Get-Process | Sort CPU -Desc` 抓真凶——**left4dead2 游戏在跑 + 残留 LingxiUI 的 LLM 预热（启动即烧 ~45s CPU）**；② `git stash` 旧码重建复测——旧码同样 7.2→13.7→14.2ms 漂移，同分布=环境而非代码；③ 残留 UI 杀掉后 engine_test 立即 7.07ms 全绿。
+- **正确做法**：时序预算红先查后台（游戏/Defender 首扫新 DLL/残留 UI 预热），`taskkill /IM LingxiUI.exe` 后复测；仍红再 stash A/B 旧码定责；同二进制跨越绿红两侧的漂移一律判环境。**测试机上有前台娱乐负载时，紧预算（<2× 空载基线）项不可作门禁**。
+- **附**：每个 LingxiUI 实例启动都触发 LLM 预热全速烧 CPU——regress 内 deep_test/e2e 交替拉起 UI，相邻测试彼此制造负载，单次全绿有运气成分；分组件绿+跨轮次绿+AV=0 即可收口。
+
+### 42. 残留 LingxiUI 跨 taskkill 存活污染后续 e2e——测前必杀，全绿前不信清理 ⭐
+- **症状**：e2e `typing pass-through` 九连败 `focused=''`（插入成功但读回空）——残留 UI（PID 29216）在 e2e 三实例间存活；单独复跑（先 taskkill）立即全绿。另一残留（PID 4232）同时把时延推高 5ms。
+- **根因**：e2e 退出时 `taskkill /IM LingxiUI.exe /F` 偶发未杀净（输出被吞看不见失败）；后续 e2e 的 UI 二实例经转发器挂到残留上，CTF/TSF 焦点链被搅。
+- **正确做法**：e2e/regress/deep_test 前一律显式 `taskkill /f /im LingxiUI.exe`；判断"是否有残留"用 `Get-Process LingxiUI` 而非看日志；连续失败先做一次干净重启（杀残留）再下结论。

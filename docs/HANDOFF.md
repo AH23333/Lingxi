@@ -1,5 +1,12 @@
 # 交接文档（HANDOFF）
 
+## ⚡ 最新状态速报（2026-10-28 晚·十一，F AI 预测=R3 多路采样收官——用户六项需求 6/6 全完成）
+
+- **R3 定性纠正 + 多路采样落地（`b3bad05`）**：旧文"R3 未实施"过时——核心（DLL 补发上文 `e328a7d` / 双上下文 KV 隔离+prefill 硬闸+EMA 降级 `4ca0218` / 重排默认关 `684d22a`）前几轮已落地；本轮补最后一块 §3 多路采样：LlamaApi 绑定 10 个 `llama_sampler_*`（全可选，缺则采样路禁用贪心路无恙）+ 续写 fork 采样合并候选（KV 高命中且贪心 ≤60ms 才触发，seq_rm 到末位前一格重 decode 末位取新鲜 logits——直接用残留 logits 会采错位置分布）+ 拼音重排 Borda 投票（并列取贪心序，**top-1 不一致回退原序**）+ seed=FNV-1a(prompt) 防候选闪烁。HKCU `LlmMultiPath` 默认关（+150ms CPU/次实验特性），设置页智能特性区勾选框（IDC 119）。
+- **用户六项需求 A-F 全部完成**（A `7a28923`/D `7065b2a`/B+E `ebf0ae1`/C `7bf02f5`/F `b3bad05`=R3 全量）。
+- **验证**：最终二进制 engine_test（时延 7.07ms 空载窗口）/fix_readings/deep_test 26/26（AV=0）/e2e 全绿；**时序项归因方法**（PITFALLS #41/#42）：当晚 left4dead2 后台 + 残留 LingxiUI 的 LLM 预热（~45s CPU）使 10ms 预算漂到 14ms，stash 旧码 A/B 同漂=环境非代码；测试前必 `taskkill /f /im LingxiUI.exe`。
+- **待做**：R3 压测收尾（从 UI 日志提预测 p50/p95 对标 ≤450ms——需真机开 LlmRerank/LlmMultiPath 实测）；皮肤/卸载清理/代码签名（M6 尾巴）。
+
 ## ⚡ 最新状态速报（2026-10-28 晚·十，用户六项需求 A/D/B(含E)/C 四单元落地——F AI 预测=R3 留下轮）
 
 - **A 自定义中英切换键（`7a28923`）**：toggleMode 扩五态 0关/1 Shift/2 Shift或Ctrl/3 CapsLock/4 Ctrl；CapsLock 三态状态机（OnTestKeyDown 即吞防大小写翻转，KeyUp 干净单击切换）；Shift/Ctrl 组合判定改精确枚举；设置页五态下拉。

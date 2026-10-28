@@ -331,3 +331,21 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **验证**：D 轮 regress ALL PASS；C 轮 P/Invoke 探针烟测——默认尺寸滚动条自动出现+SB_LINEDOWN×3 位移精确 Δ=90（3行×30px）、拉大至 1000x1000 滚动条自动消失（style 0x14CF0000 无 0x200000）+复选框双列折行（x=16/x=466 同行）+提示贴底（915+30+16=961=客户底）、段标题全程占满独行、用户词典/快捷短语子窗可达；T16 加固后 regress **ALL PASS**（engine_test/fix_readings/deep_test/e2e attempt1）；真实 UI 已重启（PID 25320，晚于构建）。
 
 **坑固化**：PITFALLS #36（PS Set-Content 编码损坏中文源码——批量替换必须 edit 工具）/ #37（FindWindowW $null 封送空串）/ #38（冷加载期间触发二实例超时挂错误框）/ #39（探针 -band 插值字面输出假绿）/ #40（环境依赖测试必须 pin + edit 多匹配落错块）。
+
+## 2026-10-28 晚（十一） · F AI 预测=R3 多路采样落地（`b3bad05`）
+
+**范围**：F 项（AI 预测）= R3 方案（cur/GLM_EXPLORATION_R3_LLM.md）最后一块代码——§3 多路采样。**先纠正定性**：DEVLOG/PROGRESS 旧文"R3 未实施"已过时——R3 核心（DLL 补发上文 e328a7d / 双上下文 KV 物理隔离+prefill 硬闸+EMA 降级 4ca0218 / 重排默认关 684d22a / 拼音两阶段重排）前几轮已全部落地；本轮补齐方案唯一剩余代码项。
+
+**多路采样（`b3bad05`）**：
+
+- `common/settings.{h,cpp}`：新字段 `llmMultiPath`（HKCU `LlmMultiPath`，默认关——每次 LLM 调用约 +150ms CPU，实验特性手动开）。
+- `ui/settingsui.cpp`：智能特性区新增勾选框（IDC_CHK_LLMMULTIPATH=119，"贪心+采样两路投票，重排更稳，再增 CPU"）。
+- `ui/engine/llm.cpp`：
+  - LlamaApi 绑定 10 个 `llama_sampler_*` 符号（chain_default_params/init/add/n、init_top_k/top_p/temp/dist、sample、free）——**全部 required=false**，缺任一 → `_samplerOk=false` 采样路整体禁用，贪心路零影响；LazyInit 自检四段链 chain_n==4。
+  - 续写 Generate：贪心跑完后，门（llmMultiPath && 采样链可用 && KV 高命中 common≥90%·n && 贪心耗时 ≤60ms 慢机让位）通过则 fork 采样路——`seq_rm(0, n-1, -1)` 回滚到 prompt 末位前一格 + 重 decode 末位取新鲜 logits（**末位重评是 fork 正确性的关键**：贪心退出时 logits 对应生成中段，直接采样会采到错误位置的分布）；采样输出经 StripContinuationEcho/ SplitContinuation 后去重合并进候选（cap 9）。seed=FNV-1a(prompt token 序列)，同输入同输出防候选闪烁；与贪心共享 kBudgetMs 总预算。
+  - 拼音重排 DoRerankInner：贪心解析抽 `ParseOrder`（dup/空 false、漏编号补原序）复用；门（增量 prefill ≤64 tok && 距 deadline ≥150ms）通过则 fork 采样路重新生成数字序，`BordaMerge` 两路全排列计分合并（score=Σ(K-位置)，并列取贪心相对序——res 为基底+stable_sort）；**两路 top-1 不一致保守回退拼音原序**（返回空）。采样失败/部分输出 → 只用贪心路结果。
+  - MakeSampler 四段链 top_k(40)/top_p(0.9,1)/temp(0.7)/dist(seed)；逐段判空再入链（chain_add 对 null 无防护）；每 token 查 deadline。
+
+**验证（本机当晚 left4dead2 后台 + 残留 UI 预热强噪声环境下）**：engine_test/fix_readings 全绿；deep_test 26/26（AV=0）；e2e 全绿（含 `mor` 直通/Tab 补全/international 真词典/中文续写链）；`jintianqi` 时延空载窗口 7.07ms（预算 10ms 内）。**归因方法论**：时序项红先查 `Get-Process | Sort CPU` 后台消费者 + taskkill 残留 LingxiUI，仍红再 stash 旧码重建 A/B——旧码同漂 7.2~14.2ms 同分布=环境非代码（详见 PITFALLS #41/#42）。
+
+**坑固化**：PITFALLS #41（后台负载使时序预算漂移——stash A/B 定责方法）/ #42（残留 LingxiUI 跨 taskkill 存活污染 e2e——测前必杀）。
