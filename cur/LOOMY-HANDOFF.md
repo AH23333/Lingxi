@@ -57,7 +57,12 @@
 - 根因B（复读）：StripPromptEcho 只裁 overlap≥2 且 ≤40 字；用户场景可能是**输出=整段上文逐字复读+新内容**被 40 字上限放过、或 LLM 输出与 tail 有标点差异绕过。**下一轮先在真机 UI 复现**（probe `echo 今天天气不错` 看候选是否复述），必要时：重叠上限抬到 tail 全长 + 空白/标点归一后比较。
 - 注意：用户测的是旧 UI 进程（§2），先重启 UI 再收口述反馈。
 
-### B5. 中英切换"只有 Win+Space 硬切"——Shift 单击感知问题 + 自定义
+### B4+. 15:50 复勘（本会话末尾新取证，修前先读这条）
+- ChainPredictor 代码现状快照已实读（链=词中词表优先，其余**一律先 LLM**→词表兜底；无语言闸、**无任何按键钩子代码**）。
+- 用户确认**中文模式**续写仍复读 → StripPromptEcho 形态没盖全：①它只裁"输出头部×上文尾部重叠"，模型**整段复述上文**（输出与 tail 全等/输出开头与 tail 结尾只差标点）时裁完仍复读；②k≥2 阈值留缝。**修法**：升级为"输出含 tail 任意 ≥2 字子串即整条丢弃该候选"级别的复读过滤 + T16 真实复读率统计再定阈值；别再用"裁头"单手段。
+- 新反馈（Edge 插件快捷键被吞）**15:52 已核实**：全局键占用只有 `main.cpp:205-207` 的 `RegisterHotKey(Ctrl+Shift+B, MOD_NOREPEAT)`，**默认开**（settings.h `symbolHotkey=true`）；DLL 侧 grep 证实**无** `SetWindowsHookEx`（不是钩子链问题）。归因步骤：Edge 里先关设置项复现；仍失效再查中文模式下 TestKeyDown 的 eaten 面。修复（下一轮小步做）：symbolHotkey **默认关**（对齐"不默认强加全局占用"的既定原则，类比 llmRerank）+ 设置页文案注明该组合键为系统级独占 + deep_test T17：符号热键开/关两态下 F5/Ctrl+Shift+B/Win 组合在组合态不被 DLL 吞的断言。
+
+### B5. 中文切换只有 Win+Space 硬切——Shift 单击用户无感 + 自定义诉求（未动，见上）
 - 现状：shiftToggle（Shift 单击）已实现且默认 true（OnKeyDown VK_SHIFT 单按→`_tempEnglish`+WM_APP_LX_MODE→`SendModeToggleToast`）；用户没感知到 = 要么没装上成功（老 DLL 驻留！§2），要么单击判定窗口太苛刻。
 - 草案：①deep_test T16 断言"zh 模式+空组合→单击 Shift→再打字母直通且候选不弹"（现 T0 对照测过 toast，选路没测全）；②设置页把 `shiftToggle(bool)` 升级 `toggleMode(0无/1左Shift/2 Shift或Ctrl)`——`settings.h` 加字段 + `settings.cpp` 双读兼容（旧键仍写）；③全局自定义热键（注册表可配 Ctrl+Shift+Space）= R4 尾巴大项，别在收尾轮动。
 
