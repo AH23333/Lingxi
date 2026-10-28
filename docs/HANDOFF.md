@@ -6,7 +6,7 @@
 - **B7 滚轮翻页**：候选窗 WM_MOUSEWHEEL 翻页（±kPageSize 夹取；Win10+ 悬停滚动路由；键盘 PageUp/PageDown、-/= 不变）。纯 UI。
 - **文档债**：PROGRESS M4.5 KV 增量 ⬜→✅（`8b5ed3b` 早已实现，旧行过时）；settings.h skinIndex 注释对齐五皮肤实际。
 - **验证**：engine_test 沙盒功能全绿；唯一红 latency 14.3ms = left4dead2+deveco 后台漂移（PITFALLS #41 归因口径，安静基线 ~7ms）。build.cmd 全链绿（C4267 已修）。**deep_test/e2e 未跑**（用户用机中）——DLL 键路由 + UI 滚轮留空闲回归；**真实 UI 未重启**（新 DLL 待重启应用生效）。
-- **待做**：用户空闲后 regress 一键回归 + 真实 UI 重启 + UI 视觉人工确认（晚·十二遗留一并）；R3 压测收尾（真机 p50/p95 对标 ≤450ms）；卸载清理/代码签名（M6 尾巴）。
+- **待做**：用户空闲后 regress 一键回归 + 真实 UI 重启 + UI 视觉人工确认（晚·十二遗留一并）；R3 压测收尾（真机 p50/p95 对标 ≤450ms）。（卸载清理已随 R5 完成——unregister.cmd --purge 实证；代码签名无证书不可行，已知限制）
 
 ## ⚡ 最新状态速报（2026-10-28 晚·十二，全应用 WinUI 风格重做——去蓝紫收口）
 
