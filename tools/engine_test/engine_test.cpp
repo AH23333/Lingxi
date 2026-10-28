@@ -470,7 +470,34 @@ int wmain()
                         bool firstOk = !r.cands.empty() && r.cands[0] == L"谁";
                         Report(firstOk, "polyphonic: shei top is 谁", L"");
                     }
-                }            }
+                }
+            }
+
+            // P4e. 现代词层（modern_terms band 注入修复）：技术词整词/词链可达。
+            //      用户报告 "zidongbuquan" 推荐只剩"自动+单字不全"——补全 rank 畸形
+            //      +自动补全整词缺失，注入后须精确命中整词。
+            {
+                struct MCase { const wchar_t* in; const wchar_t* expect; };
+                const MCase ms[] = {
+                    { L"zidongbuquan", L"自动补全" },
+                    { L"tishici", L"提示词" },
+                    { L"damoxing", L"大模型" },
+                    { L"yanzhengma", L"验证码" },
+                    { L"shurufa", L"输入法" },
+                };
+                for (const auto& m : ms)
+                {
+                    lingxi::Prediction r = py->Predict(m.in);
+                    bool found = false;
+                    for (const auto& c : r.cands)
+                        if (c == m.expect) { found = true; break; }
+                    wchar_t detail[192];
+                    _snwprintf_s(detail, _TRUNCATE, L"%ls 含 %ls=%d (cands=%zu first=%ls)",
+                                 m.in, m.expect, found, r.cands.size(),
+                                 r.cands.empty() ? L"" : r.cands[0].c_str());
+                    Report(found, "modern term layer reachable", detail);
+                }
+            }
 
             // P4c. 超长混排 + 末尾残段：>10 音节的长串不应崩溃且首选是连贯整句；
             //      末尾拖一个未打全的音节（残段）时，仍要产出覆盖该残段的候选。

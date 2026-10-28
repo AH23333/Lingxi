@@ -1,0 +1,176 @@
+补全	bu quan
+输入法	shu ru fa
+自动补全	zi dong bu quan
+代码补全	dai ma bu quan
+智能补全	zhi neng bu quan
+提示词	ti shi ci
+大模型	da mo xing
+小模型	xiao mo xing
+语言模型	yu yan mo xing
+语音识别	yu yin shi bie
+人工智能	ren gong zhi neng
+机器学习	ji qi xue xi
+深度学习	shen du xue xi
+神经网络	shen jing wang luo
+自然语言	zi ran yu yan
+候选词	hou xuan ci
+词库	ci ku
+拼音	pin yin
+双拼	shuang pin
+全拼	quan pin
+键盘	jian pan
+鼠标	shu biao
+快捷键	kuai jie jian
+右键	you jian
+左键	zuo jian
+双击	shuang ji
+单击	dan ji
+拖拽	tuo zhua
+剪切	jian qie
+复制	fu zhi
+粘贴	zhan tie
+撤销	che xiao
+重做	chong zuo
+保存	bao cun
+导出	dao chu
+导入	dao ru
+备份	bei fen
+恢复	hui fu
+同步	tong bu
+刷新	shua xin
+加载	jia zai
+卸载	xie zai
+安装	an zhuang
+升级	sheng ji
+更新	geng xin
+重启	chong qi
+关机	guan ji
+开机	kai ji
+待机	dai ji
+休眠	xiu mian
+耗电	hao dian
+省电	sheng dian
+续航	xu hang
+充电	chong dian
+电量	dian liang
+屏幕	ping mu
+分辨率	fen bian lv
+高刷	gao shua
+触控	chu kong
+截图	jie tu
+截屏	jie ping
+录屏	lu ping
+投屏	tou ping
+扫码	sao ma
+支付	zhi fu
+刷脸	shua lian
+指纹	zhi wen
+密码	mi ma
+账号	zhang hao
+登录	deng lu
+注销	zhu xiao
+注册	zhu ce
+实名	shi ming
+验证码	yan zheng ma
+转账	zhuan zhang
+红包	hong bao
+提现	ti xian
+充值	chong zhi
+会员	hui yuan
+订阅	ding yue
+续费	xu fei
+退订	tui ding
+退款	tui kuan
+点赞	dian zan
+转发	zhuan fa
+收藏	shou cang
+关注	guan zhu
+取关	qu guan
+拉黑	la hei
+举报	ju bao
+弹幕	dan mu
+直播	zhi bo
+回放	hui fang
+倍速	bei su
+已读	yi du
+撤回	che hui
+私聊	si liao
+群聊	qun liao
+服务器	fu wu qi
+客户端	ke hu duan
+浏览器	liu lan qi
+搜索引擎	sou suo yin qing
+数据库	shu ju ku
+云计算	yun ji suan
+消息队列	xiao xi dui lie
+队列	dui lie
+缓存	huan cun
+日志	ri zhi
+监控	jian kong
+告警	gao jing
+埋点	mai dian
+指标	zhi biao
+吞吐	tun tu
+时延	shi yan
+延迟	yan chi
+卡顿	ka dun
+掉线	diao xian
+在线	zai xian
+离线	li xian
+断联	duan lian
+内耗	nei hao
+并发	bing fa
+并行	bing xing
+线程	xian cheng
+进程	jin cheng
+接口	jie kou
+前端	qian duan
+后端	hou duan
+全栈	quan zhan
+算法	suan fa
+数据结构	shu ju jie gou
+代码	dai ma
+程序	cheng xu
+脚本	jiao ben
+调试	tiao shi
+编译	bian yi
+部署	bu shu
+上线	shang xian
+回滚	hui gun
+容器	rong qi
+微服务	wei fu wu
+内存	nei cun
+磁盘	ci pan
+处理器	chu li qi
+显卡	xian ka
+主板	zhu ban
+机箱	ji xiang
+散热	san re
+电源	dian yuan
+笔记本	bi ji ben
+台式机	tai shi ji
+平板	ping ban
+显示器	xian shi qi
+耳机	er ji
+麦克风	mai ke feng
+音箱	yin xiang
+摄像头	she xiang tou
+路由器	lu you qi
+交换机	jiao huan ji
+蓝牙	lan ya
+传感器	chuan gan qi
+芯片	xin pian
+半导体	ban dao ti
+好家伙	hao jia huo
+破防	po fang
+内卷	nei juan
+摆烂	bai lan
+躺平	tang ping
+上头	shang tou
+出圈	chu quan
+干饭	gan fan
+摸鱼	mo yu
+划水	hua shui
+躺赢	tang ying
+硬核	ying he
+拉胯	la kua

@@ -4998,6 +4998,168 @@
 持有	chi you
 被捕	bei bu
 凉	liang
+补全	bu quan
+输入法	shu ru fa
+自动补全	zi dong bu quan
+代码补全	dai ma bu quan
+智能补全	zhi neng bu quan
+提示词	ti shi ci
+大模型	da mo xing
+小模型	xiao mo xing
+语言模型	yu yan mo xing
+语音识别	yu yin shi bie
+人工智能	ren gong zhi neng
+机器学习	ji qi xue xi
+深度学习	shen du xue xi
+神经网络	shen jing wang luo
+自然语言	zi ran yu yan
+候选词	hou xuan ci
+词库	ci ku
+拼音	pin yin
+双拼	shuang pin
+全拼	quan pin
+键盘	jian pan
+鼠标	shu biao
+快捷键	kuai jie jian
+右键	you jian
+左键	zuo jian
+双击	shuang ji
+单击	dan ji
+拖拽	tuo zhua
+剪切	jian qie
+复制	fu zhi
+粘贴	zhan tie
+重做	chong zuo
+导出	dao chu
+导入	dao ru
+备份	bei fen
+同步	tong bu
+刷新	shua xin
+加载	jia zai
+卸载	xie zai
+重启	chong qi
+关机	guan ji
+开机	kai ji
+待机	dai ji
+休眠	xiu mian
+耗电	hao dian
+省电	sheng dian
+续航	xu hang
+充电	chong dian
+电量	dian liang
+屏幕	ping mu
+分辨率	fen bian lv
+高刷	gao shua
+触控	chu kong
+截图	jie tu
+截屏	jie ping
+录屏	lu ping
+投屏	tou ping
+扫码	sao ma
+刷脸	shua lian
+指纹	zhi wen
+密码	mi ma
+账号	zhang hao
+登录	deng lu
+注销	zhu xiao
+注册	zhu ce
+实名	shi ming
+验证码	yan zheng ma
+转账	zhuan zhang
+红包	hong bao
+提现	ti xian
+充值	chong zhi
+会员	hui yuan
+订阅	ding yue
+续费	xu fei
+退订	tui ding
+退款	tui kuan
+点赞	dian zan
+转发	zhuan fa
+收藏	shou cang
+取关	qu guan
+拉黑	la hei
+举报	ju bao
+弹幕	dan mu
+回放	hui fang
+倍速	bei su
+已读	yi du
+撤回	che hui
+私聊	si liao
+群聊	qun liao
+服务器	fu wu qi
+客户端	ke hu duan
+浏览器	liu lan qi
+搜索引擎	sou suo yin qing
+数据库	shu ju ku
+云计算	yun ji suan
+消息队列	xiao xi dui lie
+队列	dui lie
+缓存	huan cun
+日志	ri zhi
+监控	jian kong
+告警	gao jing
+埋点	mai dian
+吞吐	tun tu
+时延	shi yan
+延迟	yan chi
+卡顿	ka dun
+掉线	diao xian
+在线	zai xian
+离线	li xian
+断联	duan lian
+内耗	nei hao
+并发	bing fa
+并行	bing xing
+线程	xian cheng
+接口	jie kou
+前端	qian duan
+后端	hou duan
+全栈	quan zhan
+算法	suan fa
+数据结构	shu ju jie gou
+脚本	jiao ben
+调试	tiao shi
+编译	bian yi
+上线	shang xian
+回滚	hui gun
+容器	rong qi
+微服务	wei fu wu
+内存	nei cun
+磁盘	ci pan
+处理器	chu li qi
+显卡	xian ka
+主板	zhu ban
+机箱	ji xiang
+散热	san re
+电源	dian yuan
+笔记本	bi ji ben
+台式机	tai shi ji
+平板	ping ban
+显示器	xian shi qi
+耳机	er ji
+麦克风	mai ke feng
+音箱	yin xiang
+摄像头	she xiang tou
+路由器	lu you qi
+交换机	jiao huan ji
+蓝牙	lan ya
+传感器	chuan gan qi
+芯片	xin pian
+半导体	ban dao ti
+好家伙	hao jia huo
+破防	po fang
+内卷	nei juan
+摆烂	bai lan
+躺平	tang ping
+上头	shang tou
+出圈	chu quan
+干饭	gan fan
+摸鱼	mo yu
+划水	hua shui
+躺赢	tang ying
+硬核	ying he
+拉胯	la kua
 恐	kong
 柴	chai
 海岸	hai an
@@ -5551,7 +5713,6 @@
 分泌	fen mi
 学派	xue pai
 就此	jiu ci
-注册	zhu ce
 也就是说	ye jiu shi shuo
 尴尬	gan ga
 解放区	jie fang qu
@@ -6209,7 +6370,6 @@
 侯	hou
 寻常	xun chang
 探明	tan ming
-收藏	shou cang
 锡	xi
 佩服	pei fu
 古典	gu dian
@@ -6436,7 +6596,6 @@
 肌	ji
 肠子	chang zi
 人民大会堂	ren min da hui tang
-会员	hui yuan
 箱	xiang
 肩膀	jian bang
 风暴	feng bao
@@ -6686,6 +6845,7 @@
 舒服	shu fu
 隐隐	yin yin
 拽	zhuai
+拽	zhua
 升高	sheng gao
 国防委员会	guo fang wei yuan hui
 深远	shen yuan
@@ -6724,7 +6884,6 @@
 嚷	rang
 捡	jian
 种族	zhong zu
-脚本	jiao ben
 一团	yi tuan
 不仅仅	bu jin jin
 亿吨	yi dun
@@ -6833,7 +6992,6 @@
 研究员	yan jiu yuan
 缓解	huan jie
 五分	wu fen
-日志	ri zhi
 梨	li
 策划	ce hua
 陆地	lu di
@@ -6960,7 +7118,6 @@
 下列	xia lie
 份额	fen e
 剧烈	ju lie
-在线	zai xian
 处置	chu zhi
 楼上	lou shang
 欢乐	huan le
@@ -7094,7 +7251,6 @@
 漏	lou
 爆米花	bao mi hua
 睡着	shui zhao
-同步	tong bu
 改装	gai zhuang
 皇太后	huang tai hou
 绳	sheng
@@ -7229,7 +7385,6 @@
 康有为	kang you wei
 暗器	an qi
 潜江市	qian jiang shi
-芯片	xin pian
 这家	zhe jia
 一贯	yi guan
 九曲回肠	jiu qu hui chang
@@ -7302,7 +7457,6 @@
 西夏	xi xia
 解开	jie kai
 进球	jin qiu
-密码	mi ma
 桥头堡	qiao tou bao
 自古	zi gu
 递给	di gei
@@ -7865,7 +8019,6 @@
 上次	shang ci
 别处	bie chu
 度过	du guo
-笔记本	bi ji ben
 被动	bei dong
 额头	e tou
 万辆	wan liang
@@ -8155,7 +8308,6 @@
 申诉	shen su
 雕塑	diao su
 其一	qi yi
-内存	nei cun
 孟	meng
 尽力	jin li
 年产	nian chan
@@ -8272,7 +8424,6 @@
 来访	lai fang
 溶	rong
 简化	jian hua
-半导体	ban dao ti
 左侧	zuo ce
 样式	yang shi
 清除	qing chu
@@ -8706,7 +8857,6 @@
 顽强	wan qiang
 典礼	dian li
 噢	o
-接口	jie kou
 政事	zheng shi
 筷子	kuai zi
 会场	hui chang
@@ -9406,7 +9556,6 @@
 炮塔	pao ta
 薪水	xin shui
 一端	yi duan
-处理器	chu li qi
 手势	shou shi
 朝代	chao dai
 楼下	lou xia
@@ -10083,7 +10232,6 @@
 古都	gu du
 咽喉	yan hou
 四通八达	si tong ba da
-复制	fu zhi
 幸运	xing yun
 成交	cheng jiao
 樺	hua
@@ -10163,7 +10311,6 @@
 建工	jian gong
 戜	die
 教室	jiao shi
-显示器	xian shi qi
 望远镜	wang yuan jing
 柜	gui
 江西省	jiang xi sheng
@@ -10246,7 +10393,6 @@
 胜过	sheng guo
 钻进	zuan jin
 三座门	san zuo men
-上线	shang xian
 不当	bu dang
 乐队	yue dui
 互动	hu dong
@@ -10419,7 +10565,6 @@
 三类	san lei
 不至于	bu zhi yu
 卑	bei
-服务器	fu wu qi
 毫克	hao ke
 略有	lve you
 磅	bang
@@ -10653,7 +10798,6 @@
 径直	jing zhi
 提防	di fang
 操心	cao xin
-数据库	shu ju ku
 比比皆是	bi bi jie shi
 瞻仰	zhan yang
 突围	tu wei
@@ -11058,7 +11202,6 @@
 恶人	e ren
 数值	shu zhi
 炯	jiong
-电源	dian yuan
 秀才	xiu cai
 蛛	zhu
 邵大侠	shao da xia
@@ -11156,7 +11299,6 @@
 团团	tuan tuan
 填补	tian bu
 尸首	shi shou
-屏幕	ping mu
 归于	gui yu
 损坏	sun huai
 数万	shu wan
@@ -11898,7 +12040,6 @@
 玫瑰	mei gui
 琵琶	pi pa
 甭	beng
-监控	jian kong
 第一步	di yi bu
 管理权	guan li quan
 绗	hang
@@ -11969,7 +12110,6 @@
 药师	yao shi
 阿曼	a man
 降临	jiang lin
-举报	ju bao
 关上	guan shang
 千张	qian zhang
 受不了	shou bu liao
@@ -12258,7 +12398,6 @@
 端的	duan de
 花样	hua yang
 莲花	lian hua
-转发	zhuan fa
 金平	jin ping
 集成电路	ji cheng dian lu
 鳇鱼	huang yu
@@ -12883,7 +13022,6 @@
 航空兵	hang kong bing
 花瓣	hua ban
 间隔	jian ge
-传感器	chuan gan qi
 偏离	pian li
 入手	ru shou
 制服	zhi fu
@@ -13097,7 +13235,6 @@
 嘲笑	chao xiao
 小贝	xiao bei
 少年儿童	shao nian er tong
-并行	bing xing
 快活	kuai huo
 拂尘	fu chen
 接替	jie ti
@@ -13383,7 +13520,6 @@
 横扫	heng sao
 沿河	yan he
 滥	lan
-登录	deng lu
 神学	shen xue
 肉体	rou ti
 航程	hang cheng
@@ -13510,7 +13646,6 @@
 梅超风	mei chao feng
 死活	si huo
 石块	shi kuai
-算法	suan fa
 股份公司	gu fen gong si
 虚拟	xu ni
 迫击炮	pai ji pao
@@ -13996,7 +14131,6 @@
 垒	lei
 奲	duo
 学子	xue zi
-容器	rong qi
 废物	fei wu
 扇子	shan zi
 星球	xing qiu
@@ -14598,7 +14732,6 @@
 史册	shi ce
 唐一娜	tang yi na
 嘉兴	jia xing
-平板	ping ban
 急促	ji cu
 招架	zhao jia
 星光	xing guang
@@ -15397,7 +15530,6 @@
 选取	xuan qu
 逐一	zhu yi
 錘	chui
-键盘	jian pan
 闊	kuo
 霸权	ba quan
 饺子	jiao zi
@@ -16081,7 +16213,6 @@
 鹊	que
 丢下	diu xia
 作法	zuo fa
-分辨率	fen bian lv
 努尔哈	nu er ha
 商业银行	shang ye yin hang
 坞	wu
@@ -16421,7 +16552,6 @@
 甲骨文	jia gu wen
 相宜	xiang yi
 第一台	di yi tai
-编译	bian yi
 网络游戏	wang luo you xi
 萝卜	luo bo
 薄膜	bao mo
@@ -17121,7 +17251,6 @@
 懒得	lan de
 手表	shou biao
 打鼓	da gu
-拼音	pin yin
 止住	zhi zhu
 河里	he li
 猎人	lie ren
@@ -17567,7 +17696,6 @@
 偏僻	pian pi
 入门	ru men
 册封	ce feng
-前端	qian duan
 匈	xiong
 司法部	si fa bu
 味儿	wei er
@@ -17880,7 +18008,6 @@
 事前	shi qian
 五峰	wu feng
 依山傍水	yi shan bang shui
-充电	chong dian
 分泌物	fen mi wu
 叙事	xu shi
 吃酒	chi jiu
@@ -18963,7 +19090,6 @@
 惨遭	can zao
 所部	suo bu
 接入	jie ru
-撤回	che hui
 文工团	wen gong tuan
 机智	ji zhi
 松花	song hua
@@ -19609,7 +19735,6 @@
 纷争	fen zheng
 纸张	zhi zhang
 老马	lao ma
-耳机	er ji
 苛	ke
 葬礼	zang li
 融洽	rong qia
@@ -20334,7 +20459,6 @@
 安息	an xi
 宰牲亭	zai sheng ting
 宽带	kuan dai
-导出	dao chu
 山羊肉	shan yang rou
 嶯	ji
 店主	dian zhu
@@ -21657,7 +21781,6 @@
 稠	chou
 绝境	jue jing
 统考	tong kao
-缓存	huan cun
 缺氧	que yang
 胡耀邦	hu yao bang
 脚踏	jiao ta
@@ -22497,7 +22620,6 @@
 鐙	deng
 阉	yan
 驱除	qu chu
-鼠标	shu biao
 龙舟	long zhou
 不一会儿	bu yi hui er
 丧生	sang sheng
@@ -24062,7 +24184,6 @@
 急匆匆	ji cong cong
 拆解	chai jie
 排外	pai wai
-搜索引擎	sou suo yin qing
 支架	zhi jia
 无忧	wu you
 曾国藩	ceng guo fan
@@ -24243,7 +24364,6 @@
 兴修	xing xiu
 兼用	jian yong
 切合	qie he
-刷新	shua xin
 剥蚀	bo shi
 十三届	shi san jie
 哥伦布	ge lun bu
@@ -24502,7 +24622,6 @@
 就学	jiu xue
 就绪	jiu xu
 幻影	huan ying
-延迟	yan chi
 必然性	bi ran xing
 必经	bi jing
 快感	kuai gan
@@ -24628,7 +24747,6 @@
 陈达海	chen da hai
 风寒	feng han
 饕	tao
-上头	shang tou
 不复存在	bu fu cun zai
 中国男篮	zhong guo nan lan
 五日	wu ri
@@ -25926,7 +26044,6 @@
 通缉令	tong ji ling
 铁矿石	tie kuang shi
 闹市区	nao shi qu
-队列	dui lie
 隐含	yin han
 雄浑	xiong hun
 顺理成章	shun li cheng zhang
@@ -26193,7 +26310,6 @@
 胡言乱语	hu yan luan yu
 角楼	jiao lou
 言谈	yan tan
-调试	tiao shi
 赵世炎	zhao shi yan
 软软	ruan ruan
 辍	chuo
@@ -26699,7 +26815,6 @@
 禁锢	jin gu
 稍加	shao jia
 算不上	suan bu shang
-红包	hong bao
 编后语	bian hou yu
 编者	bian zhe
 缺憾	que han
@@ -27041,7 +27156,6 @@
 崇文	chong wen
 平手	ping shou
 平阳	ping yang
-并发	bing fa
 幸得	xing de
 当红	dang hong
 总司令部	zong si ling bu
@@ -27850,7 +27964,6 @@
 殴	ou
 沏	qi
 浅薄	qian bo
-浏览器	liu lan qi
 演算	yan suan
 物色	wu se
 犀牛	xi niu
@@ -27986,7 +28099,6 @@
 脸部	lian bu
 艰	jian
 药品监督管理局	yao pin jian du guan li ju
-蓝牙	lan ya
 虱	shi
 诸子	zhu zi
 调子	diao zi
@@ -28147,7 +28259,6 @@
 拉脱维亚	la tuo wei ya
 拜倒	bai dao
 控制器	kong zhi qi
-散热	san re
 方方面面	fang fang mian mian
 方阵	fang zhen
 施放	shi fang
@@ -28663,7 +28774,6 @@
 东道主	dong dao zhu
 五六千	wu liu qian
 交集	jiao ji
-人工智能	ren gong zhi neng
 以太	yi tai
 何物	he wu
 侯通海	hou tong hai
@@ -28840,7 +28950,6 @@
 相合	xiang he
 着落	zhuo luo
 瞪眼	deng yan
-磁盘	ci pan
 祖千秋	zu qian qiu
 祷	dao
 秉性	bing xing
@@ -29994,7 +30103,6 @@
 古典文学	gu dian wen xue
 叫化子	jiao hua zi
 名子	ming zi
-吞吐	tun tu
 吨位	dun wei
 吱声	zhi sheng
 味精	wei jing
@@ -31423,7 +31531,6 @@
 主办方	zhu ban fang
 乡民	xiang min
 五点	wu dian
-交换机	jiao huan ji
 优厚	you hou
 余暇	yu xia
 使命感	shi ming gan
@@ -33393,7 +33500,6 @@
 南欧	nan ou
 口气道	kou qi dao
 古生物	gu sheng wu
-台式机	tai shi ji
 右眼	you yan
 叶酸	ye suan
 听证会	ting zheng hui
@@ -33405,7 +33511,6 @@
 国家杜马	guo jia du ma
 圆寂	yuan ji
 声母	sheng mu
-备份	bei fen
 复杂化	fu za hua
 大喊大叫	da han da jiao
 奇耻大辱	qi chi da ru
@@ -34143,7 +34248,6 @@
 系列赛	xi lie sai
 线虫	xian chong
 绝食	jue shi
-续航	xu hang
 缈	miao
 罢课	ba ke
 翻飞	fan fei
@@ -34545,7 +34649,6 @@
 关露	guan lu
 净值	jing zhi
 出关	chu guan
-剪切	jian qie
 力作	li zuo
 勃勃	bo bo
 十余名	shi yu ming
@@ -35109,7 +35212,6 @@
 受聘	shou pin
 变态反应	bian tai fan ying
 各村	ge cun
-告警	gao jing
 和亲	he qin
 四分五裂	si fen wu lie
 国航	guo hang
@@ -35486,7 +35588,6 @@
 先决条件	xian jue tiao jian
 光影	guang ying
 全息	quan xi
-关机	guan ji
 兴中会	xing zhong hui
 冰球	bing qiu
 分摊	fen tan
@@ -35527,7 +35628,6 @@
 帕尔马	pa er ma
 平山县	ping shan xian
 平等互利	ping deng hu li
-开机	kai ji
 弯弓	wan gong
 征用	zheng yong
 徐青君	xu qing jun
@@ -35666,7 +35766,6 @@
 不合时宜	bu he shi yi
 不等式	bu deng shi
 临危	lin wei
-主板	zhu ban
 主考官	zhu kao guan
 乌苏里江	wu su li jiang
 乱哄哄	luan hong hong
@@ -35808,7 +35907,6 @@
 诱骗	you pian
 诺曼底	nuo man di
 贤能	xian neng
-账号	zhang hao
 贵贱	gui jian
 赶集	gan ji
 轰隆隆	hong long long
@@ -36307,7 +36405,6 @@
 报仇雪恨	bao chou xue hen
 拘捕	ju bu
 招魂	zhao hun
-指纹	zhi wen
 捻军	nian jun
 掇	duo
 接踵而至	jie zhong er zhi
@@ -37023,7 +37120,6 @@
 调查组	diao cha zu
 资本化	zi ben hua
 超脱	chao tuo
-路由器	lu you qi
 踔	chuo
 蹑手蹑脚	nie shou nie jiao
 辽沈战役	liao shen zhan yi
@@ -37904,7 +38000,6 @@
 面罩	mian zhao
 鞫	ju
 音信	yin xin
-音箱	yin xiang
 顶门	ding men
 顺帝	shun di
 预谋	yu mou
@@ -37941,7 +38036,6 @@
 冯默风	feng mo feng
 几十名	ji shi ming
 刑期	xing qi
-划水	hua shui
 初学	chu xue
 力所能及	li suo neng ji
 加力	jia li
@@ -37978,7 +38072,6 @@
 娘儿们	niang er men
 寄存器	ji cun qi
 富足	fu zu
-导入	dao ru
 尌	shu
 工行	gong hang
 巴黎公社	ba li gong she
@@ -38131,7 +38224,6 @@
 云霞	yun xia
 人烟	ren yan
 伊犁河	yi li he
-休眠	xiu mian
 会聚	hui ju
 俗话	su hua
 偏振光	pian zhen guang
@@ -40933,7 +41025,6 @@
 水沟	shui gou
 汉语言	han yu yan
 沉沉的	chen chen de
-注销	zhu xiao
 洗洗	xi xi
 流毒	liu du
 浏阳	liu yang
@@ -41222,7 +41313,6 @@
 猜中	cai zhong
 玩物	wan wu
 生漆	sheng qi
-电量	dian liang
 癫	dian
 白沫	bai mo
 白米	bai mi
@@ -41644,7 +41734,6 @@
 刖	yue
 制导系统	zhi dao xi tong
 剪辑	jian ji
-加载	jia zai
 勃艮第	bo gen di
 化脓	hua nong
 北大西洋公约组织	bei da xi yang gong yue zu zhi
@@ -42421,7 +42510,6 @@
 见谅	jian liang
 言简意赅	yan jian yi gai
 计算机病毒	ji suan ji bing du
-订阅	ding yue
 论丛	lun cong
 语言学家	yu yan xue jia
 说辞	shuo ci
@@ -42580,7 +42668,6 @@
 大气圈	da qi quan
 大牙	da ya
 奔涌	ben yong
-好家伙	hao jia huo
 婀娜	e nuo
 婶娘	shen niang
 嫖娼	piao chang
@@ -42931,7 +43018,6 @@
 有源	you yuan
 朔方	shuo fang
 本地化	ben di hua
-机箱	ji xiang
 李善长	li shan zhang
 杭得放	hang de fang
 柴大官人	chai da guan ren
@@ -44694,7 +44780,6 @@
 醪	lao
 采收	cai shou
 里奥	li ao
-重启	chong qi
 钢绳	gang sheng
 铭记	ming ji
 长春亚泰队	chang chun ya tai dui
@@ -45198,7 +45283,6 @@
 异体	yi ti
 弹压	dan ya
 弹唱	dan chang
-待机	dai ji
 心服口服	xin fu kou fu
 心气	xin qi
 忠勇	zhong yong
@@ -48114,7 +48198,6 @@
 端端正正	duan duan zheng zheng
 笑傲	xiao ao
 第一等	di yi deng
-粘贴	zhan tie
 糊糊	hu hu
 素菜	su cai
 縻	mi
@@ -48363,7 +48446,6 @@
 婉约	wan yue
 安大娘	an da niang
 完形	wan xing
-实名	shi ming
 宣慰	xuan wei
 宽宏	kuan hong
 宽窄	kuan zhai
@@ -48873,7 +48955,6 @@
 推搡	tui sang
 摆摊	bai tan
 摩天大楼	mo tian da lou
-数据结构	shu ju jie gou
 数条	shu tiao
 敲诈勒索	qiao zha le suo
 敲锣打鼓	qiao luo da gu
@@ -50536,7 +50617,6 @@
 唐继尧	tang ji yao
 善为	shan wei
 喷灌	pen guan
-回放	hui fang
 困守	kun shou
 围垦	wei ken
 国信	guo xin
@@ -50632,7 +50712,6 @@
 掌舵	zhang duo
 推却	tui que
 掮	qian
-摄像头	she xiang tou
 摹本	mo ben
 撒克逊	sa ke xun
 撤掉	che diao
@@ -50778,7 +50857,6 @@
 老房子	lao fang zi
 老早	lao zao
 老陆	lao lu
-耗电	hao dian
 耳熟能详	er shu neng xiang
 耿炳文	geng bing wen
 职业性	zhi ye xing
@@ -52374,7 +52452,6 @@
 赤红	chi hong
 赵军	zhao jun
 转调	zhuan diao
-转账	zhuan zhang
 辊	gun
 辗转反侧	zhan zhuan fan ce
 辩护律师	bian hu lv shi
@@ -54526,7 +54603,6 @@
 肢解	zhi jie
 育儿	yu er
 自封	zi feng
-自然语言	zi ran yu yan
 致命伤	zhi ming shang
 舞台剧	wu tai ju
 舾	xi
@@ -55850,7 +55926,6 @@
 鳗鱼	man yu
 鸡血	ji xue
 鹧	zhe
-麦克风	mai ke feng
 黑塞哥维那	hei sai ge wei na
 黑海舰队	hei hai jian dui
 黑面	hei mian
@@ -56573,7 +56648,6 @@
 关注点	guan zhu dian
 养家糊口	yang jia hu kou
 兼程	jian cheng
-内耗	nei hao
 内陆河	nei lu he
 冬暖夏凉	dong nuan xia liang
 冰壁	bing bi
@@ -56698,7 +56772,6 @@
 官厅	guan ting
 定襄	ding xiang
 实景	shi jing
-客户端	ke hu duan
 宾夕法尼亚州	bin xi fa ni ya zhou
 宿县	su xian
 寄出	ji chu
@@ -62939,7 +63012,6 @@
 神职人员	shen zhi ren yuan
 福克斯	fu ke si
 福斯特	fu si te
-离线	li xian
 禽蛋	qin dan
 科内	ke nei
 秦州	qin zhou
@@ -67864,7 +67936,6 @@
 迷魂阵	mi hun zhen
 追悔莫及	zhui hui mo ji
 追悼	zhui dao
-退订	tui ding
 送殡	song bin
 适口	shi kou
 逆料	ni liao
@@ -71736,7 +71807,6 @@
 卡迪拉克	ka di la ke
 卬	ang
 印共	yin gong
-卸载	xie zai
 厂址	chang zhi
 历下区	li xia qu
 历城	li cheng
@@ -72579,7 +72649,6 @@
 运动神经	yun dong shen jing
 远地点	yuan di dian
 退党	tui dang
-退款	tui kuan
 退而求其次	tui er qiu qi ci
 选型	xuan xing
 透气性	tou qi xing
@@ -75570,7 +75639,6 @@
 元山	yuan shan
 元氏	yuan shi
 元谋人	yuan mou ren
-充值	chong zhi
 光蕊	guang rui
 克什克腾旗	ke shen ke teng qi
 克孜尔	ke zi er
@@ -77605,7 +77673,6 @@
 明辨是非	ming bian shi fei
 昖	yan
 春寒料峭	chun han liao qiao
-显卡	xian ka
 显赫一时	xian he yi shi
 晋州	jin zhou
 晚礼服	wan li fu
@@ -81483,7 +81550,6 @@
 轻飘	qing piao
 载客量	zai ke liang
 辉绿岩	hui lv yan
-输入法	shu ru fa
 边框	bian kuang
 边线球	bian xian qiu
 达伦	da lun
@@ -82023,7 +82089,6 @@
 协处理器	xie chu li qi
 协议工	xie yi gong
 单一化	dan yi hua
-单击	dan ji
 单边主义	dan bian zhu yi
 卖报	mai bao
 南坪	nan ping
@@ -84269,7 +84334,6 @@
 干爽	gan shuang
 干结	gan jie
 干菜	gan cai
-干饭	gan fan
 平凉市	ping liang shi
 平利	ping li
 平板显示器	ping ban xian shi qi
@@ -86534,7 +86598,6 @@
 戒毒所	jie du suo
 战意	zhan yi
 戚属狄	qi shu di
-截图	jie tu
 截收	jie shou
 戴碧蓉	dai bi rong
 戴立狄	dai li di
@@ -86617,7 +86680,6 @@
 推崇备至	tui chong bei zhi
 推而广之	tui er guang zhi
 推荐信	tui jian xin
-提现	ti xian
 插翅难飞	cha chi nan fei
 揭牌	jie pai
 搁板	ge ban
@@ -123747,7 +123809,6 @@
 忠清	zhong qing
 忠言逆耳	zhong yan ni er
 快信	kuai xin
-快捷键	kuai jie jian
 快棋赛	kuai qi sai
 快球	kuai qiu
 快言快语	kuai yan kuai yu
@@ -124257,7 +124318,6 @@
 旧楼	jiu lou
 旧货摊	jiu huo tan
 时分复用	shi fen fu yong
-时延	shi yan
 时执金	shi zhi jin
 时隙	shi xi
 时雨	shi yu
@@ -139523,7 +139583,6 @@
 双体船	shuang ti chuan
 双儿微微	shuang er wei wei
 双冠	shuang guan
-双击	shuang ji
 双剑合	shuang jian he
 双口	shuang kou
 双台	shuang tai
@@ -164701,7 +164760,6 @@
 倍谢	bei xie
 倍赏	bei shang
 倍赏必罚	bei shang bi fa
-倍速	bei su
 倍道兼行	bei dao jian xing
 倍道兼进	bei dao jian jin
 倍道而行	bei dao er xing
@@ -164881,7 +164939,6 @@
 候车站	hou che zhan
 候选国	hou xuan guo
 候选框	hou xuan kuang
-候选词	hou xuan ci
 候销	hou xiao
 候风	hou feng
 候马	hou ma
@@ -167384,7 +167441,6 @@
 全所同仁	quan suo tong ren
 全手动	quan shou dong
 全手工	quan shou gong
-全拼	quan pin
 全拼形	quan pin xing
 全接触	quan jie chu
 全推	quan tui
@@ -169202,7 +169258,6 @@
 内勤人员	nei qin ren yuan
 内半缩醛	nei ban suo quan
 内卡钳	nei ka qian
-内卷	nei juan
 内厅	nei ting
 内史	nei shi
 内史密斯	nei shi mi si
@@ -171484,7 +171539,6 @@
 出国考察	chu guo kao cha
 出国者	chu guo zhe
 出国访问	chu guo fang wen
-出圈	chu quan
 出圈儿	chu quan er
 出圣入神	chu sheng ru shen
 出埃及记	chu ai ji ji
@@ -179942,7 +179996,6 @@
 双找工	shuang zhao gong
 双折射	shuang zhe she
 双拥办	shuang yong ban
-双拼	shuang pin
 双拼加加	shuang pin jia jia
 双挂号	shuang gua hao
 双掌如	shuang zhang ru
@@ -182405,7 +182458,6 @@
 右边后卫	you bian hou wei
 右钩拳	you gou quan
 右锋	you feng
-右键	you jian
 右阿廷环	you a ting huan
 右零因子	you ling yin zi
 右颊	you jia
@@ -183876,7 +183928,6 @@
 后秃	hou tu
 后稷	hou ji
 后窗玻璃	hou chuang bo li
-后端	hou duan
 后端网	hou duan wang
 后竹围	hou zhu wei
 后绘图	hou hui tu
@@ -207600,7 +207651,6 @@
 弹完	dan wan
 弹射器	tan she qi
 弹带	dan dai
-弹幕	dan mu
 弹开	dan kai
 弹引	dan yin
 弹弹	dan dan
@@ -219164,7 +219214,6 @@
 掉电	diao dian
 掉皮	diao pi
 掉秤	diao cheng
-掉线	diao xian
 掉膘	diao biao
 掉臂不顾	diao bi bu gu
 掉臂而去	diao bi er qu
@@ -221110,7 +221159,6 @@
 摸门儿	mo men er
 摸骨	mo gu
 摸骨相	mo gu xiang
-摸鱼	mo yu
 摸黑儿	mo hei er
 摹状	mo zhuang
 摹画	mo hua
@@ -256817,7 +256865,6 @@
 省煤器	sheng mei qi
 省用	sheng yong
 省用足财	sheng yong zu cai
-省电	sheng dian
 省略不提	sheng lve bu ti
 省略值	sheng lve zhi
 省略到	sheng lve dao
@@ -258575,7 +258622,6 @@
 破镜分钗	po jing fen chai
 破镜重合	po jing chong he
 破镜难圆	po jing nan yuan
-破防	po fang
 破阵	po zhen
 破阵子	po zhen zi
 破陋	po lou
@@ -258781,7 +258827,6 @@
 硬撑下去	ying cheng xia qu
 硬撑下来	ying cheng xia lai
 硬朗结实	ying lang jie shi
-硬核	ying he
 硬棒	ying bang
 硬模	ying mo
 硬橡皮	ying xiang pi
@@ -259868,7 +259913,6 @@
 神经毡	shen jing zhan
 神经类型	shen jing lei xing
 神经系	shen jing xi
-神经网络	shen jing wang luo
 神经节	shen jing jie
 神经褶	shen jing zhe
 神经计算	shen jing ji suan
@@ -260499,7 +260543,6 @@
 私立高中	si li gao zhong
 私线	si xian
 私罚	si fa
-私聊	si liao
 私自同意	si zi tong yi
 私自答应	si zi da ying
 私船	si chuan
@@ -265930,7 +265973,6 @@
 线民	xian min
 线汇	xian hui
 线源	xian yuan
-线程	xian cheng
 线管	xian guan
 线粉	xian fen
 线缕	xian lv
@@ -267040,7 +267082,6 @@
 续表	xu biao
 续订户	xu ding hu
 续读	xu du
-续费	xu fei
 续述	xu shu
 续鹜短鹤	xu wu duan he
 续齐谐	xu qi xie
@@ -268799,7 +268840,6 @@
 群组	qun zu
 群经	qun jing
 群而不党	qun er bu dang
-群聊	qun liao
 群育	qun yu
 群芳争艳	qun fang zheng yan
 群芳竞艳	qun fang jing yan
@@ -278192,7 +278232,6 @@
 补充教材	bu chong jiao cai
 补充物	bu chong wu
 补充规定	bu chong gui ding
-补全	bu quan
 补养品	bu yang pin
 补写	bu xie
 补助款	bu zhu kuan
@@ -281520,7 +281559,6 @@
 词华典赡	ci hua dian shan
 词宗	ci zong
 词峰	ci feng
-词库	ci ku
 词库上网	ci ku shang wang
 词库导入	ci ku dao ru
 词库文件	ci ku wen jian
@@ -286817,7 +286855,6 @@
 躺倒不干	tang dao bu gan
 躺出去	tang chu qu
 躺出来	tang chu lai
-躺平	tang ping
 躺来躺去	tang lai tang qu
 躺柜	tang gui
 躺直	tang zhi

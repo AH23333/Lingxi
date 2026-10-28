@@ -15,3 +15,5 @@ deps/data-src/*.txt
 # IDE
 .vs/
 .idea/
+
+__pycache__/
