@@ -8,6 +8,7 @@
 #include "window.h"
 #include "pipeserver.h"
 #include "settingsui.h"
+#include "hotphraseui.h"
 #include "symbolpanel.h"
 #include "engine/predictor.h"
 #include "../common/log.h"
@@ -22,16 +23,33 @@ constexpr wchar_t kEvtShowSettings[] = L"Local\\LingxiUI_ShowSettings";
 constexpr UINT WM_NOTIFY_SYMBOLS = WM_APP + 20;
 constexpr UINT WM_NOTIFY_SETTINGS = WM_APP + 21;
 constexpr int kHotkeySymbols = 1; // RegisterHotKey 热键 ID（Ctrl+Shift+B）
+constexpr int kHotPhraseIdBase = 100; // 快捷短语热键 ID 基址（0..23 偏移）
 
 std::function<void()> g_reqSymbols;
 std::function<void()> g_reqSettings;
+// 快捷短语：当前生效条目（仅 UI 线程读写——注册/保存/WM_HOTKEY 均在消息循环线程）
+std::vector<lingxi::HotPhrase> g_hotPhrases;
+std::function<void(const std::wstring&)> g_insertText; // 热键触发 → SendInsertText
 
 LRESULT CALLBACK NotifyWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (msg == WM_NOTIFY_SYMBOLS) { if (g_reqSymbols) g_reqSymbols(); return 0; }
     if (msg == WM_NOTIFY_SETTINGS) { if (g_reqSettings) g_reqSettings(); return 0; }
-    if (msg == WM_HOTKEY && (int)wp == kHotkeySymbols)
-    { if (g_reqSymbols) g_reqSymbols(); return 0; }
+    if (msg == WM_HOTKEY)
+    {
+        int id = (int)wp;
+        if (id == kHotkeySymbols) { if (g_reqSymbols) g_reqSymbols(); return 0; }
+        // 快捷短语：id 映射 g_hotPhrases 下标，经既有插入链路上屏
+        if (id >= kHotPhraseIdBase &&
+            id < kHotPhraseIdBase + (int)g_hotPhrases.size())
+        {
+            LX_LOG(L"ui", L"快捷短语热键触发: %ls",
+                   lingxi::FormatHotkey(g_hotPhrases[id - kHotPhraseIdBase].mods,
+                                        g_hotPhrases[id - kHotPhraseIdBase].vk).c_str());
+            if (g_insertText) g_insertText(g_hotPhrases[id - kHotPhraseIdBase].phrase);
+            return 0;
+        }
+    }
     return DefWindowProcW(h, msg, wp, lp);
 }
 
@@ -264,6 +282,28 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     };
     syncHotkey();
     lingxi::SetSettingsChangedCallback(syncHotkey); // 设置保存后动态注册/注销
+    // 快捷短语热键：全量注销→重读文件→逐条注册（失败=组合键被占用，记日志继续）
+    auto syncHotPhrases = [hNotify] {
+        for (size_t i = 0; i < lingxi::kMaxHotPhrases; i++)
+            UnregisterHotKey(hNotify, kHotPhraseIdBase + (int)i);
+        g_hotPhrases = lingxi::LoadHotPhrases();
+        int failed = 0;
+        for (size_t i = 0; i < g_hotPhrases.size(); i++)
+        {
+            if (!RegisterHotKey(hNotify, kHotPhraseIdBase + (int)i,
+                                g_hotPhrases[i].mods | MOD_NOREPEAT, g_hotPhrases[i].vk))
+            {
+                failed++;
+                LX_LOG(L"ui", L"快捷短语热键注册失败(占用): %ls",
+                       lingxi::FormatHotkey(g_hotPhrases[i].mods, g_hotPhrases[i].vk).c_str());
+            }
+        }
+        if (failed)
+            LX_LOG(L"ui", L"快捷短语热键 %d 个注册失败（组合键被其他程序占用）", failed);
+    };
+    syncHotPhrases();
+    lingxi::SetHotPhrasesChangedCallback(syncHotPhrases); // 管理窗保存后重注册
+    g_insertText = [&server](const std::wstring& s) { server.SendInsertText(s); };
     g_reqSymbols = [&] {
         lingxi::ShowSymbolPanel(hInst,
             [&server](const std::wstring& s) { server.SendInsertText(s); });

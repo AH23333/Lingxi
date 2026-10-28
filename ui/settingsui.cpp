@@ -6,6 +6,7 @@
 // - 候选数量 / 界面明暗 / 英文逐键补全：UI 在每次预测请求时读取
 //
 #include "settingsui.h"
+#include "hotphraseui.h"
 
 #include <shellapi.h>
 #include <commdlg.h>
@@ -167,6 +168,7 @@ constexpr int IDC_CHK_SYMBOLHOTKEY = 113;
 constexpr int IDC_CHK_TRADITIONAL = 114;
 constexpr int IDC_CMB_SKIN = 115;
 constexpr int IDC_CHK_LLMRERANK = 116;
+constexpr int IDC_BTN_HOTPHRASES = 118; // 快捷短语管理入口
 
 HWND g_hMain = nullptr;    // 隐藏消息窗口（托盘宿主）
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
@@ -468,6 +470,9 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_BTN_USERDICT:
             CreateUserDictWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
             return 0;
+        case IDC_BTN_HOTPHRASES:
+            ShowHotPhraseWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE), hwnd);
+            return 0;
         }
         break;
 
@@ -594,6 +599,11 @@ void CreateSettingsWindow(HINSTANCE hInst)
                     WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                     x, y, MulDiv(180, scale, 96), rowH, g_hSettings,
                     (HMENU)(INT_PTR)IDC_BTN_USERDICT, hInst, NULL);
+    // 快捷短语：自定义多组全局热键一键输入句式/句子
+    CreateWindowExW(0, L"BUTTON", L"快捷短语...",
+                    WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                    x + MulDiv(190, scale, 96), y, MulDiv(180, scale, 96), rowH, g_hSettings,
+                    (HMENU)(INT_PTR)IDC_BTN_HOTPHRASES, hInst, NULL);
 
     y += rowH + MulDiv(10, scale, 96);
     mkStatic(L"修改即时生效并自动保存。重建输入法后需重启应用才会加载新版本。", 0);
