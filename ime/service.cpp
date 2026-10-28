@@ -628,6 +628,9 @@ STDMETHODIMP CTextService::OnSetFocus(BOOL fForeground)
 
 STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM lParam, BOOL* pfEaten)
 {
+    // LINGXI_LOG=1 时的分发取证：是否被调到 + 关键内部态（PITFALLS #19 类问题定位）
+    LX_LOG(L"key", L"OnTestKeyDown vk=0x%02X py=%d tmpEn=%d v=%d fAct=%d",
+           (uint32_t)wParam, (int)_pinyinMode, (int)_tempEnglish, (int)_vMode, (int)_fActivated);
     // 语言变化（若发生）→ 投递延迟检测；检测本身绝不在按键分发内执行（PITFALLS #18）
     MaybeRedetectPinyinMode();
 
@@ -648,6 +651,8 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LP
 
 STDMETHODIMP CTextService::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM lParam, BOOL* pfEaten)
 {
+    LX_LOG(L"key", L"OnKeyDown vk=0x%02X py=%d tmpEn=%d v=%d fAct=%d",
+           (uint32_t)wParam, (int)_pinyinMode, (int)_tempEnglish, (int)_vMode, (int)_fActivated);
     MaybeRedetectPinyinMode(); // 个别应用不走 TestKeyDown
 
     // Shift 单击检测：记录 Shift 按下；Shift 与其他键组合则标记 used

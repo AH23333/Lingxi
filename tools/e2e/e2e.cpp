@@ -532,8 +532,21 @@ static bool ActivateProfileRetry(LANGID langid, REFGUID profile, int tries = 10)
 {
     for (int i = 0; i < tries; i++)
     {
-        HRESULT hr = g_pIpp->ActivateLanguageProfile(CLSID_LingxiTextService, langid, profile);
-        if (SUCCEEDED(hr)) return true;
+        // Win8+ 首选 ProfileMgr::ActivateProfile（ctfmon 侧状态完整同步）；
+        // 旧 ActivateLanguageProfile 线程内激活不完备，msctf 按键派发就绪延迟
+        // 可达数十秒（regress e2e 三连败根因，参见 deep_test 同步修改）。
+        ITfInputProcessorProfileMgr* pPm = nullptr;
+        HRESULT hr = CoCreateInstance(CLSID_TF_InputProcessorProfiles, NULL, CLSCTX_INPROC_SERVER,
+                                      IID_ITfInputProcessorProfileMgr, (void**)&pPm);
+        if (SUCCEEDED(hr) && pPm)
+        {
+            hr = pPm->ActivateProfile(TF_PROFILETYPE_INPUTPROCESSOR, langid,
+                                      CLSID_LingxiTextService, profile, NULL, 0);
+            pPm->Release();
+            if (SUCCEEDED(hr)) return true;
+        }
+        HRESULT hr2 = g_pIpp->ActivateLanguageProfile(CLSID_LingxiTextService, langid, profile);
+        if (SUCCEEDED(hr2)) return true;
         PumpMessages();
         Sleep(300);
     }
