@@ -923,6 +923,66 @@ int wmain()
             _snwprintf_s(d, _TRUNCATE, L"inline='%ls' after3='%ls'", t.c_str(), t2.c_str());
             Note(L"T11 长串组合+数字选词", d);
         }
+
+        // ---- T12 翻页 + 第二页数字选词（用户报告"无法切换下一页"）----
+        {
+            EnsurePinyinMode(pKm);
+            ClearFocusedText(pTm);
+            TypeLetters(pKm, L"de"); // "de" 触发多页候选（的/得/德…>9）
+            PumpMessages();
+            Sleep(400); // 等候选回包（无防抖后应 <100ms，宽松留量）
+            BOOL eatenPg = FALSE;
+            pKm->TestKeyDown(VK_NEXT, 0x00000001 | 0x01000000, &eatenPg); // PageDown extended
+            PumpMessages();
+            bool pgEaten = false;
+            if (eatenPg)
+            {
+                pKm->KeyDown(VK_NEXT, 0x00000001 | 0x01000000, &eatenPg);
+                pgEaten = eatenPg != FALSE;
+                PumpMessages();
+                Sleep(150);
+            }
+            std::wstring mid = ReadFocusedText(pTm);
+            TypeKey(pKm, (WPARAM)L'1'); // 第二页第 1 个 =
+            PumpMessages();
+            Sleep(250);
+            std::wstring t = ReadFocusedText(pTm);
+            wchar_t d[220];
+            _snwprintf_s(d, _TRUNCATE,
+                         L"PgDnEaten=%d mid='%ls' after='1st-of-pg2'='%ls' ok=%d",
+                         (int)eatenPg, mid.c_str(), t.c_str(),
+                         pgEaten && !t.empty() && mid.empty());
+            // 判定：翻页键被吃；且按 1 上屏的不是第一页默认"的"（=第二页词）
+            bool okEaten = eatenPg != FALSE;
+            bool okCommit = !t.empty() && t != L"的" && mid.empty();
+            Report(okEaten && okCommit, L"T12 翻页+第二页选词", d);
+        }
+
+        // ---- T13 真实快打场景：60ms/键 + 尾键后 30ms 内空格（用户原话场景）----
+        {
+            EnsurePinyinMode(pKm);
+            ClearFocusedText(pTm);
+            const wchar_t* seq = L"jintian";
+            bool typeOk = true;
+            for (const wchar_t* p = seq; *p; p++)
+            {
+                wchar_t s[2] = { *p, 0 };
+                if (!TypeLetters(pKm, s)) { typeOk = false; break; }
+                Sleep(60);
+            }
+            PumpMessages();
+            Sleep(30); // 用户尾距：30ms 就按空格
+            TypeKey(pKm, VK_SPACE);
+            PumpMessages();
+            Sleep(150);
+            std::wstring t = ReadFocusedText(pTm);
+            bool hanzi = t.find(L"今") != std::wstring::npos || t.find(L"天") != std::wstring::npos;
+            bool noRaw = t.find(L"jintian") == std::wstring::npos;
+            wchar_t d[200];
+            _snwprintf_s(d, _TRUNCATE, L"'%ls' hanzi=%d noRaw=%d typeOk=%d",
+                         t.c_str(), hanzi, noRaw, typeOk);
+            Report(hanzi && noRaw && typeOk, L"T13 快打 + 30ms 抢空格上屏汉字", d);
+        }
     } while (false);
 
     // ---- 清理 ----
