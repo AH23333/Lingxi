@@ -509,6 +509,38 @@ LRESULT CandWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         return 0;
 
+    case WM_MOUSEWHEEL:
+    {
+        // 滚轮翻页（B7）：上滚=上一页、下滚=下一页。Win10+ 默认"悬停非活动
+        // 窗口时滚动"把滚轮路由到候选窗（宿主保焦点）；关闭该系统设置的
+        // 用户用 PageUp/PageDown、-/= 翻页（DLL 侧既有路径）。锁外重排
+        // （LayoutAndPosition 自带锁与 InvalidateRect）。
+        int delta = (short)GET_WHEEL_DELTA_WPARAM(wParam);
+        int steps = delta / WHEEL_DELTA; // 常规滚轮 ±120；触摸板小增量忽略
+        bool changed = false;
+        EnterCriticalSection(&_cs);
+        size_t total = _cands.size();
+        if (total > kPageSize && steps != 0)
+        {
+            size_t maxStart = (total - 1) / kPageSize * kPageSize;
+            long long ns = (long long)_pageStart - (long long)steps * (long long)kPageSize;
+            if (ns < 0) ns = 0;
+            if (ns > (long long)maxStart) ns = (long long)maxStart;
+            if ((size_t)ns != _pageStart)
+            {
+                _pageStart = (uint32_t)ns; // ns 已夹在 [0, maxStart] 内
+                changed = true;
+            }
+        }
+        LeaveCriticalSection(&_cs);
+        if (changed)
+        {
+            _hoverRow = -1; // 翻页后旧行悬停态作废
+            LayoutAndPosition();
+        }
+        return 0;
+    }
+
     case WM_LBUTTONUP:
     {
         POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };

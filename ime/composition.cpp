@@ -430,13 +430,14 @@ void CTextService::PinyinCancel()
 }
 
 // B1 部分提交：cover 是否指向有效剩余拼音。
-// 条件：0 < cover < 串长（部分消耗）且 _pinyin 全字母（非字母字符的下标
-// 映射不可靠，全清兜底）。是则 rest=剩余串。
+// 条件：0 < cover < 串长（部分消耗）且 _pinyin 全字母/隔音符（其余字符的
+// 下标映射不可靠，全清兜底）。撇号是引擎 inOfCtx 计入的合法组合字符
+// （B6），cover 按原始 context 下标映射，substr 位置正确。是则 rest=剩余串。
 bool CTextService::PinyinKeepRest(uint32_t cover, std::wstring& rest)
 {
     if (cover == 0 || cover >= _pinyin.size()) return false;
     for (wchar_t ch : _pinyin)
-        if (!((ch >= L'a' && ch <= L'z') || (ch >= L'A' && ch <= L'Z')))
+        if (!((ch >= L'a' && ch <= L'z') || (ch >= L'A' && ch <= L'Z') || ch == L'\''))
             return false;
     rest = _pinyin.substr(cover);
     return !rest.empty();
@@ -815,6 +816,15 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
     {
         wchar_t ch = (wchar_t)((wParam >= L'A' && wParam <= L'Z') ? (wParam + 32) : wParam);
         PinyinAppend(ch);
+        return;
+    }
+    // 拼音隔音符（B6）：组合中无 Shift 的撇号（美式 VK_OEM_7 = '）进组合当
+    // 切分边界，引擎按 xi'an 归一消歧（西安 vs 先）。Shift+'（引号）、
+    // 双拼（键位映射滤撇号，隔音无组合意义）、空组合态不进组合，
+    // 维持原 unmapped 提交/放行行为。
+    if (wParam == VK_OEM_7 && PinyinActive() && !shiftOrCaps && !LoadSettings().shuangpin)
+    {
+        PinyinAppend(L'\'');
         return;
     }
     switch (wParam)

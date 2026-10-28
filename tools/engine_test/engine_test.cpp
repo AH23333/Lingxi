@@ -675,6 +675,61 @@ int wmain()
                 }
             }
 
+            // P6e. 拼音隔音符（B6）：组合中撇号（xi'an）强制切分边界，
+            // "西安"可出且消耗全部 5 字符；不加隔音的 xian 单音节词"先"仍在
+            // （对照组）；隔音后跨边界的整串音节词不出现（xi'an 不出"先"）；
+            // 弯撇号（U+2019）同样归一（只断言存在：非 ASCII 使 cover 降级 0，
+            // 与"非 ASCII 字符 UTF-8 变长不下标映射"口径一致）。
+            {
+                struct SepCase { const wchar_t* input; const wchar_t* word; bool checkCover; uint32_t cover; };
+                const SepCase sp[] = {
+                    { L"xi'an",      L"西安", true,  5 },
+                    { L"xi\u2019an", L"西安", false, 0 },
+                };
+                for (const auto& cs : sp)
+                {
+                    lingxi::Prediction r = py->Predict(cs.input);
+                    bool parallel = r.cover.size() == r.cands.size();
+                    bool found = false;
+                    uint32_t cv = 0;
+                    for (size_t k = 0; k < r.cands.size() && k < r.cover.size(); k++)
+                        if (r.cands[k] == cs.word) { found = true; cv = r.cover[k]; break; }
+                    wchar_t detail[160];
+                    _snwprintf_s(detail, _TRUNCATE, L"'%ls' found=%d cover=%u cands=%zu",
+                                 cs.input, (int)found, cv, r.cands.size());
+                    bool ok = parallel && found && (!cs.checkCover || cv == cs.cover);
+                    Report(ok, "separator: xi'an yields '西安' (B6)", detail);
+                }
+                {
+                    // 对照组：无隔音 xian → 单音节词"先"仍在，且消耗整串 4 字符
+                    lingxi::Prediction r = py->Predict(L"xian");
+                    bool hasXian = false;
+                    uint32_t cvXian = 0;
+                    for (size_t k = 0; k < r.cands.size() && k < r.cover.size(); k++)
+                        if (r.cands[k] == L"先") { hasXian = true; cvXian = r.cover[k]; break; }
+                    wchar_t detail[128];
+                    _snwprintf_s(detail, _TRUNCATE, L"has先=%d cover=%u cands=%zu",
+                                 (int)hasXian, cvXian, r.cands.size());
+                    Report(hasXian && cvXian == 4,
+                           "separator: bare xian '先' consumes all 4", detail);
+                }
+                {
+                    // 隔音边界阻断整串音节路径：xi'an 里"先"若在，只能是简拼
+                    // 前缀解读（B1 部分消耗：只吃 'x' 一个字符，cover=1）——
+                    // 不再是 xian 整串消耗 4。这正是隔音符的因果效果。
+                    lingxi::Prediction r = py->Predict(L"xi'an");
+                    int idxXian = -1;
+                    uint32_t cvXian = 0;
+                    for (size_t k = 0; k < r.cands.size() && k < r.cover.size(); k++)
+                        if (r.cands[k] == L"先") { idxXian = (int)k; cvXian = r.cover[k]; break; }
+                    bool ok = idxXian < 0 || cvXian == 1; // 不出现，或仅简拼前缀
+                    wchar_t detail[128];
+                    _snwprintf_s(detail, _TRUNCATE, L"先idx=%d cover=%u cands=%zu",
+                                 idxXian, cvXian, r.cands.size());
+                    Report(ok, "separator: xi'an '先' is prefix-only (cover 1, not 4)", detail);
+                }
+            }
+
             // P6c3. 双拼不提供 cover（键位→全拼不可逆推）：全 0 或空
             {
                 lingxi::Settings s0 = lingxi::LoadSettings();

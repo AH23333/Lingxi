@@ -208,7 +208,9 @@ public:
             for (size_t i = 0; i < raw.size(); i++)
             {
                 char c = Lower(raw[i]);
-                if ((c >= 'a' && c <= 'z') || raw[i] == '\'' || raw[i] == '\u2019')
+                // coverOk 保证 raw 与 context 同长（纯 ASCII 单字节），
+                // 只需匹配字母与直撇号；弯撇号（UTF-8 多字节）走不进这里。
+                if ((c >= 'a' && c <= 'z') || raw[i] == '\'')
                     inOfCtx.push_back((uint32_t)i);
             }
             if (inOfCtx.size() != inForCover.size()) coverOk = false;
@@ -603,15 +605,27 @@ private:
 
     // 规范化：仅保留 a-z（小写）；撇号（ASCII/弯体）作为切分边界保留。
     // 预测与 cover 映射共用同一口径（同字符同序，仅过滤）。
+    // 弯撇号（U+2019/U+2018）是 UTF-8 三字节序列（E2 80 99/98）——窄字面量
+    // 与单字节 char 比较恒假（旧 `ch=='\u2019'` 是死代码），必须按序列探测；
+    // 归一成同一个隔音边界后弯/直撇号行为一致（cover 映射仍受"UTF-8 变长
+    // 不映射"限制，弯体输入 cover=0，与 Predict 口径一致）。
     static std::string NormalizeIn(const std::string& rawIn)
     {
         std::string in;
         in.reserve(rawIn.size());
-        for (char ch : rawIn)
+        for (size_t i = 0; i < rawIn.size(); i++)
         {
+            char ch = rawIn[i];
             char c = Lower(ch);
             if (c >= 'a' && c <= 'z') in.push_back(c);
-            else if (ch == '\'' || ch == '\u2019') in.push_back('\'');
+            else if (ch == '\'') in.push_back('\'');
+            else if (i + 2 < rawIn.size() &&
+                     (unsigned char)rawIn[i] == 0xE2 && (unsigned char)rawIn[i + 1] == 0x80 &&
+                     ((unsigned char)rawIn[i + 2] == 0x99 || (unsigned char)rawIn[i + 2] == 0x98))
+            {
+                in.push_back('\'');
+                i += 2; // 跳过 UTF-8 剩余两字节
+            }
         }
         return in;
     }
@@ -1090,7 +1104,16 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
             {
                 auto it = _byCompact.find(compact);
                 if (it != _byCompact.end())
-                    for (int i : it->second) { add(i); exactEi.insert(i); }
+                    for (int i : it->second)
+                    {
+                        // 紧凑全拼丢边界（xi+an 与 xian 同串）：单音节词"先/建"
+                        // 会撞进双单元路径——隔音符（xi'an）语义因此失效。
+                        // 音节数必须与单元数一致（PARTIAL 分支 1176 同款校验）。
+                        // 无隔音时只是去掉跨路径冗余匹配（xian 的"西安"仍由
+                        // [xi][an] 路径命中），零行为损失。
+                        if (_entries[i].sylls.size() != (size_t)n) continue;
+                        add(i); exactEi.insert(i);
+                    }
             }
             else
             {
@@ -1137,6 +1160,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                         for (int ei : fit->second)
                         {
                             if (exactEi.count(ei)) continue;
+                            if (_entries[ei].sylls.size() != (size_t)n) continue; // 紧凑全拼撞键：同上
                             auto bf = bestFuzzy.find(ei);
                             if (bf == bestFuzzy.end() || fuzzyCount < bf->second)
                                 bestFuzzy[ei] = fuzzyCount;

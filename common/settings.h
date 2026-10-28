@@ -35,7 +35,8 @@ struct Settings
     bool llmMultiPath = false;     // LLM 多路采样（R3 §3）：贪心路跑完再采样路投票/合并候选。
                                    // 默认关：每次 LLM 调用约 +150ms CPU；seed=hash(prompt) 固定
                                    // 防候选闪烁；拼音重排只做 Borda 投票，top-1 不一致回退原序
-    uint32_t skinIndex = 0;        // 候选窗配色：0 蓝 1 青 2 紫 3 绿 4 橙
+    uint32_t skinIndex = 0;        // 候选窗配色（ui/uistyle.h kSkins）：0 翠绿（默认）
+                                   // 1 青碧 2 橙 3 红 4 金——全 UI 统一换肤
 };
 
 Settings LoadSettings();
