@@ -18,6 +18,7 @@
 
 #include "../common/log.h"
 #include "../common/settings.h"
+#include "uistyle.h"
 
 namespace lingxi {
 
@@ -243,6 +244,10 @@ HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
      g_hChkShuangpin = nullptr, g_hChkSymbolHotkey = nullptr, g_hChkTraditional = nullptr,
       g_hChkLlmRerank = nullptr, g_hChkLlmMultiPath = nullptr;
 HFONT g_hFont = nullptr;
+HFONT g_hFontSection = nullptr; // 段标题：半粗加字号一档
+HBRUSH g_hBgBrush = nullptr;    // WinUI 中性窗体底
+HBRUSH g_hCardBrush = nullptr;  // WinUI 卡片白
+HWND g_hHint = nullptr;         // 锚底提示（不落卡片上：CTLCOLOR 区分用）
 bool g_updating = false; // 程序性改控件时不回写设置
 
 HICON g_hIcon = nullptr;
@@ -310,6 +315,7 @@ void SaveFromControls()
     if (sel >= 0) s.darkMode = (uint32_t)sel;
     SaveSettings(s);
     if (g_settingsChanged) g_settingsChanged();
+    if (g_hSettings) InvalidateRect(g_hSettings, NULL, TRUE); // 换肤等即时重绘自绘控件
     LX_LOG(L"ui", L"设置已保存: pinyin=%d count=%u dark=%u en=%d cnPunct=%d fuzzy=%d toggleMode=%u v=%d",
            (int)s.pinyinEnabled, s.candidateCount, s.darkMode, (int)s.enCompletion,
            (int)s.cnPunct, (int)s.fuzzyPinyin, (unsigned)s.toggleMode, (int)s.vMode);
@@ -523,6 +529,19 @@ LRESULT CALLBACK UserDictWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_UD_CLOSE: ShowWindow(hwnd, SW_HIDE); return 0;
         }
         break;
+    case WM_CTLCOLORSTATIC:
+        // WinUI：窗体底中性灰 + 主文本色（与设置页一致）
+        SetBkColor((HDC)wParam, kUiBg);
+        SetTextColor((HDC)wParam, kUiText);
+        return (LRESULT)g_hBgBrush;
+    case WM_CTLCOLOREDIT:
+        SetBkColor((HDC)wParam, kUiCard);
+        SetTextColor((HDC)wParam, kUiText);
+        return (LRESULT)GetStockObject(WHITE_BRUSH);
+    case WM_CTLCOLORLISTBOX:
+        SetBkColor((HDC)wParam, kUiCard);
+        SetTextColor((HDC)wParam, kUiText);
+        return (LRESULT)GetStockObject(WHITE_BRUSH);
     case WM_CLOSE:
         ShowWindow(hwnd, SW_HIDE);
         return 0;
@@ -539,6 +558,9 @@ void CreateUserDictWindow(HINSTANCE hInst)
     wc.hInstance = hInst;
     wc.hIcon = g_hIcon;
     wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
+    if (!g_hBgBrush)
+        g_hBgBrush = CreateSolidBrush(kUiBg);
+    wc.hbrBackground = g_hBgBrush; // WinUI 中性窗体底
     wc.lpszClassName = kUserDictWndClass;
     RegisterClassExW(&wc);
 
@@ -628,10 +650,13 @@ struct CtlItem
     int ph = 0;         // 高
     int lw = 0;         // 成对项的标签宽（其余 0）
     int flags = 0;
+    int fy = 0;         // 排布后的客户区 y（已扣 g_scrollY；卡片矩形用）
 };
 
 std::vector<CtlItem> g_layout;
-HBRUSH g_hBgBrush = nullptr;
+std::vector<RECT> g_cards;        // WinUI 白卡片区（客户区坐标；WM_ERASEBKGND 绘制）
+std::vector<HWND> g_sectionHwnds; // 段标题（用半粗字体）
+std::vector<HWND> g_accentBtns;   // 强调色按钮（owner-draw）
 int g_setMinW = 0, g_setMinH = 0; // WM_GETMINMAXINFO 下限（DPI 缩放后）
 int g_setDpi = 96;
 int g_scrollY = 0; // 设置页纵向滚动偏移（内容超出客户区时）
@@ -663,15 +688,21 @@ int LayoutSettings()
 
     int x = pad, y = pad, rowH = 0;
     int contentEnd = 0;
-    for (const auto& it : g_layout)
+    // WinUI 卡片：每个段（SECTION）落一张白卡；卡片内缩 8px、段间留 ~12px
+    int cardInset = MulDiv(8, g_setDpi, 96);
+    RECT card{ 0, 0, 0, 0 };
+    int cardBottom = 0;
+    bool cardOpen = false;
+    g_cards.clear();
+    for (auto& it : g_layout)
     {
         if (it.flags & IT_BOTTOM) continue;
         int w = it.pw;
-        if (it.flags & IT_SECTION) // 段标题：独行占满整行
+        if (it.flags & IT_SECTION) // 段标题：独行占满整行，并开一张新卡片
         {
             w = cw - pad * 2;
             x = pad;
-            y += rowH + (rowH ? gap * 2 : 0);
+            y += rowH + (rowH ? MulDiv(28, g_setDpi, 96) : 0);
             rowH = 0;
         }
         else if (x > pad && x + w > cw - pad)
@@ -681,22 +712,34 @@ int LayoutSettings()
             rowH = 0;
         }
         if (w > cw - pad * 2) w = cw - pad * 2;
+        it.fy = y - g_scrollY;
         if (it.h2)
         {
             // 约定：h=标签（实测宽 lw），h2=控件（填满剩余）
-            MoveWindow(it.h, x, y - g_scrollY, it.lw, it.ph, TRUE);
-            MoveWindow(it.h2, x + it.lw + gap, y - g_scrollY, w - it.lw - gap, it.ph, TRUE);
+            MoveWindow(it.h, x, it.fy, it.lw, it.ph, TRUE);
+            MoveWindow(it.h2, x + it.lw + gap, it.fy, w - it.lw - gap, it.ph, TRUE);
         }
         else
         {
-            MoveWindow(it.h, x, y - g_scrollY, w, it.ph, TRUE);
+            MoveWindow(it.h, x, it.fy, w, it.ph, TRUE);
+        }
+        if (it.flags & IT_SECTION)
+        {
+            if (cardOpen) { card.bottom = cardBottom + cardInset; g_cards.push_back(card); }
+            cardOpen = true;
+            card = { pad - cardInset, it.fy - cardInset, cw - pad + cardInset, 0 };
+        }
+        else if (cardOpen)
+        {
+            cardBottom = it.fy + it.ph; // 卡随内容延伸
         }
         rowH = (rowH > it.ph) ? rowH : it.ph;
         x += w + gap;
         contentEnd = (contentEnd > y + rowH) ? contentEnd : y + rowH;
     }
+    if (cardOpen) { card.bottom = cardBottom + cardInset; g_cards.push_back(card); }
     // 锚底项：不早于内容尾+间距，不晚于客户底-高-pad（内容短时贴底不滚动）
-    int flowEnd = contentEnd + gap;
+    int flowEnd = contentEnd + MulDiv(16, g_setDpi, 96); // 卡片底再留 8px
     int anchor = g_scrollY + ch - bottomH - pad;
     int hintY = (flowEnd > anchor) ? flowEnd : anchor;
     int by = hintY;
@@ -730,7 +773,12 @@ void UpdateSettingsScrollbar(int contentH)
     }
     if (!needScroll)
     {
-        if (g_scrollY != 0) { g_scrollY = 0; LayoutSettings(); }
+        if (g_scrollY != 0)
+        {
+            g_scrollY = 0;
+            LayoutSettings();
+            InvalidateRect(g_hSettings, NULL, TRUE); // 卡片随内容回移重绘
+        }
         return;
     }
     SCROLLINFO si{};
@@ -747,6 +795,91 @@ void UpdateSettingsScrollbar(int contentH)
 }
 
 } // namespace
+
+// ---- WinUI 风格 owner-draw：勾选框 / 强调色按钮 ----
+
+// 勾选框：20px 4 圆角方框（选中=皮肤强调色+白对勾；未选中=灰描边白底），
+// 文本主色右排。BS_AUTOCHECKBOX|BS_OWNERDRAW 保持点击/键盘/取值语义不变。
+void DrawOwnerCheck(const DRAWITEMSTRUCT* dis)
+{
+    HDC hdc = dis->hDC;
+    RECT rc = dis->rcItem;
+    // 控件背景补白（BUTTON 默认 BTNFACE 擦除会露灰，须盖成卡片白）
+    HBRUSH hCard = CreateSolidBrush(kUiCard);
+    FillRect(hdc, &rc, hCard);
+    DeleteObject(hCard);
+
+    int box = MulDiv(20, g_setDpi, 96);
+    int by = rc.top + ((rc.bottom - rc.top - box) / 2);
+    RECT br{ rc.left, by, rc.left + box, by + box };
+    bool checked = SendMessageW(dis->hwndItem, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    COLORREF accent = UiSkin(LoadSettings().skinIndex).accent;
+
+    HGDIOBJ oldPen = SelectObject(hdc, GetStockObject(NULL_PEN));
+    HBRUSH hFill = CreateSolidBrush(checked ? accent : kUiCard);
+    HGDIOBJ oldBrush = SelectObject(hdc, hFill);
+    RoundRect(hdc, br.left, br.top, br.right + 1, br.bottom + 1, 8, 8);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(hFill);
+    if (!checked) // 未勾选：1px 灰描边
+    {
+        HPEN pen = CreatePen(PS_SOLID, 1, kUiControlEdge);
+        SelectObject(hdc, pen);
+        SelectObject(hdc, GetStockObject(NULL_BRUSH));
+        RoundRect(hdc, br.left, br.top, br.right + 1, br.bottom + 1, 8, 8);
+        SelectObject(hdc, oldPen);
+        DeleteObject(pen);
+    }
+    else // 勾选：白色圆头对勾
+    {
+        LOGBRUSH lb{ BS_SOLID, RGB(255, 255, 255) };
+        HPEN pen = ExtCreatePen(PS_GEOMETRIC | PS_SOLID | PS_ENDCAP_ROUND | PS_JOIN_ROUND,
+                                MulDiv(2, g_setDpi, 96), &lb, 0, NULL);
+        SelectObject(hdc, pen);
+        MoveToEx(hdc, br.left + box * 22 / 100, br.top + box * 52 / 100, NULL);
+        LineTo(hdc, br.left + box * 42 / 100, br.top + box * 74 / 100);
+        LineTo(hdc, br.left + box * 78 / 100, br.top + box * 26 / 100);
+        SelectObject(hdc, oldPen);
+        DeleteObject(pen);
+    }
+    SelectObject(hdc, oldPen);
+
+    wchar_t txt[512] = {};
+    GetWindowTextW(dis->hwndItem, txt, 512);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, kUiText);
+    HGDIOBJ oldFont = SelectObject(hdc, g_hFont);
+    RECT tr{ br.right + MulDiv(8, g_setDpi, 96), rc.top, rc.right, rc.bottom };
+    DrawTextW(hdc, txt, -1, &tr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
+    SelectObject(hdc, oldFont);
+}
+
+// 强调色按钮：皮肤色圆角底 + 白字（按下加深 25%）
+void DrawAccentBtn(const DRAWITEMSTRUCT* dis)
+{
+    HDC hdc = dis->hDC;
+    RECT rc = dis->rcItem;
+    bool pressed = (dis->itemState & ODS_SELECTED) != 0;
+    COLORREF accent = UiSkin(LoadSettings().skinIndex).accent;
+    if (pressed)
+        accent = RGB(GetRValue(accent) * 3 / 4, GetGValue(accent) * 3 / 4,
+                     GetBValue(accent) * 3 / 4);
+    HBRUSH fill = CreateSolidBrush(accent);
+    HGDIOBJ oldBrush = SelectObject(hdc, fill);
+    HGDIOBJ oldPen = SelectObject(hdc, GetStockObject(NULL_PEN));
+    RoundRect(hdc, rc.left, rc.top, rc.right + 1, rc.bottom + 1, 8, 8);
+    SelectObject(hdc, oldPen);
+    SelectObject(hdc, oldBrush);
+    DeleteObject(fill);
+
+    wchar_t txt[128] = {};
+    GetWindowTextW(dis->hwndItem, txt, 128);
+    SetBkMode(hdc, TRANSPARENT);
+    SetTextColor(hdc, RGB(255, 255, 255));
+    HGDIOBJ oldFont = SelectObject(hdc, g_hFont);
+    DrawTextW(hdc, txt, -1, &rc, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+    SelectObject(hdc, oldFont);
+}
 
 LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
@@ -788,6 +921,38 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     case WM_SIZE:
         UpdateSettingsScrollbar(LayoutSettings()); // 缩放→重排→滚动范围同步
         return 0;
+    case WM_ERASEBKGND:
+    {
+        // WinUI：中性灰窗体底 + 各段白色 8px 圆角卡片（浅描边）
+        HDC hdc = (HDC)wParam;
+        RECT rc{};
+        GetClientRect(hwnd, &rc);
+        HBRUSH bg = CreateSolidBrush(kUiBg);
+        FillRect(hdc, &rc, bg);
+        DeleteObject(bg);
+        HPEN pen = CreatePen(PS_SOLID, 1, kUiCardBorder);
+        HGDIOBJ oldPen = SelectObject(hdc, pen);
+        HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(WHITE_BRUSH));
+        int rr = MulDiv(16, g_setDpi, 96); // 8px 圆角
+        for (const auto& c : g_cards)
+            RoundRect(hdc, c.left, c.top, c.right, c.bottom, rr, rr);
+        SelectObject(hdc, oldBrush);
+        SelectObject(hdc, oldPen);
+        DeleteObject(pen);
+        return 1;
+    }
+    case WM_DRAWITEM:
+    {
+        auto* dis = (const DRAWITEMSTRUCT*)lParam;
+        if (dis && dis->CtlType == ODT_BUTTON)
+        {
+            LONG_PTR st = GetWindowLongPtrW(dis->hwndItem, GWL_STYLE);
+            if (st & BS_AUTOCHECKBOX) { DrawOwnerCheck(dis); return TRUE; }
+            for (HWND h : g_accentBtns)
+                if (h == dis->hwndItem) { DrawAccentBtn(dis); return TRUE; }
+        }
+        break;
+    }
     case WM_VSCROLL:
     {
         SCROLLINFO si{};
@@ -814,6 +979,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         {
             g_scrollY = pos;
             UpdateSettingsScrollbar(LayoutSettings());
+            InvalidateRect(hwnd, NULL, TRUE); // 卡片/控件整体随滚动重绘
         }
         return 0;
     }
@@ -833,6 +999,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         {
             g_scrollY = pos;
             UpdateSettingsScrollbar(LayoutSettings());
+            InvalidateRect(hwnd, NULL, TRUE);
         }
         return 0;
     }
@@ -847,10 +1014,26 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         return 0;
     }
     case WM_CTLCOLORSTATIC:
-        // 浅底配色：静态文本/复选框文字统一灰黑，背景与窗口底色一致
-        SetBkColor((HDC)wParam, RGB(248, 250, 252));
-        SetTextColor((HDC)wParam, RGB(64, 68, 78));
-        return (LRESULT)g_hBgBrush;
+        // 卡片上的静态文本：白底主文本；锚底提示：窗体底次级文本
+        if ((HWND)lParam == g_hHint)
+        {
+            SetBkColor((HDC)wParam, kUiBg);
+            SetTextColor((HDC)wParam, kUiText2);
+            return (LRESULT)g_hBgBrush;
+        }
+        SetBkColor((HDC)wParam, kUiCard);
+        SetTextColor((HDC)wParam, kUiText);
+        return (LRESULT)g_hCardBrush;
+    case WM_CTLCOLORBTN:
+        // owner-draw 勾选框背景擦除（默认 BTNFACE 会露灰，须给卡片白刷）
+        SetBkColor((HDC)wParam, kUiCard);
+        SetTextColor((HDC)wParam, kUiText);
+        return (LRESULT)g_hCardBrush;
+    case WM_CTLCOLOREDIT:
+    case WM_CTLCOLORLISTBOX:
+        SetBkColor((HDC)wParam, kUiCard);
+        SetTextColor((HDC)wParam, kUiText);
+        return (LRESULT)g_hCardBrush;
     case WM_CLOSE:
         ShowWindow(hwnd, SW_HIDE); // 关闭=隐藏，保留控件状态
         return 0;
@@ -868,8 +1051,10 @@ void CreateSettingsWindow(HINSTANCE hInst)
     wc.hIcon = g_hIcon;
     wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
     if (!g_hBgBrush)
-        g_hBgBrush = CreateSolidBrush(RGB(248, 250, 252));
-    wc.hbrBackground = g_hBgBrush; // 浅底配色；缩放时正确擦除背景
+        g_hBgBrush = CreateSolidBrush(kUiBg);
+    if (!g_hCardBrush)
+        g_hCardBrush = CreateSolidBrush(kUiCard);
+    wc.hbrBackground = g_hBgBrush; // WinUI 中性窗体底；缩放时正确擦除背景
     wc.lpszClassName = kSettingsWndClass;
     RegisterClassExW(&wc);
 
@@ -887,28 +1072,36 @@ void CreateSettingsWindow(HINSTANCE hInst)
     // 正确加载后才放开（LoadToControls 结束时会把 g_updating 复位为 false）。
     g_updating = true;
     g_layout.clear();
+    g_cards.clear();
+    g_sectionHwnds.clear();
+    g_accentBtns.clear();
 
     g_hSettings = CreateWindowExW(0, kSettingsWndClass, L"灵犀输入法设置",
-                                  WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
-                                  WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME,
-                                  CW_USEDEFAULT, CW_USEDEFAULT,
-                                  MulDiv(680, scale, 96), MulDiv(560, scale, 96),
-                                  NULL, NULL, hInst, NULL);
+                                   WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
+                                   WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME,
+                                   CW_USEDEFAULT, CW_USEDEFAULT,
+                                   MulDiv(680, scale, 96), MulDiv(560, scale, 96),
+                                   NULL, NULL, hInst, NULL);
 
     g_hFont = CreateFontW(-MulDiv(12, scale, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
                           DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                           CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    g_hFontSection = CreateFontW(-MulDiv(13, scale, 96), 0, 0, 0, FW_SEMIBOLD, FALSE, FALSE, FALSE,
+                                 DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                                 CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
 
     // ---- 注册式创建：所有控件进 g_layout，位置由 LayoutSettings() 统一排布 ----
     auto addSection = [&](const wchar_t* text) {
         HWND h = CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT,
                                  0, 0, 10, rowH, g_hSettings, NULL, hInst, NULL);
         g_layout.push_back({ h, nullptr, MulDiv(10, scale, 96), rowH, 0, IT_SECTION });
+        g_sectionHwnds.push_back(h);
         return h;
     };
     auto addCheck = [&](const wchar_t* text, int id) {
         HWND h = CreateWindowExW(0, L"BUTTON", text,
-                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP |
+                                 BS_AUTOCHECKBOX | BS_OWNERDRAW, // WinUI 自绘勾选框
                                  0, 0, 10, rowH, g_hSettings, (HMENU)(INT_PTR)id, hInst, NULL);
         // 首选宽=文字实测+勾选框留白；放不下自动换行/截断
         int tw = MeasureTextW(g_hSettings, g_hFont, text) + MulDiv(30, scale, 96);
@@ -932,9 +1125,11 @@ void CreateSettingsWindow(HINSTANCE hInst)
         return hCmb;
     };
     auto addButton = [&](const wchar_t* text, int id, int w) {
-        HWND h = CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+        HWND h = CreateWindowExW(0, L"BUTTON", text,
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_OWNERDRAW,
                                  0, 0, 10, rowH, g_hSettings, (HMENU)(INT_PTR)id, hInst, NULL);
         g_layout.push_back({ h, nullptr, w, rowH, 0, IT_WRAP });
+        g_accentBtns.push_back(h); // WinUI 皮肤强调色按钮
         return h;
     };
 
@@ -973,7 +1168,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     };
     g_hCmbFontSize = addComboPair(L"候选字号", IDC_CMB_FONTSIZE, MulDiv(100, scale, 96), comboListUnits, fillFont);
     auto fillSkin = [](HWND h) {
-        for (const wchar_t* s : { L"蓝色", L"青色", L"紫色", L"绿色", L"橙色" })
+        for (const wchar_t* s : { L"翠绿", L"青碧", L"橙色", L"红色", L"金色" })
             ComboBox_AddString(h, s);
     };
     g_hCmbSkin = addComboPair(L"界面配色", IDC_CMB_SKIN, MulDiv(100, scale, 96), comboListUnits, fillSkin);
@@ -1005,11 +1200,15 @@ void CreateSettingsWindow(HINSTANCE hInst)
         L"修改即时生效并自动保存。重建输入法后需重启应用才会加载新版本。",
         WS_CHILD | WS_VISIBLE | SS_LEFT, 0, 0, 10, rowH, g_hSettings, NULL, hInst, NULL);
     g_layout.push_back({ hHint, nullptr, MulDiv(10, scale, 96), rowH, 0, IT_BOTTOM });
+    g_hHint = hHint;
 
     EnumChildWindows(g_hSettings, [](HWND h, LPARAM lp) -> BOOL {
         SendMessageW(h, WM_SETFONT, (WPARAM)lp, TRUE);
         return TRUE;
     }, (LPARAM)g_hFont);
+    // 段标题用半粗大一号字体（WinUI 设置页分组样式）
+    for (HWND h : g_sectionHwnds)
+        SendMessageW(h, WM_SETFONT, (WPARAM)g_hFontSection, TRUE);
 
     // 宽度下限=最窄可读；高度下限宽松（内容超出靠纵向滚动）
     g_setMinW = MulDiv(460, scale, 96);

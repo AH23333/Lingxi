@@ -41,7 +41,7 @@ private:
     void LayoutMetrics(int* itemH, int* pad);
     // 按字号（DPI 缩放）重建三支字体；先删除旧字体，避免泄漏
     void RebuildFonts(uint32_t fontSize);
-    // 应用皮肤（强调色 + 浅色 hover 底色）；越界回退默认蓝
+    // 应用皮肤（强调色 + 浅色 hover 底色）；越界回退默认翠绿
     void ApplySkin(uint32_t idx);
     // 调用方持锁：返回当前页在全量列表中的起止 [begin,end)
     void CurrentPageRangeLocked(size_t* begin, size_t* end) const;
@@ -52,8 +52,8 @@ private:
     HFONT _smallFont = nullptr; // 底部页码/标记小字
     uint32_t _fontSize = 16;    // 当前字号（变化时重建字体）
     uint32_t _skinIndex = 0;    // 当前皮肤（变化时换强调色）
-    COLORREF _accent = RGB(0, 120, 215);   // 首行/toast 底色（皮肤）
-    COLORREF _hoverLight = RGB(224, 238, 252); // 浅色 hover 底色（皮肤）
+    COLORREF _accent = RGB(16, 124, 16);        // 首行/toast 底色（皮肤）
+    COLORREF _hoverLight = RGB(230, 242, 230);  // 浅色 hover 底色（皮肤）
     bool _dark = true;
     RECT _caret{};          // 屏幕坐标
     uint32_t _ver = 0;

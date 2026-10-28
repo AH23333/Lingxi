@@ -71,6 +71,7 @@
     <ClInclude Include="settingsui.h" />
     <ClInclude Include="hotphraseui.h" />
     <ClInclude Include="symbolpanel.h" />
+    <ClInclude Include="uistyle.h" />
     <ClInclude Include="engine\predictor.h" />
   </ItemGroup>
   <ItemGroup>

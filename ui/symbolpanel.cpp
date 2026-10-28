@@ -1,5 +1,7 @@
 #include "symbolpanel.h"
 #include "../common/log.h"
+#include "../common/settings.h"
+#include "uistyle.h"
 
 #include <windowsx.h>
 #include <string>
@@ -88,6 +90,7 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                 g_cat = c;
                 SetWindowPos(h, HWND_TOPMOST, 0, 0, PanelWidth(), PanelHeight(),
                              SWP_NOMOVE | SWP_NOACTIVATE);
+                UiApplyRoundCorners(h, PanelWidth(), PanelHeight()); // RGN 路径随尺寸重设
                 InvalidateRect(h, NULL, TRUE);
             }
             return 0;
@@ -116,28 +119,46 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         HDC hdc = BeginPaint(h, &ps);
         RECT rc;
         GetClientRect(h, &rc);
-        HBRUSH bg = CreateSolidBrush(RGB(250, 250, 250));
-        FillRect(hdc, &rc, bg);
-        DeleteObject(bg);
+        const SkinDef& skin = UiSkin(LoadSettings().skinIndex);
+
+        // WinUI 浮层：白底 + 8px 圆角浅描边（RGN/DWM 负责裁圆角）
+        HBRUSH white = (HBRUSH)GetStockObject(WHITE_BRUSH);
+        FillRect(hdc, &rc, white);
+        {
+            HPEN pen = CreatePen(PS_SOLID, 1, kUiFlyoutBorder);
+            HGDIOBJ oldPen = SelectObject(hdc, pen);
+            HGDIOBJ oldBrush = SelectObject(hdc, GetStockObject(NULL_BRUSH));
+            RoundRect(hdc, rc.left, rc.top, rc.right - 1, rc.bottom - 1, 16, 16);
+            SelectObject(hdc, oldBrush);
+            SelectObject(hdc, oldPen);
+            DeleteObject(pen);
+        }
 
         SetBkMode(hdc, TRANSPARENT);
         HGDIOBJ oldFont = SelectObject(hdc, g_font);
 
-        // 分类按钮
+        // 分类按钮：选中=皮肤浅底药丸 + 强调色字；未选中=次级灰字
         int cw = (PanelWidth() - 2 * kPad) / kCatCount;
         for (int i = 0; i < kCatCount; i++)
         {
             RECT cr{ kPad + i * cw, 2, kPad + (i + 1) * cw, kCatH - 1 };
             if (i == g_cat)
             {
-                HBRUSH hl = CreateSolidBrush(RGB(220, 236, 252));
-                FillRect(hdc, &cr, hl);
+                RECT pr = cr;
+                InflateRect(&pr, -2, -1);
+                HBRUSH hl = CreateSolidBrush(skin.hoverLight);
+                HGDIOBJ oldBrush = SelectObject(hdc, hl);
+                HGDIOBJ oldPen = SelectObject(hdc, GetStockObject(NULL_PEN));
+                int pill = (pr.bottom - pr.top) * 2; // 全高药丸圆角
+                RoundRect(hdc, pr.left, pr.top, pr.right + 1, pr.bottom + 1, pill, pill);
+                SelectObject(hdc, oldPen);
+                SelectObject(hdc, oldBrush);
                 DeleteObject(hl);
-                SetTextColor(hdc, RGB(20, 90, 180));
+                SetTextColor(hdc, skin.accent);
             }
             else
             {
-                SetTextColor(hdc, RGB(60, 60, 60));
+                SetTextColor(hdc, kUiText2);
             }
             DrawTextW(hdc, kCats[i].name, -1, &cr,
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
@@ -146,7 +167,7 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         // 网格符号（按码点步进，cell 与点击换算一致）
         const wchar_t* sym = CurrentSymbols();
         int total = SymCount(sym);
-        SetTextColor(hdc, RGB(30, 30, 30));
+        SetTextColor(hdc, kUiText);
         for (int i = 0; i < total; i++)
         {
             int c = i % kCols;
@@ -186,6 +207,7 @@ void ShowSymbolPanel(HINSTANCE hInst, std::function<void(const std::wstring&)> o
     wc.lpfnWndProc = PanelWndProc;
     wc.hInstance = hInst;
     wc.hCursor = LoadCursor(0, IDC_ARROW);
+    wc.style = CS_DROPSHADOW; // WinUI 浮层级浅投影
     wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
     wc.lpszClassName = L"LingxiSymbolPanel";
     RegisterClassW(&wc);
@@ -212,10 +234,11 @@ void ShowSymbolPanel(HINSTANCE hInst, std::function<void(const std::wstring&)> o
 
     g_hPanel = CreateWindowExW(WS_EX_TOPMOST | WS_EX_NOACTIVATE,
         L"LingxiSymbolPanel", L"符号面板",
-        WS_POPUP | WS_BORDER, x, y, PanelWidth(), PanelHeight(),
+        WS_POPUP, x, y, PanelWidth(), PanelHeight(),
         0, 0, hInst, 0);
     if (g_hPanel)
     {
+        UiApplyRoundCorners(g_hPanel, PanelWidth(), PanelHeight()); // 圆角：描边自绘
         ShowWindow(g_hPanel, SW_SHOWNOACTIVATE);
         UpdateWindow(g_hPanel);
     }

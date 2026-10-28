@@ -5,25 +5,11 @@
 #include "../common/proto.h"
 #include "../common/log.h"
 #include "../common/settings.h"
+#include "uistyle.h"
 
 namespace lingxi {
 
 static const wchar_t kCandWndClass[] = L"LingxiCandidateWnd";
-
-// 皮肤：候选窗强调色（首行底色 / 中英 toast 底色）+ 浅色主题 hover 底色。
-// 深浅主题的 bg/fg/border 保持主题分支不变；深色 hover 恒为中性灰。
-struct SkinDef
-{
-    COLORREF accent;     // 首行底色 / toast 底色（白字，需够深）
-    COLORREF hoverLight; // 浅色主题 hover 行底色（强调色的高亮度变体）
-};
-static constexpr SkinDef kSkins[] = {
-    { RGB(0, 120, 215),  RGB(224, 238, 252) }, // 0 蓝（默认）
-    { RGB(0, 150, 136),  RGB(220, 245, 240) }, // 1 青
-    { RGB(124, 77, 255), RGB(237, 231, 255) }, // 2 紫
-    { RGB(46, 125, 50),  RGB(224, 245, 226) }, // 3 绿
-    { RGB(230, 81, 0),   RGB(255, 236, 224) }, // 4 橙
-};
 
 // 编译时间戳：候选窗右下角可见，用于区分各应用加载的新旧版 DLL
 // （TSF 已加载的 DLL 重建后旧进程不换新，必须重启应用）
@@ -37,7 +23,7 @@ bool CandWindow::Init(HINSTANCE hInst)
     _csInit = true;
 
     WNDCLASSEXW wc = { sizeof(wc) };
-    wc.style = CS_HREDRAW | CS_VREDRAW;
+    wc.style = CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW; // WinUI 浮层级浅投影
     wc.lpfnWndProc = s_WndProc;
     wc.hInstance = hInst;
     wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
@@ -58,6 +44,7 @@ bool CandWindow::Init(HINSTANCE hInst)
         return false;
     }
     SetWindowLongPtrW(_hwnd, GWLP_USERDATA, (LONG_PTR)this);
+    UiApplyRoundCorners(_hwnd, 240, 120); // Win11 DWM 圆角 / 老系统 RGN
 
     RebuildFonts(LoadSettings().candidateFontSize);
     ApplySkin(LoadSettings().skinIndex);
@@ -110,13 +97,13 @@ void CandWindow::RebuildFonts(uint32_t fontSize)
                              CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Segoe UI");
 }
 
-// 应用皮肤（强调色 + 浅色 hover 底色）；越界回退默认蓝
+// 应用皮肤（共享 uistyle.h 皮肤表）；越界回退默认翠绿
 void CandWindow::ApplySkin(uint32_t idx)
 {
-    if (idx >= ARRAYSIZE(kSkins)) idx = 0;
+    if (idx >= kSkinCount) idx = 0;
     _skinIndex = idx;
-    _accent = kSkins[idx].accent;
-    _hoverLight = kSkins[idx].hoverLight;
+    _accent = UiSkin(idx).accent;
+    _hoverLight = UiSkin(idx).hoverLight;
     LX_LOG(L"ui", L"ApplySkin skin=%u", idx);
 }
 
@@ -210,6 +197,7 @@ void CandWindow::LayoutAndPosition()
 
     SetWindowPos(_hwnd, HWND_TOPMOST, x, y, _width, _height,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    UiApplyRoundCorners(_hwnd, _width, _height); // RGN 回退路径需随尺寸重设
     InvalidateRect(_hwnd, NULL, TRUE);
 }
 
@@ -277,6 +265,7 @@ void CandWindow::ShowModeToast(bool english)
         x = max(mi.rcWork.left, min(x, mi.rcWork.right - w));
     }
     SetWindowPos(_hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    UiApplyRoundCorners(_hwnd, w, h);
     InvalidateRect(_hwnd, NULL, TRUE);
     SetTimer(_hwnd, 1, 1000, NULL);
 }
@@ -313,19 +302,19 @@ void CandWindow::OnPaint()
     }
     if (toast)
     {
-        COLORREF bg = toastEn ? (dark ? RGB(60, 60, 60) : RGB(250, 250, 250))
-                             : _accent;
+        COLORREF bg = toastEn ? (dark ? RGB(44, 44, 44) : kUiFlyoutBg)
+                              : _accent;
         HBRUSH hb = CreateSolidBrush(bg);
         FillRect(hdc, &rc, hb);
         DeleteObject(hb);
         HGDIOBJ old = SelectObject(hdc, _toastFont);
         SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, toastEn ? (dark ? RGB(225, 225, 225) : RGB(50, 50, 50))
-                                 : RGB(255, 255, 255));
+        SetTextColor(hdc, toastEn ? (dark ? RGB(228, 228, 228) : kUiText)
+                                  : RGB(255, 255, 255));
         DrawTextW(hdc, toastEn ? L"英" : L"中", -1, &rc,
                   DT_SINGLELINE | DT_CENTER | DT_VCENTER);
         SelectObject(hdc, old);
-        COLORREF border = dark ? RGB(90, 90, 90) : RGB(200, 200, 200);
+        COLORREF border = dark ? RGB(66, 66, 66) : kUiFlyoutBorder;
         HBRUSH hbd = CreateSolidBrush(border);
         FrameRect(hdc, &rc, hbd);
         DeleteObject(hbd);
@@ -353,9 +342,10 @@ void CandWindow::OnPaint()
     size_t totalPages = total ? (total + kPageSize - 1) / kPageSize : 1;
     size_t curPage = pgBegin / kPageSize + 1;
 
-    COLORREF bg = dark ? RGB(43, 43, 43) : RGB(250, 250, 250);
-    COLORREF fg = dark ? RGB(222, 222, 222) : RGB(32, 32, 32);
-    COLORREF border = dark ? RGB(80, 80, 80) : RGB(200, 200, 200);
+    // WinUI 浮层配色：深色 #2C2C2C / 浅色近白，中性描边，强调色只用于选中
+    COLORREF bg = dark ? RGB(44, 44, 44) : kUiFlyoutBg;
+    COLORREF fg = dark ? RGB(228, 228, 228) : kUiText;
+    COLORREF border = dark ? RGB(66, 66, 66) : kUiFlyoutBorder;
     COLORREF accent = _accent;
 
     HBRUSH hBg = CreateSolidBrush(bg);
@@ -376,51 +366,60 @@ void CandWindow::OnPaint()
     int compH = composing.empty() ? 0 : itemH;
     if (compH)
     {
-        RECT compR = { 0, 0, rc.right, pad + compH + pad / 2 };
-        HBRUSH hComp = CreateSolidBrush(dark ? RGB(53, 53, 53) : RGB(240, 244, 250));
+        RECT compR = { pad, pad, rc.right - pad, pad + compH };
+        HBRUSH hComp = CreateSolidBrush(dark ? RGB(54, 54, 54) : kUiBg);
         FillRect(hdc, &compR, hComp);
         DeleteObject(hComp);
         std::wstring comp = composing + L"\xFF1A";
-        SetTextColor(hdc, dark ? RGB(150, 190, 255) : _accent);
+        SetTextColor(hdc, dark ? RGB(180, 180, 180) : _accent);
         RECT compText = { pad, pad, rc.right - pad, pad + compH };
         DrawTextW(hdc, comp.c_str(), -1, &compText,
                   DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
     }
 
+    HGDIOBJ oldPen = SelectObject(hdc, GetStockObject(NULL_PEN));
     for (size_t i = pgBegin; i < pgEnd; i++)
     {
         size_t row = i - pgBegin;
         RECT rowR = { pad, pad + compH + (int)row * itemH, rc.right - pad,
                       pad + compH + (int)(row + 1) * itemH };
+        // WinUI 列表项：选中/hover 为 4px 圆角色块（内缩 1px 呼吸）
+        HBRUSH hRow = nullptr;
         if (row == 0)
         {
-            HBRUSH hAccent = CreateSolidBrush(accent);
-            FillRect(hdc, &rowR, hAccent);
-            DeleteObject(hAccent);
+            hRow = CreateSolidBrush(accent);
             SetTextColor(hdc, RGB(255, 255, 255));
         }
         else if ((int)row == hoverRow)
         {
             COLORREF hoverBg = dark ? RGB(64, 64, 64) : _hoverLight;
-            HBRUSH hHover = CreateSolidBrush(hoverBg);
-            FillRect(hdc, &rowR, hHover);
-            DeleteObject(hHover);
+            hRow = CreateSolidBrush(hoverBg);
             SetTextColor(hdc, fg);
         }
         else
         {
             SetTextColor(hdc, fg);
         }
+        if (hRow)
+        {
+            HGDIOBJ oldBrush = SelectObject(hdc, hRow);
+            RECT rr = rowR;
+            InflateRect(&rr, -1, -1);
+            RoundRect(hdc, rr.left, rr.top, rr.right + 1, rr.bottom + 1, 8, 8);
+            SelectObject(hdc, oldBrush);
+            DeleteObject(hRow);
+        }
         wchar_t buf[512];
         _snwprintf_s(buf, _TRUNCATE, L"%zu  %s", row + 1, cands[i].c_str());
         DrawTextW(hdc, buf, -1, &rowR, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
     }
+    SelectObject(hdc, oldPen);
 
     // 底部条（小号灰字，不占行高）：
     //   左侧页码（多于一页时显示“‹ 1/7 ›”）；右下角构建标记（看到它=新 DLL）。
     {
         SelectObject(hdc, _smallFont);
-        COLORREF dim = dark ? RGB(150, 150, 150) : RGB(130, 130, 130);
+        COLORREF dim = dark ? RGB(150, 150, 150) : kUiText2;
         if (totalPages > 1)
         {
             wchar_t pg[32];

@@ -16,6 +16,7 @@
 
 #include "hotphraseui.h"
 #include "../common/log.h"
+#include "uistyle.h"
 
 namespace lingxi {
 
@@ -105,6 +106,30 @@ HWND g_hHpList = nullptr;
 WNDPROC g_oldHotEditProc = nullptr;
 uint32_t g_capMods = 0; // 录制框当前捕获（0 = 未捕获）
 uint32_t g_capVk = 0;
+
+// WinUI 风格：微软雅黑 UI 12pt（进程内复用）
+HFONT HpFont()
+{
+    static HFONT f = nullptr;
+    if (!f)
+    {
+        UINT dpi = 96;
+        if (auto pGetDpi = (UINT(WINAPI*)())GetProcAddress(GetModuleHandleW(L"user32.dll"),
+                                                           "GetDpiForSystem"))
+            dpi = pGetDpi();
+        f = CreateFontW(-MulDiv(12, dpi, 96), 0, 0, 0, FW_NORMAL, FALSE, FALSE, FALSE,
+                        DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
+                        CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
+    }
+    return f;
+}
+
+// 窗体底中性灰（与设置页一致）
+HBRUSH HpBgBrush()
+{
+    static HBRUSH b = CreateSolidBrush(kUiBg);
+    return b;
+}
 
 std::wstring VkName(uint32_t vk)
 {
@@ -290,6 +315,19 @@ LRESULT CALLBACK HpWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case IDC_HP_CLOSE: ShowWindow(hwnd, SW_HIDE); return 0;
         }
         break;
+    case WM_CTLCOLORSTATIC:
+        // WinUI：窗体底中性灰 + 主文本色（与设置页一致）
+        SetBkColor((HDC)wParam, kUiBg);
+        SetTextColor((HDC)wParam, kUiText);
+        return (LRESULT)HpBgBrush();
+    case WM_CTLCOLOREDIT:
+        SetBkColor((HDC)wParam, kUiCard);
+        SetTextColor((HDC)wParam, kUiText);
+        return (LRESULT)GetStockObject(WHITE_BRUSH);
+    case WM_CTLCOLORLISTBOX:
+        SetBkColor((HDC)wParam, kUiCard);
+        SetTextColor((HDC)wParam, kUiText);
+        return (LRESULT)GetStockObject(WHITE_BRUSH);
     case WM_CLOSE:
         ShowWindow(hwnd, SW_HIDE);
         return 0;
@@ -337,7 +375,7 @@ void ShowHotPhraseWindow(HINSTANCE hInst, HWND hParent)
     wc.lpfnWndProc = HpWndProc;
     wc.hInstance = hInst;
     wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
-    wc.hbrBackground = (HBRUSH)(COLOR_BTNFACE + 1);
+    wc.hbrBackground = HpBgBrush(); // WinUI 中性窗体底
     wc.lpszClassName = kHpWndClass;
     RegisterClassW(&wc);
 
@@ -347,7 +385,7 @@ void ShowHotPhraseWindow(HINSTANCE hInst, HWND hParent)
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
         CW_USEDEFAULT, CW_USEDEFAULT, W, H, hParent, NULL, hInst, NULL);
 
-    HFONT font = (HFONT)GetStockObject(DEFAULT_GUI_FONT);
+    HFONT font = HpFont();
     auto mkLabel = [&](const wchar_t* text, int x, int y, int w) {
         HWND h = CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT,
             x, y, w, 20, g_hHpWnd, NULL, hInst, NULL);
