@@ -750,6 +750,18 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         return;
     }
 
+    // Shift 本体：纯修饰键，任何状态（空组合/组合中）都不触发提交或选词，原样放行。
+    // 修复：组合中 tap Shift 曾落 default 的"unmapped 提交首选"路径，把当前首选
+    // 误上屏（用户"按 Shift 想打大写"场景）；Ctrl/Alt 本体在 KeyDown 时 keystate
+    // 已置位、被上面 CtrlOrAltDown 覆盖，Shift 无该覆盖，需单列。
+    // （weasel 参照：WeaselTSF/KeyEventSink.cpp:189 将 VK_SHIFT 注册为 preserved key
+    //  单独处理、不当普通键分发——本处等价语义为分发层放行。）
+    if (wParam == VK_SHIFT)
+    {
+        *pfEaten = FALSE;
+        return;
+    }
+
     // 中英混排：Shift/CapsLock + 字母 → 提交当前拼音（保留字母原文），大写字母放行
     bool shiftOrCaps = (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 1) != 0;
     if (shiftOrCaps && IsLetterKey(wParam))

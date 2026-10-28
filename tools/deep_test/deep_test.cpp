@@ -431,6 +431,28 @@ static bool TypeKey(ITfKeystrokeMgr* pKm, WPARAM vk, bool expectEaten = true)
     return eaten != FALSE || !expectEaten;
 }
 
+// 完整单击（down+up）：Shift 单击切换类必需——翻转判定在 OnKeyUp。
+static bool TapKey(ITfKeystrokeMgr* pKm, WPARAM vk, bool expectEaten)
+{
+    BOOL eaten = FALSE;
+    if (FAILED(pKm->TestKeyDown(vk, 0x00260001, &eaten)))
+        return false;
+    if ((eaten != FALSE) != expectEaten)
+        return false;
+    eaten = FALSE;
+    if (FAILED(pKm->KeyDown(vk, 0x00260001, &eaten)))
+        return false;
+    eaten = FALSE;
+    return SUCCEEDED(pKm->KeyUp(vk, 0xC0026001, &eaten));
+}
+
+// 裸 KeyUp：配合 TypeKey 的 down 组成"按住期间打字"序列（如 Shift 组合使用）
+static bool RawKeyUp(ITfKeystrokeMgr* pKm, WPARAM vk)
+{
+    BOOL eaten = FALSE;
+    return SUCCEEDED(pKm->KeyUp(vk, 0xC0026001, &eaten));
+}
+
 // 依次输入一串小写字母（进入拼音组合）
 static bool TypeLetters(ITfKeystrokeMgr* pKm, const wchar_t* letters)
 {
@@ -1191,6 +1213,69 @@ int wmain()
                                  (unsigned)t.size(), hexOf15(t).c_str(), (unsigned)ec.expect);
                     Report(t.size() == 1 && t[0] == ec.expect, L"T15 vMode退出后回拼音组合", d);
                 }
+            }
+
+            // ---- T16 B5 Shift 单击切换：临时英文往返 + 组合使用/组合中不误切 ----
+            // DLL 链路：OnKeyDown(VK_SHIFT) 记 _shiftDown/_shiftWasActive；OnKeyUp(VK_SHIFT)
+            // 满足"未组合使用(!_shiftUsed)+按下时无组合(!_shiftWasActive)+当前无组合
+            // (!PinyinActive)+zh 模式+shiftToggle 开"时翻转 _tempEnglish（临时英文）。
+            {
+                EnsurePinyinMode(pKm);
+                ClearFocusedText(pTm);
+
+                // 空组合单击 Shift → 切临时英文：字母直通（TestKeyDown/KeyDown 均 eaten=FALSE）
+                bool tap1 = TapKey(pKm, VK_SHIFT, false);
+                PumpMessages(); Sleep(150);
+                bool aPass = TypeKey(pKm, (WPARAM)L'a', false);
+                PumpMessages(); Sleep(150);
+                std::wstring t = ReadFocusedText(pTm);
+                wchar_t d16a[240];
+                _snwprintf_s(d16a, _TRUNCATE, L"tap1=%d aPass=%d t[%u]=%s",
+                             (int)tap1, (int)aPass, (unsigned)t.size(), hexOf15(t).c_str());
+                Report(tap1 && aPass && t.empty(), L"T16 单击Shift切临时英文(字母直通)", d16a);
+
+                // 再单击切回中文：字母进组合（eaten=TRUE），Esc 可清
+                bool tap2 = TapKey(pKm, VK_SHIFT, false);
+                PumpMessages(); Sleep(150);
+                bool bPass = TypeKey(pKm, (WPARAM)L'a', true);
+                PumpMessages(); Sleep(150);
+                bool escOk = TypeKey(pKm, VK_ESCAPE, true);
+                PumpMessages();
+                wchar_t d16b[200];
+                _snwprintf_s(d16b, _TRUNCATE, L"tap2=%d bPass=%d escOk=%d",
+                             (int)tap2, (int)bPass, (int)escOk);
+                Report(tap2 && bPass && escOk, L"T16 再单击Shift切回中文(字母进组合)", d16b);
+
+                // Shift 按住期间打字（组合使用）→ KeyUp 不翻转：后续字母仍进组合
+                // （模拟限制：GetKeyState(VK_SHIFT) 不随 pKm 模拟改变，'a' 走组合
+                //  路径而非真实 Shift+字母直通；断言对象是 DLL 内部 _shiftUsed 判定）
+                bool shDown = TypeKey(pKm, VK_SHIFT, false);  // Shift down（_shiftDown=true）
+                bool mid = TypeKey(pKm, (WPARAM)L'a', true);  // _shiftUsed=true；进组合
+                bool shUp = RawKeyUp(pKm, VK_SHIFT);          // _shiftUsed → 不翻转
+                PumpMessages(); Sleep(150);
+                bool cPass = TypeKey(pKm, (WPARAM)L'b', true); // 仍中文：组合继续
+                PumpMessages(); Sleep(150);
+                TypeKey(pKm, VK_ESCAPE, true); // 清组合
+                PumpMessages();
+                wchar_t d16c[220];
+                _snwprintf_s(d16c, _TRUNCATE, L"shDown=%d mid=%d shUp=%d cPass=%d",
+                             (int)shDown, (int)mid, (int)shUp, (int)cPass);
+                Report(shDown && mid && shUp && cPass, L"T16 Shift组合使用不误切(后续仍组合)", d16c);
+
+                // 组合中单击 Shift：组合不丢、当前首选不被误提交（VK_SHIFT 放行修复的回归）
+                bool nOk = TypeKey(pKm, (WPARAM)L'n', true); // 进组合 n
+                PumpMessages(); Sleep(150);
+                bool tap3 = TapKey(pKm, VK_SHIFT, false);    // 组合中 tap：不提交不翻转
+                PumpMessages(); Sleep(150);
+                std::wstring t2 = ReadFocusedText(pTm);
+                bool iOk = TypeKey(pKm, (WPARAM)L'i', true); // 组合继续（ni）
+                PumpMessages(); Sleep(150);
+                TypeKey(pKm, VK_ESCAPE, true); // 清组合
+                PumpMessages();
+                wchar_t d16d[240];
+                _snwprintf_s(d16d, _TRUNCATE, L"nOk=%d tap3=%d t2[%u]=%s iOk=%d",
+                             (int)nOk, (int)tap3, (unsigned)t2.size(), hexOf15(t2).c_str(), (int)iOk);
+                Report(nOk && tap3 && t2.empty() && iOk, L"T16 组合中单击Shift不丢组合不误提交", d16d);
             }
         }
     } while (false);
