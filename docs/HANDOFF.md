@@ -1,5 +1,13 @@
 # 交接文档（HANDOFF）
 
+## ⚡ 最新状态速报（2026-10-28 晚·十四，导航键翻页与组合期接管 + strictSep 撞键校验修正）
+
+- **strictSep 修正**：上轮 compact 音节数校验误拒无隔音输入的合法串级匹配（xian 的"西安"走 [xian] 路径 tier-0 被拒成 tier-1 截断丢失——新增 no-over-reject 断言抓到）。改为 Predict 按 NormalizeIn 口径（弯撇号同算、双拼转换后计算）算 `strictSep` 传入 MatchWords：有隔音才紧校验（xi'an 不出"先"），无隔音串级匹配是合法读法。
+- **组合期导航键接管**：PinyinActive() 时 Up/Down/Home/End/Left/Right 一律吃下（此前穿透宿主→光标移出组合范围→SetText 错位，B5 同族）；Up/Down 翻页、Home/End 首末页（新 `PageCandidatesHomeEnd`）、Left/Right 吞下保守组合（组合光标=M5 尾巴预留）。Ctrl/Alt 组合直通不受影响。
+- **P6e +2**：`'an` 安 cover=3（B6×B1：隔音边界随后续音节消耗不留死撇号）；xian 西安 cover=4（回归断言）。
+- **验证**：engine_test separator 6/6 全绿；latency 25.4ms=环境漂移（left4dead2，PITFALLS #41）；build.cmd 全链绿。**DLL 导航键路由仅代码审读**（deep_test 用户用机中未跑）；**真实 UI 未重启**（新 DLL 待重启应用生效）。
+- **待做**：用户空闲后 regress 一键回归 + 真实 UI 重启 + xi'an/导航键/滚轮真机验证 + UI 视觉人工确认（晚·十二遗留一并）；R3 压测收尾；组合光标编辑（M5 尾巴，Left/Right 已预留吞下）。
+
 ## ⚡ 最新状态速报（2026-10-28 晚·十三，B6 拼音隔音符 + B7 候选窗滚轮翻页——拓展轮）
 
 - **B6 拼音隔音符**：组合中 `'`（VK_OEM_7 无 Shift）进组合当切分边界（xi'an→西安；此前落 unmapped-default **误提交首选**）；根因修复 MatchWords 精确 compact/模糊音分支补音节数校验（[xi][an] 拼接 compact="xian" 撞单音节词"先"——PARTIAL 分支有校验另两处漏）；NormalizeIn 弯撇号改 UTF-8 三字节序列探测（旧 `'\u2019'` 窄字面量与单字节 char 比较恒假死代码）。双拼/Shift+' 引号/空组合行为不变。engine_test P6e +4 断言全绿。

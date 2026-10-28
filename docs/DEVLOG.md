@@ -399,3 +399,20 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **验证**：engine_test 沙盒（APPDATA 隔离）功能断言全绿（P6e 新 4 条全过）；唯一红 = pinyin latency 14.3ms——归因取证 `Get-Process | Sort CPU`：left4dead2（1.5GB WS）+ deveco 多进程常驻，与晚·十一 PITFALLS #41 记录的 7~14ms 漂移同分布 = 环境非代码（B6 不触碰热路径）。tools\build.cmd 全链绿（四目标无 error/warning）。
 
 **边界与债**：deep_test/e2e 未跑（用户用机中）——DLL 键路由（VK_OEM_7）与 UI 滚轮留用户空闲回归（代码审读口径，同晚·五 toggleMode 先例）；真实 UI 未重启（新 DLL 需重启应用生效）。学习键 NormKey 丢撇号（xi'an 与 xian 同键）——隔音选"西安"后打 xian 也置顶，可接受。
+
+## 2026-10-28 晚（十四） · 导航键翻页与组合期接管 + strictSep 撞键校验修正
+
+**背景**：拓展轮继续。新断言抓到上轮 compact 音节数校验的**过度拒绝回归**：`xian`（无隔音）的"西安"消失了——[xian] 单元路径对双音节词的串级匹配（compact="xian"）本是合法读法（tier-0），无条件校验把它拒成 tier-1 后被 60 候选截断。同时取证发现组合存续期**移动光标类导航键（Up/Down/Home/End/Left/Right）全部穿透到宿主**——`PinyinKeyEaten` switch 不含它们，宿主光标移出组合范围后后续 SetText 与光标错位（B5 VK_SHIFT 同族缺口，比误提交更隐蔽）。
+
+**strictSep 修正（`ui/engine/pinyin.cpp`）**：MatchWords 紧凑/模糊分支的音节数校验改为**仅输入含显式隔音撇号时生效**——Predict 在双拼转换后按 NormalizeIn 口径（弯撇号 U+2019 同算）计算 `strictSep` 传入 Generate→MatchWords。语义：有隔音时跨显式边界的串级撞键违反用户标注拒收（xi'an 不出"先"）；无隔音时串级匹配是合法读法不校验（xian 的"西安"合法走 [xian] 路径 tier-0）。必须双拼转换后计算（ShuangpinToQuanpin 滤撇号，双拼自然无隔音）。
+
+**组合期导航键接管（`ime/composition.cpp` + `service.cpp/h`）**：
+
+- `PinyinKeyEaten`：PinyinActive() 时 Up/Down/Home/End/Left/Right 一律吃下（Ctrl/Alt 组合已在上方直通闸放行不受影响；PageUp/PageDown 维持 CandidatesVisible() 条件——滚动键不动光标）。
+- `HandlePinyinKey`：Up/Down = 上下翻页（复用 PageCandidates）、Home/End = 首末页（新方法 `PageCandidatesHomeEnd(bool last)`，收发模式与 PageCandidates 一致：锁内夹取+版本校验+MSG_PAGE）、Left/Right = 吞下保守组合（组合光标编辑为 M5 尾巴预留，放行会造成光标错位）。无候选/已在目标页均无操作。
+
+**P6e +2 断言**：`'an` 安 cover=3（**B6×B1 集成**：xi'an 部分提交"西"后剩余 `'an`，前导隔音边界随后续音节一并消耗，不留死撇号——cover 回放的撇号空转移 `pos++` 设计实证）；`xian` 西安 cover=4（**no over-reject 对照**：校验只拒跨隔音撞键，正是本轮回归的回归断言）。
+
+**验证**：engine_test separator 6/6 全绿（弯撇号归一后 strict 同样生效——U+2019 转 ' 后 DP/MatchWords 口径一致）；唯一红 latency 25.4ms（left4dead2 活跃，PITFALLS #41 环境漂移，安静基线 ~7ms）；tools\build.cmd 全链绿（无 error/warning）。
+
+**边界与债**：DLL 导航键路由仅代码审读口径（deep_test 用户用机中不跑）；真实 UI 未重启（新 DLL 需重启应用生效）。Home/End 翻页与滚轮（B7）共用 _pageStart 权威页码，无新增状态。
