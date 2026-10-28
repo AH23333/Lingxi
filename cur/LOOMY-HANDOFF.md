@@ -54,6 +54,7 @@
 - 用户原话"输入 i、v、u 等特殊拼音会导致其他部分按键无法使用"。
 - 现状侦查：词典里以 i/u/v 为音节的单字行**实测为 0**（15:4x node 全表扫描）→ 首键 i/u 切不出音节、候选空，组合卡栏的根因在这里；**v 首字母 = vMode 直通英文入口**（设计如此），用户预期若是"女/绿(lv)"不该被抢——需实测确认 vMode 的 Esc/backspace 退出通路。
 - 草案：**先写复现场景脚本**（deep_test T15：分别首键 i/u/v 然后继续打 3 键、空格、标点、退格、Esc，记录每步 focused/候选）拿行为矩阵，再决定对齐方案：i→yi 音节兜底、u→wu、v 保持英语直通但确保 Esc/backspace 出得了。别先改代码。
+- **✅ 2026-10-28 晚 B3 已完成**：按草案 T15 行为矩阵先行取证（修前 probe 8 用例全 0 候选实证词典缺口）。落地=引擎 `ZeroInitialShorthand()` **全 20 项**零声母简写表（超出草案 i→yi/u→wu 最小集，in→yin/iu→you/ui→wei/un→wen/uo→wo 等同为标准人类习惯且同一机制）在 `EnumeratePaths` DP 内扩展（`SyllUnit{FULL, 规范音节, rawLen}` cost=2，与全拼/简拼共存竞争）；`rawLen` 保 cover 回放正确（i→yi cover=1）。v 打头不映射（vMode 直通保持，Esc/退格/任意非字母退出通路 T15 断言验证）；DLL 侧零改动。测试：engine_test P6d +8、deep_test T15 10 Report 全绿。**同轮根治测试基建楔死**：deep_test/e2e 激活换 `ITfInputProcessorProfileMgr::ActivateProfile`（旧 API 派发就绪暗窗 1s~60s+ 是 settle 连环红根因，取证三件套与方法论见 PITFALLS #32），settle 窗口 3s→15s，修后 deep_test 6 连 22/22 + regress ALL PASS。
 
 ### B4. 英文模式下 AI 提示词仍是中文 + 续写重复（中文侧 StripPromptEcho 已提交但用户未见好效）
 - 根因A（新）：`ChainPredictor::Predict`——**非词中的英文上下文优先走 LLM**（llm.cpp ~395），qwen-0.5b 对英文续写吐中文。草案：链改「上下文尾部 1 字符是 ASCII 字母/数字 **且** 整段近端无 CJK → 词表引擎优先（其候选天然英文），LLM 仅兜底」；deep/e2e 加"英文上下文候选必须纯 ASCII"断言。

@@ -161,3 +161,35 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 - **probe 盲区补齐**：`--probe-llm` 直连 LlmPredictor 不经链路由，新增 `--probe-chain` 走真实装配链端到端取证
 
 **验证**：engine_test +14 断言（echo 矩阵 8 例 + 链路由/过滤 6 例）全 PASS，共 174+ 功能断言；probe-chain 真机："Today is a nice "→纯 ASCII 英文续写（day. I hope you have a good one.）、"inte"→词表 0ms 短路、中文上下文不变；probe-llm 无复读、增量一致。regress 功能面全 PASS（deep_test/e2e/fix_readings），pinyin latency 10.4-11.9ms 卡 10ms 阈值为已知负载漂移——A/B：HEAD 干净构建 12.2ms 比 B4 版还高（LLC 缓存污染，Qoder/Edge 同跑），非代码回归。真实环境 UI 已重启吃新二进制（PID 7616）。
+
+## 2026-10-28 晚（三） · B3 零声母 i/u 键死修复 + 测试基建楔死根治
+
+**根因（修前实证）**：`--probe-pinyin` 对 i/u/in/iu/ui/un/uo/ian 全部 **0 候选**——词典/音节表没有以 i/u 打头的规范写法（普通话拼音规定零声母必须改写：i→yi、u→wu、in→yin、iu→you…），首键 i/u 切不出任何音节。v 打头是 vMode 直通英文入口（设计如此，HKCU VMode=1），非 bug。
+
+**方案（LOOMY §B3 草案落地，超出草案最小集）**：DP 切分循环内查表扩展，而非字符串预改写——零声母位置判定依赖 DP 边界（iao 里 i 是改写头还是 ia+o 的组成部分），预改写有鸡生蛋问题。
+
+- 引擎（ui/engine/pinyin.cpp）：file-scope `ZeroInitialShorthand()` **全 20 项**表（i→yi/ia→ya/iao→yao/ian→yan/iang→yang/ie→ye/in→yin/ing→ying/iong→yong/iu→you/u→wu/ua→wa/uai→wai/uan→wan/uang→wang/ue→yue/ueng→weng/ui→wei/un→wen/uo→wo）；`EnumeratePaths` DP 每位置尝试 L=1..4 简写扩展（`SyllUnit{FULL, 改写后音节, rawLen=L}`，cost=2），与全拼/简拼候选由 DP cost 竞争自然共存
+- `SyllUnit` 加 `rawLen`：Generate cover 回放改 `pos += rawLen>0 ? rawLen : text.size()`——i→yi 若按改写后 text 长度回放 cover 会错报 2（原始只按 1 键）
+- v 打头不映射，vMode 通路保持；DLL 侧（ime/）**零改动**（键路径既有代码全兼容）
+
+**测试**：
+
+- engine_test P6d 8 断言（i→一 cover1、u→五 cover1、in→音/因 cover2、iu→有 cover2、ui→为/位 cover2、un→问/文 cover2、uo→我 cover2、ian→眼/言 cover3）——修后首轮全绿
+- deep_test T15 10 Report 行为矩阵：i/u/in/iu 首键空格收字（一/无/因/有）、i+逗号合并上屏（一+，）、退格缩减（iu→BACK→SPACE→一）+Esc 取消无残留、v 直通（v 吃/k 放行）、vMode Esc/退格两路退出后 i→一、iu→有
+- after 取证：i→[一|以|已|意…]60 候选、ian→[言|眼|盐…]60、uo→[我…]36 等全链正常
+- latency 红复盘子：A/B（stash pinyin.cpp）基线 10.978ms vs B3 版 13.236ms，均在已知机器漂移区间（B4 期同二进制 10.4→12.2 摆动），非代码回归
+
+**测试基建楔死（独立于 B3 的真 bug，同轮根治）**：B3 收口跑 regress 时四套连环红——deep_test `pinyin mode settle` FAIL（probe_q_eaten=0）×3 attempt 连续 6 轮复现，T0-T15 全空，e2e pass-through 三连败；但 DLL 激活态完全正常（ActivateEx ✓ / InitSinks hr 全 S_OK / 拼音模式=1 / 管道 ✓），且同二进制 30 分钟前刚 22/22 全绿——典型间歇楔死。
+
+排查路径（全部取证驱动）：
+
+1. `InitSinks: tmgr/tfocus/key` 三值全 0x00000000=hr 全 S_OK → 排除 sink 注册失败
+2. `拼音模式: 1` 全程未翻 0 → 排除模式误判；PinyinKeyEaten 对无修饰 'q' 必吃 → 锁定"键没到 DLL"
+3. OnTestKeyDown/OnKeyDown 入口加 LX_LOG 取证（LINGXI_LOG 门控，真机零成本）→ 楔死日志零键事件 → **msctf 根本没派发**
+4. 会话快照：前台线程 HKL=0x08040804（微软拼音）、WinUserLanguageList 里 zh 项只有微软拼音（灵犀不在会话级列表）
+5. GetActiveProfile 楔死时返回**灵犀自己**（lingxi=1）→ "被其他 TIP 抢占"假设证伪
+6. 决定性证据：某 attempt settle 15 次探测全红后 **1 秒起 T2-T15 全过**（21/1，唯一 FAIL 就是 settle）→ 激活后 msctf 按键派发存在**可变长就绪延迟**（约 1s～60s+，随负载漂移）
+
+**修复**：deep_test/e2e 程序化激活从旧 `ITfInputProcessorProfiles::ActivateLanguageProfile` 换成 Win8+ `ITfInputProcessorProfileMgr::ActivateProfile`（走完整输入法切换路径，ctfmon 侧状态同步完整；旧 API 只做线程内 profile 激活，派发就绪无保证），回退旧 API 兜底；deep_test settle 探测窗口 3s→15s 覆盖残余就绪延迟；settle 失败诊断追加 GetActiveProfile 取证。
+
+**验证**：deep_test 修复后 **6 连 22/22 全绿**；regress 一键回归 **ALL PASS**（engine_test 174+ 断言含 latency 绿 / fix_readings / deep_test T15 / e2e attempt1 直接过）。真实环境 UI 已重启（StartTime 晚于 DLL 构建时间戳，PITFALLS #27 复核过）。教训固化 PITFALLS #32。

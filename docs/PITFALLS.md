@@ -180,3 +180,10 @@
 ### 31. engine_test 不编 llm.cpp；--probe-llm 直连 LlmPredictor 不经链路由 ⭐
 - **症状**：想给 ChainPredictor 路由/StripPromptEcho 写单测，发现 llm.cpp 根本不在 engine_test.vcxproj（只编 ngram/pinyin/settings）——LLM 相关纯逻辑全都无法进程内断言；而 `--probe-llm` 走 `CreateLlmPredictor()` 直连，链路由/候选过滤/词表优先一概不经——B4 类修复 probe-llm 测了个寂寞。
 - **正确做法**：**接缝前置**——LLM 邻接的纯逻辑（链路由、回显裁剪）放 ngram.cpp 并从 predictor.h 导出（`CreateChainPredictor`/`StripContinuationEcho`），llm.cpp 只留装配与生成；engine_test 用 FakePredictor 替身单测路由。真机端到端另设 `--probe-chain`（真实装配链）。判断一个 probe 能不能验证某修复：看它 new 的是哪个引擎、走没走路由层。
+
+## B3 收口轮（2026-10-28 晚）
+
+### 32. 程序化激活 TIP 必须用 ProfileMgr；旧 ActivateLanguageProfile 有"派发就绪"暗窗 ⭐️
+- **症状**：deep_test `pinyin mode settle` FAIL（probe_q_eaten=0）连续 6+ 轮全红（T0-T15 全空、e2e pass-through 三连败），同二进制 30 分钟前刚 22/22 全绿——间歇楔死、重试壳都救不回（单 attempt 内永不再自愈的假象）。
+- **排查取证（顺序即方法论）**：①InitSinks 日志三 hr 全 S_OK 排除注册失败；②拼音模式=1 且 PinyinKeyEaten 对无修饰字母必吃，锁定"键没到 DLL"；③OnTestKeyDown/OnKeyDown 入口日志（LX_LOG 门控）楔死时零键事件=msctf 没派发；④GetActiveProfile 楔死时返回灵犀自己——"被微软拼音抢占"假设证伪（前台线程 HKL=0x08040804、灵犀不在 WinUserLanguageList 都曾是误导线索）；⑤决定性证据：settle 15 次探测全红的 attempt，1 秒后 T2 起全过——旧 API 激活后 msctf 按键派发有**可变长就绪延迟**（1s～60s+，随 ctfmon/负载漂移），settle 的 3 秒窗口常不够。
+- **正确做法**：程序化激活一律 `ITfInputProcessorProfileMgr::ActivateProfile`（Win8+，走完整输入法切换路径，ctfmon 侧状态同步完整；initguid.h 先包含则全部 GUID 直接可用），旧 `ITfInputProcessorProfiles::ActivateLanguageProfile` 仅做回退；就绪探测窗口给足（deep_test settle 15s）；楔死取证三件套：sink 注册 hr、GetActiveProfile、OnTestKeyDown 入口日志——"注册 ✓+active ✓+零派发"即本坑签名。修后 deep_test 6 连 22/22、regress ALL PASS。

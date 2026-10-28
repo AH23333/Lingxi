@@ -5,9 +5,11 @@
 
 ## ⚡ 最新状态速报（2026-10-28 晚，B1 部分提交全链路落地）
 
+- **B3 完成**：零声母 i/u 键死根治——词典无 i/u 打头规范写法（修前 probe 8 用例全 0 候选实证）。引擎 `ZeroInitialShorthand()` 全 20 项表（i→yi…uo→wo）在 `EnumeratePaths` DP 内扩展（cost=2 与全拼/简拼竞争），`SyllUnit.rawLen` 保 cover 回放正确（i→yi cover=1 非 2）。engine_test P6d +8 断言、deep_test T15 10 Report（i→一/u→无/in→因/iu→有、退格缩减、vMode 两路退出、标点合并）。v 首键=vMode 直通英文（设计如此），DLL 侧零改动。
+- **同轮根治测试基建楔死（PITFALLS #32，重要）**：deep_test/e2e 程序化激活从旧 `ActivateLanguageProfile` 换 **`ITfInputProcessorProfileMgr::ActivateProfile`**（Win8+ 完整切换路径）+ settle 窗口 3s→15s。根因：旧 API 激活后 msctf 按键派发有可变长就绪暗窗（1s～60s+），"注册 ✓+active ✓+零派发"是本坑签名；修后 deep_test 6 连 22/22、regress ALL PASS。今后任何程序化激活 TSF TIP 的测试代码都走 ProfileMgr。
 - **B1 完成**（引擎 `b7d0ee1` + 管道/DLL `f84f049`）：候选携带 cover（消耗的拼音前缀字符数），选短词后剩余拼音留组合继续；学习键改消耗前缀根治错位学习。协议向后兼容（MsgCands 可选尾部，kProtoVer 不变）。regress ALL PASS（engine_test 147 / fix_readings / deep_test T14 端到端 / e2e）。
 - **注意**：候选序 probe 别信历史记录——模糊音默认开，"你"在 nihao 序 idx7（键'8'，engine_test P6c4 pin）；deep_test 日志中文乱码，取证用码点 hex 转储（PITFALLS #29/#30）。
-- backlog 剩余：B8 热键默认关 → B4 英文复读过滤 → B3 i/u/v 首字母 → B5 Shift 断言 → B2 候选窗拼音回显（详见 cur/LOOMY-HANDOFF.md）。
+- backlog 剩余：B5 Shift 断言 → B2 候选窗拼音回显（B8/B4/B3 已完成，见下方各 ✅ 行与 cur/LOOMY-HANDOFF.md）。
 - **✅ B8 亦完成（`06548a8`）**：symbolHotkey 默认关 + 设置页文案（Edge 冲突注明）；用户 HKCU 残留已清 0，真实 UI 已重启（热键即时释放）。
 - **✅ B4 亦完成（`2b3b477`）**：纯英文上下文（整段<0x80）链路由改词表优先、LLM 兜底候选过滤为纯 ASCII（全滤空则无候选）；复读裁剪升级 StripContinuationEcho（标点归一/tail 全长上限/整段复读循环剥）。ChainPredictor 与裁剪移入 ngram.cpp（engine_test 不编 llm.cpp），+14 断言全 PASS；`--probe-chain` 真机端到端："Today is a nice "→纯 ASCII 英文续写、inte→词表 0ms 短路、中文上下文不变。probe 盲区注意：`--probe-llm` 直连 LlmPredictor **不经链路由**，B4 类路由/过滤只能 `--probe-chain` 验证。真实 UI 已重启（PID 7616）。剩余 backlog：B3 → B5 → B2。
 
