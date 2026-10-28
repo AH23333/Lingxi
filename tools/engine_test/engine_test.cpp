@@ -435,7 +435,42 @@ int wmain()
                                  cs.in, r.cands.empty() ? L"" : r.cands[0].c_str(), cs.expect);
                     Report(ok, "pinyin spoken first-match", detail);
                 }
-            }
+                // P4b+. 多音单字读音补全（数据管线 fix_readings 产物的行为验证）：
+                //  1) 口语读音单输入唯一命中；2) 任何登记读音下该字必须出现在候选中
+                //     （书面音常更挤不进首选——"shui"首选是"水"，属正确行为）。
+                {
+                    struct PolyCase { const wchar_t* in; const wchar_t* mustContain; };
+                    const PolyCase polys[] = {
+                        { L"shei", L"谁" },        // 口语：谁=首选
+                        { L"xie",  L"血" },        // 血 白读 xie(些/写 同音,包含即对)
+                        { L"shai", L"色" },        // 色 白读 shai
+                        { L"liao", L"了" },        // 了 文读 liao
+                        { L"dei",  L"得" },        // 得 口语 dei
+                        { L"huan", L"还" },        // 还 归还 huan
+                        { L"chang", L"长" },        // 长 双读音(chang 与 zhang 都可)
+                        { L"hang", L"行" },        // 行 hang(银行) vs xing
+                        { L"di",   L"的" },        // 的 dí(的确)
+                    };
+                    for (const auto& pc : polys)
+                    {
+                        lingxi::Prediction r = py->Predict(pc.in);
+                        bool found = false;
+                        for (const auto& c : r.cands)
+                            if (!c.empty() && c[0] == pc.mustContain[0] && c.size() == 1)
+                                { found = true; break; }
+                        wchar_t detail[160];
+                        _snwprintf_s(detail, _TRUNCATE, L"'%ls' 含'%ls'=%d (cands=%zu first='%ls')",
+                                     pc.in, pc.mustContain, found, r.cands.size(),
+                                     r.cands.empty() ? L"" : r.cands[0].c_str());
+                        Report(found, "polyphonic single-char reading reachable", detail);
+                    }
+                    // 她/它/他 与 谁 这类高频基础字绝不允许从任何标准读音消失：
+                    {
+                        lingxi::Prediction r = py->Predict(L"shei");
+                        bool firstOk = !r.cands.empty() && r.cands[0] == L"谁";
+                        Report(firstOk, "polyphonic: shei top is 谁", L"");
+                    }
+                }            }
 
             // P4c. 超长混排 + 末尾残段：>10 音节的长串不应崩溃且首选是连贯整句；
             //      末尾拖一个未打全的音节（残段）时，仍要产出覆盖该残段的候选。

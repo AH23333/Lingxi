@@ -32,6 +32,24 @@ if errorlevel 1 (
     echo [regress] engine_test PASS
 )
 
+rem ---- polyphonic-reading completeness gate (data class-level regression) ----
+rem fix_readings --check exits 1 when single-char entries are missing readings
+rem that are well-evidenced elsewhere in the dictionary itself. Best-effort:
+rem only runs when python is available (build pipeline dependency).
+where python >nul 2>nul
+if not errorlevel 1 (
+    echo [regress] fix_readings --check...
+    python "%ROOT%\tools\fix_readings.py" --check > "%OUT%\fix_readings.txt" 2>&1
+    if errorlevel 1 (
+        echo [regress] fix_readings CHECK FAILED - see fix_readings.txt
+        set FAIL=1
+    ) else (
+        echo [regress] fix_readings check PASS
+    )
+) else (
+    echo [regress] python not found - skipping readings gate
+)
+
 rem ---- deep_test (pinyin composition pipeline; has internal 3-attempt shell) ----
 rem fresh UI owned by this run: kill leftovers so state does not cross suites
 taskkill /f /im LingxiUI.exe >nul 2>&1

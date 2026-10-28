@@ -117,14 +117,17 @@
 吧	ba
 我饿了	wo e le
 了	le
+了	liao
 是	shi
 在	zai
 和	he
+和	huo
 有	you
 他	ta
 不	bu
 我	wo
 的	de
+的	di
 人	ren
 也	ye
 为	wei
@@ -135,25 +138,32 @@
 中	zhong
 你	ni
 说	shuo
+说	shui
 一	yi
 到	dao
 都	dou
+都	du
 等	deng
 着	zhe
+着	zhuo
+着	zhao
 对	dui
 来	lai
 与	yu
 地	di
 还	hai
+还	huan
 要	yao
 又	you
 大	da
+大	dai
 而	er
 一个	yi ge
 之	zhi
 道	dao
 以	yi
 得	de
+得	dei
 她	ta
 中国	zhong guo
 个	ge
@@ -179,6 +189,7 @@
 能	neng
 好	hao
 会	hui
+会	kuai
 自己	zi ji
 没有	mei you
 出	chu
@@ -193,6 +204,7 @@
 已	yi
 其	qi
 给	gei
+给	ji
 很	hen
 发展	fa zhan
 看	kan
@@ -216,9 +228,11 @@
 再	zai
 才	cai
 便	bian
+便	pian
 进行	jin xing
 地方	di fang
 没	mei
+没	mo
 已经	yi jing
 走	zou
 做	zuo
@@ -249,6 +263,7 @@
 家	jia
 这种	zhe zhong
 长	zhang
+长	chang
 市	shi
 门	men
 地区	di qu
@@ -308,15 +323,18 @@
 国	guo
 死	si
 省	sheng
+省	xing
 住	zhu
 万	wan
 不同	bu tong
 学院	xue yuan
 因	yin
 曾	ceng
+曾	zeng
 两个	liang ge
 元	yuan
 呢	ne
+呢	ni
 作为	zuo wei
 手	shou
 会议	hui yi
@@ -340,12 +358,15 @@
 工业	gong ye
 建设	jian she
 称	cheng
+称	chen
 名	ming
 二	er
 每	mei
 属	shu
+属	zhu
 形成	xing cheng
 谁	shui
+谁	shei
 受	shou
 其他	qi ta
 带	dai
@@ -418,6 +439,8 @@
 全	quan
 提出	ti chu
 行	xing
+行	hang
+行	heng
 我国	wo guo
 作用	zuo yong
 皇帝	huang di
@@ -524,11 +547,13 @@
 过去	guo qu
 不过	bu guo
 强	qiang
+强	jiang
 条件	tiao jian
 写	xie
 学校	xue xiao
 既	ji
 若	ruo
+若	re
 往	wang
 台	tai
 原	yuan
@@ -585,6 +610,7 @@
 价值	jia zhi
 国务院	guo wu yuan
 重	zhong
+重	chong
 声	sheng
 科技	ke ji
 五	wu
@@ -616,9 +642,11 @@
 咱们	zan men
 变化	bian hua
 红	hong
+红	gong
 心中	xin zhong
 直接	zhi jie
 朝	chao
+朝	zhao
 爱	ai
 知	zhi
 主	zhu
@@ -734,6 +762,7 @@
 重大	zhong da
 教	jiao
 哪	na
+哪	ne
 回来	hui lai
 变	bian
 图	tu
@@ -821,10 +850,13 @@
 皇上	huang shang
 实施	shi shi
 数	shu
+数	shuo
 只要	zhi yao
 曰	yue
 亲	qin
+亲	qing
 传	chuan
+传	zhuan
 深	shen
 成功	cheng gong
 办法	ban fa
@@ -862,9 +894,11 @@
 发言人	fa yan ren
 另外	ling wai
 提	ti
+提	di
 坚持	jian chi
 工人	gong ren
 系	xi
+系	ji
 汽车	qi che
 而是	er shi
 量	liang
@@ -1019,12 +1053,15 @@
 更加	geng jia
 回答	hui da
 藏	cang
+藏	zang
 武器	wu qi
 那样	na yang
 应用	ying yong
 市长	shi zhang
 来到	lai dao
 落	luo
+落	la
+落	lao
 设立	she li
 项	xiang
 产业	chan ye
@@ -1053,6 +1090,7 @@
 菜	cai
 现	xian
 率	lv
+率	shuai
 仍然	reng ran
 拥有	yong you
 火	huo
@@ -1079,6 +1117,7 @@
 冲	chong
 双	shuang
 六	liu
+六	lu
 此时	ci shi
 情	qing
 物质	wu zhi
@@ -1174,6 +1213,7 @@
 断	duan
 感觉	gan jue
 似	shi
+似	si
 努力	nu li
 毛	mao
 机场	ji chang
@@ -1181,6 +1221,7 @@
 植物	zhi wu
 同样	tong yang
 调	diao
+调	tiao
 状态	zhuang tai
 人民代表大会常务委员会	ren min dai biao da hui chang wu wei yuan hui
 吴	wu
@@ -1214,6 +1255,7 @@
 卖	mai
 哪里	na li
 血	xue
+血	xie
 画	hua
 轻	qing
 实在	shi zai
@@ -1259,6 +1301,8 @@
 实	shi
 多种	duo zhong
 差	cha
+差	chai
+差	ci
 经常	jing chang
 各地	ge di
 姓	xing
@@ -1321,7 +1365,9 @@
 有时	you shi
 开展	kai zhan
 色	se
+色	shai
 阿	a
+阿	e
 装	zhuang
 文学	wen xue
 理	li
@@ -1356,6 +1402,7 @@
 谈	tan
 诸	zhu
 觉	jue
+觉	jiao
 团	tuan
 女儿	nv er
 封建	feng jian
@@ -1427,6 +1474,7 @@
 老师	lao shi
 担任	dan ren
 房	fang
+房	pang
 区域	qu yu
 一座	yi zuo
 殑	qing
@@ -1483,6 +1531,7 @@
 接着	jie zhe
 集	ji
 著	zhu
+著	zhuo
 片	pian
 正确	zheng que
 现代化	xian dai hua
@@ -1526,6 +1575,7 @@
 航空	hang kong
 表	biao
 降	jiang
+降	xiang
 之下	zhi xia
 田	tian
 营	ying
@@ -1555,6 +1605,7 @@
 界	jie
 粮食	liang shi
 解	jie
+解	xie
 政权	zheng quan
 草	cao
 各国	ge guo
@@ -1577,6 +1628,7 @@
 善	shan
 香	xiang
 单	dan
+单	chan
 晚	wan
 秘书长	mi shu zhang
 明确	ming que
@@ -1585,6 +1637,7 @@
 亚	ya
 抢	qiang
 弄	nong
+弄	long
 好像	hao xiang
 一场	yi chang
 列	lie
@@ -1620,6 +1673,7 @@
 油	you
 相互	xiang hu
 读	du
+读	dou
 部长	bu zhang
 球	qiu
 守	shou
@@ -1837,6 +1891,7 @@
 一部分	yi bu fen
 撤销	che xiao
 度	du
+度	duo
 千米	qian mi
 破坏	po huai
 双手	shuang shou
@@ -1858,6 +1913,7 @@
 推进	tui jin
 石油	shi you
 射	she
+射	ye
 地上	di shang
 效果	xiao guo
 团体	tuan ti
@@ -1878,6 +1934,7 @@
 巴	ba
 平等	ping deng
 咱	zan
+咱	za
 支	zhi
 山东	shan dong
 厚	hou
@@ -1933,6 +1990,7 @@
 宣传	xuan chuan
 闻	wen
 奇	qi
+奇	ji
 略	lve
 日常	ri chang
 检察长	jian cha zhang
@@ -1995,6 +2053,7 @@
 刚刚	gang gang
 手里	shou li
 弹	dan
+弹	tan
 武装	wu zhuang
 不但	bu dan
 显	xian
@@ -2057,6 +2116,7 @@
 充满	chong man
 降低	jiang di
 卒	zu
+卒	cu
 四大	si da
 慢慢	man man
 星	xing
@@ -2156,6 +2216,7 @@
 少数	shao shu
 设置	she zhi
 核	he
+核	hu
 爆发	bao fa
 飞行	fei xing
 具备	ju bei
@@ -2184,7 +2245,9 @@
 成分	cheng fen
 寨	zhai
 吓	xia
+吓	he
 乘	cheng
+乘	sheng
 伟大	wei da
 投票	tou piao
 厅	ting
@@ -2455,6 +2518,7 @@
 旗	qi
 银子	yin zi
 绿	lv
+绿	lu
 突破	tu po
 由此	you ci
 建造	jian zao
@@ -2468,6 +2532,8 @@
 准	zhun
 议会	yi hui
 乐	le
+乐	yue
+乐	lao
 开发区	kai fa qu
 志	zhi
 槸	yi
@@ -2561,6 +2627,7 @@
 发行	fa xing
 接近	jie jin
 寻	xun
+寻	xin
 备案	bei an
 重建	chong jian
 一生	yi sheng
@@ -2573,16 +2640,19 @@
 审查	shen cha
 襄	xiang
 角	jiao
+角	jue
 生存	sheng cun
 评价	ping jia
 恩	en
 规则	gui ze
 哦	o
+哦	e
 记录	ji lu
 跪	gui
 遇	yu
 澶	chan
 谷	gu
+谷	yu
 工厂	gong chang
 猛	meng
 印	yin
@@ -2600,6 +2670,7 @@
 著作	zhu zuo
 客人	ke ren
 查	cha
+查	zha
 嘛	ma
 以外	yi wai
 医学	yi xue
@@ -2698,6 +2769,7 @@
 做出	zuo chu
 呼	hu
 般	ban
+般	bo
 手术	shou shu
 案件	an jian
 道理	dao li
@@ -2732,6 +2804,7 @@
 大门	da men
 关心	guan xin
 盛	sheng
+盛	cheng
 补	bu
 等于	deng yu
 邀请	yao qing
@@ -2802,6 +2875,7 @@
 之所以	zhi suo yi
 一会	yi hui
 劲	jin
+劲	jing
 碗	wan
 冠军	guan jun
 居然	ju ran
@@ -2829,6 +2903,7 @@
 队员	dui yuan
 中共	zhong gong
 恶	e
+恶	wu
 太子	tai zi
 通知	tong zhi
 洲	zhou
@@ -2837,6 +2912,7 @@
 仿佛	fang fu
 奖	jiang
 术	shu
+术	zhu
 仙桃	xian tao
 命运	ming yun
 小组	xiao zu
@@ -2860,6 +2936,7 @@
 陕西	shan xi
 十堰市	shi yan shi
 脉	mai
+脉	mo
 上午	shang wu
 表演	biao yan
 访问	fang wen
@@ -2875,6 +2952,7 @@
 荆州市	jing zhou shi
 联	lian
 佛	fu
+佛	fo
 华北	hua bei
 有利于	you li yu
 保存	bao cun
@@ -2946,6 +3024,7 @@
 踢	ti
 八年	ba nian
 卡	ka
+卡	qia
 父	fu
 头上	tou shang
 塔	ta
@@ -3006,6 +3085,7 @@
 雷达	lei da
 广告	guang gao
 扎	zha
+扎	za
 含量	han liang
 编制	bian zhi
 客观	ke guan
@@ -3032,6 +3112,7 @@
 激烈	ji lie
 一类	yi lei
 塞	sai
+塞	se
 太后	tai hou
 闪	shan
 港口	gang kou
@@ -3041,6 +3122,7 @@
 课	ke
 多么	duo me
 尾	wei
+尾	yi
 文艺	wen yi
 据说	ju shuo
 模型	mo xing
@@ -3054,6 +3136,7 @@
 反复	fan fu
 或是	huo shi
 混	hun
+混	gun
 航线	hang xian
 大军	da jun
 累	lei
@@ -3091,6 +3174,8 @@
 绿色	lv se
 浅	qian
 参	can
+参	shen
+参	cen
 哪些	na xie
 授	shou
 糕	gao
@@ -3112,6 +3197,7 @@
 中原	zhong yuan
 流域	liu yu
 露	lu
+露	lou
 注	zhu
 镑	bang
 大清	da qing
@@ -3146,6 +3232,7 @@
 省内	sheng nei
 诗人	shi ren
 识	shi
+识	zhi
 醒	xing
 享受	xiang shou
 积累	ji lei
@@ -3185,10 +3272,12 @@
 县长	xian zhang
 执政	zhi zheng
 番	fan
+番	pan
 对付	dui fu
 江湖	jiang hu
 跃	yue
 校	xiao
+校	jiao
 君主	jun zhu
 料	liao
 牙	ya
@@ -3228,6 +3317,7 @@
 落后	luo hou
 基本上	ji ben shang
 薄	bao
+薄	bo
 物理	wu li
 黄石	huang shi
 就算	jiu suan
@@ -3291,6 +3381,7 @@
 不够	bu gou
 函数	han shu
 圈	quan
+圈	juan
 主力	zhu li
 即将	ji jiang
 图案	tu an
@@ -3376,6 +3467,7 @@
 资本家	zi ben jia
 武昌区	wu chang qu
 氏	shi
+氏	zhi
 事项	shi xiang
 沟通	gou tong
 近代	jin dai
@@ -3443,6 +3535,7 @@
 总量	zong liang
 提升	ti sheng
 俩	lia
+俩	liang
 码头	ma tou
 总体	zong ti
 构造	gou zao
@@ -3532,6 +3625,7 @@
 予以	yu yi
 最低	zui di
 蛇	she
+蛇	yi
 士	shi
 合适	he shi
 当真	dang zhen
@@ -3548,6 +3642,7 @@
 两天	liang tian
 主义	zhu yi
 呵	he
+呵	ke
 生气	sheng qi
 鈥	huo
 江泽民	jiang ze min
@@ -3580,6 +3675,7 @@
 一遍	yi bian
 阁	ge
 埋	mai
+埋	man
 伸出	shen chu
 捉	zhuo
 老爷	lao ye
@@ -3796,6 +3892,7 @@
 夫妻	fu qi
 遭受	zao shou
 抹	mo
+抹	ma
 亡	wang
 喂	wei
 教训	jiao xun
@@ -3991,6 +4088,7 @@
 印象	yin xiang
 历来	li lai
 壳	ke
+壳	qiao
 缓缓	huan huan
 覆盖	fu gai
 爷爷	ye ye
@@ -4309,6 +4407,7 @@
 相当于	xiang dang yu
 慌	huang
 贾	jia
+贾	gu
 陷入	xian ru
 前辈	qian bei
 面向	mian xiang
@@ -4329,6 +4428,7 @@
 珊	shan
 请愿	qing yuan
 颈	jing
+颈	geng
 伊	yi
 情报	qing bao
 国内外	guo nei wai
@@ -4454,6 +4554,7 @@
 大学士	da xue shi
 欣赏	xin shang
 臭	chou
+臭	xiu
 割	ge
 律师	lv shi
 号召	hao zhao
@@ -4466,8 +4567,10 @@
 一辈子	yi bei zi
 瘦	shou
 摩	mo
+摩	ma
 不利	bu li
 勒	lei
+勒	le
 景观	jing guan
 十五年	shi wu nian
 宣言	xuan yan
@@ -4544,6 +4647,7 @@
 麻	ma
 军民	jun min
 尿	niao
+尿	sui
 径	jing
 时机	shi ji
 球员	qiu yuan
@@ -4683,6 +4787,7 @@
 名片	ming pian
 仪	yi
 铅	qian
+铅	yan
 嫌	xian
 策	ce
 标语	biao yu
@@ -4727,6 +4832,7 @@
 锻炼	duan lian
 体验	ti yan
 臂	bi
+臂	bei
 队长	dui zhang
 垄断	long duan
 捏	nie
@@ -4753,6 +4859,7 @@
 维修	wei xiu
 议论	yi lun
 颤	chan
+颤	zhan
 警察	jing cha
 凶	xiong
 宏观	hong guan
@@ -4851,6 +4958,7 @@
 哨	shao
 鸭	ya
 辟	pi
+辟	bi
 跪下	gui xia
 黄宗羲	huang zong xi
 火炮	huo pao
@@ -5270,6 +5378,8 @@
 登基	deng ji
 钩	gou
 堡	bao
+堡	pu
+堡	bu
 粑	ba
 纳入	na ru
 侍郎	shi lang
@@ -5301,6 +5411,7 @@
 纲领	gang ling
 转头	zhuan tou
 扁	bian
+扁	pian
 航班	hang ban
 离子	li zi
 舍	she
@@ -5494,12 +5605,15 @@
 裂	lie
 俊	jun
 削	xue
+削	xiao
 心灵	xin ling
 欢喜	huan xi
 答复	da fu
 位居	wei ju
 兑换	dui huan
 咋	za
+咋	ze
+咋	zha
 中方	zhong fang
 二十	er shi
 回忆	hui yi
@@ -5550,6 +5664,7 @@
 少将	shao jiang
 恰好	qia hao
 拾	shi
+拾	she
 无论如何	wu lun ru he
 逮捕	dai bu
 颁发	ban fa
@@ -5576,6 +5691,7 @@
 用以	yong yi
 祀	si
 虾	xia
+虾	ha
 伤心	shang xin
 代表大会	dai biao da hui
 囊	nang
@@ -5662,6 +5778,7 @@
 对外开放	dui wai kai fang
 旗帜	qi zhi
 粘	zhan
+粘	nian
 国民政府	guo min zheng fu
 征集	zheng ji
 看上去	kan shang qu
@@ -5930,6 +6047,7 @@
 六个	liu ge
 夺得	duo de
 爪	zhao
+爪	zhua
 药材	yao cai
 代价	dai jia
 园林	yuan lin
@@ -6146,6 +6264,7 @@
 遗传	yi chuan
 丁能通	ding neng tong
 什	shen
+什	shi
 博览会	bo lan hui
 稳步	wen bu
 中国政府	zhong guo zheng fu
@@ -6621,6 +6740,7 @@
 不同于	bu tong yu
 所用	suo yong
 扒	ba
+扒	pa
 旅行	lv xing
 泛	fan
 直到	zhi dao
@@ -6798,6 +6918,7 @@
 不便	bu bian
 保健	bao jian
 咽	yan
+咽	ye
 图像	tu xiang
 尽可能	jin ke neng
 水下	shui xia
@@ -6981,6 +7102,7 @@
 书籍	shu ji
 主流	zhu liu
 娜	na
+娜	nuo
 拦截	lan jie
 珍品	zhen pin
 姜	jiang
@@ -7025,6 +7147,7 @@
 大爷	da ye
 好象	hao xiang
 模	mo
+模	mu
 状元	zhuang yuan
 监利	jian li
 袋	dai
@@ -7186,6 +7309,7 @@
 泄	xie
 中路	zhong lu
 剥	bo
+剥	bao
 大赛	da sai
 弓	gong
 损	sun
@@ -7209,6 +7333,7 @@
 在家	zai jia
 火光	huo guang
 秘	mi
+秘	bi
 类别	lei bie
 反帝	fan di
 强盗	qiang dao
@@ -7297,6 +7422,7 @@
 虏	lu
 印尼	yin ni
 否	fou
+否	pi
 新建	xin jian
 翻身	fan shen
 乐园	le yuan
@@ -7492,6 +7618,7 @@
 战区	zhan qu
 模仿	mo fang
 泊	po
+泊	bo
 农业部	nong ye bu
 流经	liu jing
 示	shi
@@ -7659,6 +7786,7 @@
 孙权	sun quan
 宗室	zong shi
 屏	ping
+屏	bing
 瑕	xia
 站立	zhan li
 笼	long
@@ -7748,6 +7876,7 @@
 规格	gui ge
 较量	jiao liang
 迫	po
+迫	pai
 冻	dong
 对称	dui chen
 蜡烛	la zhu
@@ -7898,6 +8027,8 @@
 报上	bao shang
 轻轻地	qing qing di
 龟	gui
+龟	qiu
+龟	jun
 房中	fang zhong
 朱德	zhu de
 焦急	jiao ji
@@ -8128,11 +8259,14 @@
 嗕	ru
 土家	tu jia
 宿	su
+宿	xiu
 尺	chi
+尺	che
 应聘	ying pin
 点燃	dian ran
 畜牧业	xu mu ye
 禅	chan
+禅	shan
 习性	xi xing
 拂	fu
 来访	lai fang
@@ -8584,6 +8718,8 @@
 眼色	yan se
 走路	zou lu
 伽	ga
+伽	jia
+伽	qie
 修正	xiu zheng
 清水	qing shui
 瑙	nao
@@ -8602,6 +8738,7 @@
 介于	jie yu
 内讧	nei hong
 卜	bo
+卜	bu
 堆积	dui ji
 姹	cha
 实业	shi ye
@@ -8785,6 +8922,7 @@
 溶剂	rong ji
 相救	xiang jiu
 藉	ji
+藉	jie
 襄州	xiang zhou
 豌豆	wan dou
 鄂西北	e xi bei
@@ -8870,6 +9008,7 @@
 首批	shou pi
 七个	qi ge
 嚼	jue
+嚼	jiao
 头儿	tou er
 带上	dai shang
 恰当	qia dang
@@ -9105,6 +9244,7 @@
 显赫	xian he
 漕运	cao yun
 耙	ba
+耙	pa
 膳	shan
 迫切	po qie
 风气	feng qi
@@ -9221,6 +9361,7 @@
 变质	bian zhi
 嘻	xi
 暴	bao
+暴	pu
 月经	yue jing
 森	sen
 直属	zhi shu
@@ -9545,6 +9686,7 @@
 大伙	da huo
 摹	mo
 杉	shan
+杉	sha
 白马	bai ma
 西向东	xi xiang dong
 轻工	qing gong
@@ -9817,6 +9959,7 @@
 永不	yong bu
 洞穴	dong xue
 莎	sha
+莎	suo
 议程	yi cheng
 贡	gong
 饵	er
@@ -9888,6 +10031,7 @@
 巢	chao
 带头	dai tou
 择	ze
+择	zhai
 李鹏	li peng
 短暂	duan zan
 蒙古人	meng gu ren
@@ -10070,6 +10214,7 @@
 水文	shui wen
 用药	yong yao
 艾	ai
+艾	yi
 鑷	nie
 食堂	shi tang
 馔	zhuan
@@ -10097,6 +10242,7 @@
 引人注目	yin ren zhu mu
 泥沙	ni sha
 畜	chu
+畜	xu
 胜过	sheng guo
 钻进	zuan jin
 三座门	san zuo men
@@ -10277,6 +10423,7 @@
 毫克	hao ke
 略有	lve you
 磅	bang
+磅	pang
 纵贯	zong guan
 绕过	rao guo
 调和	tiao he
@@ -10289,6 +10436,7 @@
 朝鲜族	chao xian zu
 木婉清	mu wan qing
 殷	yin
+殷	yan
 精通	jing tong
 蓝天	lan tian
 部族	bu zu
@@ -10569,6 +10717,7 @@
 政制	zheng zhi
 流氓	liu mang
 澹	dan
+澹	tan
 蘑菇	mo gu
 钢材	gang cai
 陆游	lu you
@@ -10628,6 +10777,7 @@
 雍正	yong zheng
 驻军	zhu jun
 刨	pao
+刨	bao
 咏	yong
 回身	hui shen
 官署	guan shu
@@ -10672,6 +10822,7 @@
 炒菜	chao cai
 羁縻	ji mi
 蕃	fan
+蕃	bo
 邻居	lin ju
 中道	zhong dao
 全称	quan cheng
@@ -11098,6 +11249,7 @@
 宏大	hong da
 岩浆	yan jiang
 巷	xiang
+巷	hang
 平津	ping jin
 拈阄	nian jiu
 捕捉	bu zhuo
@@ -11254,6 +11406,7 @@
 绵延	mian yan
 腑	fu
 褪	tui
+褪	tun
 针对性	zhen dui xing
 鳔	biao
 一排	yi pai
@@ -12346,7 +12499,9 @@
 乌龟	wu gui
 代数	dai shu
 兹	zi
+兹	ci
 券	quan
+券	xuan
 十一年	shi yi nian
 南通	nan tong
 历届	li jie
@@ -12427,6 +12582,7 @@
 环球	huan qiu
 胚胎	pei tai
 蚌	bang
+蚌	beng
 衰退	shuai tui
 警戒	jing jie
 鞭子	bian zi
@@ -12487,6 +12643,7 @@
 验收	yan shou
 上门	shang men
 仔	zai
+仔	zi
 口岸	kou an
 常识	chang shi
 志愿军	zhi yuan jun
@@ -12692,6 +12849,7 @@
 扫描	sao miao
 摄政王	she zheng wang
 攒	zan
+攒	cuan
 早知	zao zhi
 橙	cheng
 牧业	mu ye
@@ -13022,6 +13180,7 @@
 悲伤	bei shang
 戚继光	qi ji guang
 殖	zhi
+殖	shi
 淋	lin
 理事长	li shi zhang
 盘算	pan suan
@@ -13066,6 +13225,7 @@
 生病	sheng bing
 第二批	di er pi
 络	luo
+络	lao
 耶稣	ye su
 联合政府	lian he zheng fu
 蒋丽莉	jiang li li
@@ -13723,6 +13883,7 @@
 怀念	huai nian
 新婚	xin hun
 椎	chui
+椎	zhui
 楚国	chu guo
 欧阳克	ou yang ke
 狱中	yu zhong
@@ -13934,12 +14095,14 @@
 坑道	keng dao
 拆开	chai kai
 括	kuo
+括	gua
 登台	deng tai
 着陆	zhuo lu
 笔直	bi zhi
 经书	jing shu
 蜜	mi
 诘	ji
+诘	jie
 身法	shen fa
 限定	xian ding
 马车	ma che
@@ -14010,6 +14173,7 @@
 副作用	fu zuo yong
 吱	zhi
 咯	ge
+咯	ka
 妆	zhuang
 孕	yun
 寇	kou
@@ -14194,6 +14358,7 @@
 朱子柳	zhu zi liu
 石刻	shi ke
 肋	le
+肋	lei
 脸红	lian hong
 自然而然	zi ran er ran
 角逐	jue zhu
@@ -14573,6 +14738,7 @@
 盲	mang
 红宝石	hong bao shi
 纤	xian
+纤	qian
 纬度	wei du
 耀	yao
 腐朽	fu xiu
@@ -16397,6 +16563,7 @@
 赍	ji
 赔款	pei kuan
 轧	ya
+轧	zha
 辩证	bian zheng
 钓鱼岛	diao yu dao
 雨季	yu ji
@@ -16587,6 +16754,7 @@
 破解	po jie
 禽	qin
 稽	ji
+稽	qi
 突起	tu qi
 窗子	chuang zi
 红楼梦	hong lou meng
@@ -16948,6 +17116,7 @@
 定制	ding zhi
 宠爱	chong ai
 尉	wei
+尉	yu
 惶	huang
 懒得	lan de
 手表	shou biao
@@ -17023,6 +17192,7 @@
 显而易见	xian er yi jian
 杠杆	gang gan
 烙	lao
+烙	luo
 璐	lu
 确诊	que zhen
 积水	ji shui
@@ -17126,6 +17296,7 @@
 发射器	fa she qi
 发脾气	fa pi qi
 吁	xu
+吁	yu
 商周	shang zhou
 大院	da yuan
 威廉	wei lian
@@ -17261,6 +17432,7 @@
 日光	ri guang
 智商	zhi shang
 柏	bai
+柏	bo
 棍棒	gun bang
 毋宁	wu ning
 求见	qiu jian
@@ -17628,6 +17800,7 @@
 琚	ju
 础	chu
 碌	lu
+碌	liu
 贰	er
 运输线	yun shu xian
 造反派	zao fan pai
@@ -19167,6 +19340,7 @@
 冲天	chong tian
 十二五	shi er wu
 厦	sha
+厦	xia
 名闻遐迩	ming wen xia er
 后湖	hou hu
 圈套	quan tao
@@ -19416,6 +19590,8 @@
 有意识	you yi shi
 朝臣	chao chen
 朴	pu
+朴	piao
+朴	po
 标的	biao di
 毕升	bi sheng
 江海	jiang hai
@@ -19469,6 +19645,7 @@
 古琴台	gu qin tai
 史方	shi fang
 吭	keng
+吭	hang
 周五	zhou wu
 喝采	he cai
 域名	yu ming
@@ -19724,6 +19901,7 @@
 悉尼	xi ni
 手下人	shou xia ren
 拗	ao
+拗	niu
 挂念	gua nian
 捉拿	zhuo na
 探听	tan ting
@@ -20011,6 +20189,7 @@
 应城市	ying cheng shi
 开发型	kai fa xing
 拓	tuo
+拓	ta
 摆放	bai fang
 晚间	wan jian
 朱丽兰	zhu li lan
@@ -21270,6 +21449,7 @@
 担架	dan jia
 摄像机	she xiang ji
 栅	zha
+栅	shan
 核能	he neng
 欢庆	huan qing
 武则天	wu ze tian
@@ -22379,6 +22559,7 @@
 分析家	fen xi jia
 券商	quan shang
 刹	sha
+刹	cha
 剧种	ju zhong
 匮乏	kui fa
 卫春华	wei chun hua
@@ -22825,6 +23006,7 @@
 炵	tong
 燃气	ran qi
 牟	mou
+牟	mu
 独到	du dao
 白菜	bai cai
 百科全书	bai ke quan shu
@@ -22971,6 +23153,7 @@
 友情	you qing
 受阻	shou zu
 叨	dao
+叨	tao
 各式	ge shi
 后山	hou shan
 唐家璇	tang jia xuan
@@ -23381,6 +23564,7 @@
 致密	zhi mi
 蔑视	mie shi
 蔓	man
+蔓	wan
 要犯	yao fan
 豪迈	hao mai
 贼人	zei ren
@@ -23567,6 +23751,7 @@
 接通	jie tong
 措	cuo
 掺	can
+掺	chan
 撰文	zhuan wen
 收留	shou liu
 教头	jiao tou
@@ -23577,6 +23762,7 @@
 气孔	qi kong
 浗	qiu
 涡	wo
+涡	guo
 深信	shen xin
 深陷	shen xian
 烹	peng
@@ -24180,6 +24366,7 @@
 商品流通	shang pin liu tong
 囩	yun
 圩	wei
+圩	xu
 多罗	duo luo
 多部	duo bu
 大声疾呼	da sheng ji hu
@@ -24573,6 +24760,7 @@
 王牌	wang pai
 现世	xian shi
 琢	zuo
+琢	zhuo
 画册	hua ce
 瞿	qu
 祭器	ji qi
@@ -25175,6 +25363,7 @@
 典故	dian gu
 前路	qian lu
 匙	shi
+匙	chi
 反党	fan dang
 发射管	fa she guan
 坠落	zhui luo
@@ -25302,6 +25491,7 @@
 腋下	ye xia
 船身	chuan shen
 茄	jia
+茄	qie
 荀子	xun zi
 菩提	pu ti
 营房	ying fang
@@ -25411,6 +25601,7 @@
 五色	wu se
 仗义	zhang yi
 伺	ci
+伺	si
 使不得	shi bu de
 使团	shi tuan
 侍立	shi li
@@ -25450,6 +25641,7 @@
 渐次	jian ci
 温水	wen shui
 溺	ni
+溺	niao
 火气	huo qi
 照常	zhao chang
 王府井	wang fu jing
@@ -25979,6 +26171,7 @@
 汉墓	han mu
 沈士柱	shen shi zhu
 沓	da
+沓	ta
 法人股	fa ren gu
 波恩	bo en
 渗水	shen shui
@@ -27291,6 +27484,7 @@
 萌	meng
 蓦然	mo ran
 蔚	wei
+蔚	yu
 诠	quan
 赘	zhui
 赶制	gan zhi
@@ -27720,6 +27914,7 @@
 名列榜首	ming lie bang shou
 吐血	tu xie
 嚓	ca
+嚓	cha
 回民	hui min
 地平线	di ping xian
 埆	que
@@ -27983,6 +28178,7 @@
 立意	li yi
 第二件	di er jian
 糜	mi
+糜	mei
 花边	hua bian
 苏黎世	su li shi
 茅盾	mao dun
@@ -29231,6 +29427,7 @@
 董建华	dong jian hua
 蕾	lei
 蛤	ha
+蛤	ge
 血衣	xue yi
 表露	biao lu
 装机	zhuang ji
@@ -29727,6 +29924,7 @@
 林之孝	lin zhi xiao
 标注	biao zhu
 桔	ju
+桔	jie
 椟	du
 止咳	zhi ke
 沙尘	sha chen
@@ -30034,6 +30232,7 @@
 院墙	yuan qiang
 隐伏	yin fu
 颉	jie
+颉	xie
 骈	pian
 鸿沟	hong gou
 黑斑	hei ban
@@ -31627,6 +31826,7 @@
 哭诉	ku su
 商品化	shang pin hua
 囤	dun
+囤	tun
 圆球	yuan qiu
 场子	chang zi
 城建	cheng jian
@@ -33979,6 +34179,7 @@
 野地	ye di
 鏖战	ao zhan
 钥	yao
+钥	yue
 铁树	tie shu
 门第	men di
 阴云	yin yun
@@ -34452,6 +34653,7 @@
 羊群	yang qun
 胡连生	hu lian sheng
 膀	bang
+膀	pang
 苏联红军	su lian hong jun
 草棚	cao peng
 荣辱观	rong ru guan
@@ -35177,6 +35379,7 @@
 焐	wu
 爬坡度	pa po du
 犍	jian
+犍	qian
 生产型	sheng chan xing
 甩手	shuai shou
 电容器	dian rong qi
@@ -37710,6 +37913,7 @@
 高尔夫球	gao er fu qiu
 鱼叉	yu cha
 鹘	gu
+鹘	hu
 麦克	mai ke
 龆	tiao
 一厢情愿	yi xiang qing yuan
@@ -38310,6 +38514,7 @@
 缕缕	lv lv
 缘何	yuan he
 缪	mou
+缪	miu
 罗兰	luo lan
 罗马教皇	luo ma jiao huang
 耐高温	nai gao wen
@@ -38783,6 +38988,7 @@
 蟠桃	pan tao
 袁督师	yuan du shi
 裳	shang
+裳	chang
 褪色	tui shai
 观测者	guan ce zhe
 言下之意	yan xia zhi yi
@@ -39296,6 +39502,7 @@
 调回	diao hui
 谜团	mi tuan
 貉	hao
+貉	he
 贪欲	tan yu
 赖特	lai te
 起立	qi li
@@ -40384,6 +40591,7 @@
 合子	he zi
 名下	ming xia
 呱	gu
+呱	gua
 和服	he fu
 和龙	he long
 哕	hui
@@ -40638,6 +40846,7 @@
 哭闹	ku nao
 哲学系	zhe xue xi
 啜	chuai
+啜	chuo
 嗓	sang
 四六级	si liu ji
 四目	si mu
@@ -40804,6 +41013,7 @@
 身先士卒	shen xian shi zu
 轮作	lun zuo
 辗	nian
+辗	zhan
 迁回	qian hui
 迂腐	yu fu
 运输车	yun shu che
@@ -41380,6 +41590,7 @@
 黄袍	huang pao
 黑锅	hei guo
 龈	ken
+龈	yin
 一个点	yi ge dian
 一年到头	yi nian dao tou
 一百名	yi bai ming
@@ -43695,6 +43906,7 @@
 暗红	an hong
 暗语	an yu
 曝	pu
+曝	bao
 有生以来	you sheng yi lai
 李德	li de
 杏子	xing zi
@@ -43946,6 +44158,7 @@
 垙	guang
 埋入	mai ru
 埔	pu
+埔	bu
 基础科学	ji chu ke xue
 塞纳河	sai na he
 墿	yi
@@ -44717,6 +44930,7 @@
 溶血	rong xue
 漆黑一团	qi hei yi tuan
 潦	lao
+潦	liao
 澳元	ao yuan
 烧纸	shao zhi
 烧结	shao jie
@@ -45362,6 +45576,7 @@
 尽心尽力	jin xin jin li
 山里人	shan li ren
 崴	wai
+崴	wei
 布尔人	bu er ren
 帐幕	zhang mu
 平视	ping shi
@@ -47931,6 +48146,7 @@
 舻	lu
 良人	liang ren
 芫	yan
+芫	yuan
 英国牛津大学	ying guo niu jin da xue
 茅盾文学奖	mao dun wen xue jiang
 草图	cao tu
@@ -48327,6 +48543,7 @@
 空落落	kong luo luo
 空车	kong che
 窨	xun
+窨	yin
 端阳节	duan yang jie
 竹篓	zhu lou
 第三系	di san xi
@@ -48431,6 +48648,7 @@
 阴宅	yin zhai
 阴沟	yin gou
 陂	bei
+陂	pi
 限令	xian ling
 陡崖	dou ya
 院方	yuan fang
@@ -48439,6 +48657,7 @@
 雅砻江	ya long jiang
 零时	ling shi
 靓	jing
+靓	liang
 非分之想	fei fen zhi xiang
 靥	ye
 韶	shao
@@ -51191,6 +51410,7 @@
 马宣赞	ma xuan zan
 驮运	tuo yun
 骠	biao
+骠	piao
 髀	bi
 高标准	gao biao zhun
 高难	gao nan
@@ -56625,6 +56845,7 @@
 果仁	guo ren
 枝杈	zhi cha
 柞	zha
+柞	zuo
 查察	cha cha
 查韦斯	cha wei si
 柳树下	liu shu xia
@@ -59908,6 +60129,7 @@
 命令主义	ming ling zhu yi
 和幺妹	he yao mei
 咖	ka
+咖	ga
 哀怜	ai lian
 哌	pai
 哺养	bu yang
@@ -64571,6 +64793,7 @@
 红牛	hong niu
 纤手	qian shou
 纥	ge
+纥	he
 纳塔尔	na ta er
 纳贿	na hui
 纸灰	zhi hui
@@ -64629,6 +64852,7 @@
 茶花女	cha hua nv
 莘	shen
 莞	guan
+莞	wan
 莫洛修	mo luo xiu
 莱辛	lai xin
 莲座	lian zuo
@@ -69413,6 +69637,7 @@
 擀面杖	gan mian zhang
 擅离	shan li
 擘	bai
+擘	bo
 攘臂	rang bi
 收款人	shou kuan ren
 收视	shou shi
@@ -73183,6 +73408,7 @@
 概率分布	gai lv fen bu
 榆中	yu zhong
 槟	bin
+槟	bing
 横断	heng duan
 橄榄岩	gan lan yan
 橓	shun
@@ -73280,6 +73506,7 @@
 漏风	lou feng
 演唱者	yan chang zhe
 漯	luo
+漯	ta
 漯河市	ta he shi
 潜泳	qian yong
 澡盆	zao pen
@@ -76769,6 +76996,7 @@
 优生优育	you sheng you yu
 传家	chuan jia
 伧	cang
+伧	chen
 伪科学	wei ke xue
 伫	zhu
 伸延	shen yan
@@ -78547,6 +78775,7 @@
 唯心主义者	wei xin zhu yi zhe
 唯物	wei wu
 啁	zhao
+啁	zhou
 啤酒厂	pi jiu chang
 啮合	nie he
 喷香	pen xiang
@@ -82958,6 +83187,7 @@
 草食性	cao shi xing
 荒坡	huang po
 荠	ji
+荠	qi
 荣誉室	rong yu shi
 荽	sui
 莞尔	wan er
@@ -90494,6 +90724,7 @@
 嘹	liao
 噩	e
 噱	jue
+噱	xue
 嚌	ji
 四万两	si wan liang
 四五十里	si wu shi li
@@ -93195,6 +93426,7 @@
 孤魂野鬼	gu hun ye gui
 学贯中西	xue guan zhong xi
 孱	can
+孱	chan
 宁宫太后	ning gong tai hou
 宁汉	ning han
 守活寡	shou huo gua
@@ -101807,6 +102039,7 @@
 偯	yi
 偼	jie
 傀	gui
+傀	kui
 傣家	dai jia
 傧相	bin xiang
 储备库	chu bei ku
@@ -108766,6 +108999,7 @@
 谷精草	gu jing cao
 谷胱甘	gu guang gan
 豉	shi
+豉	chi
 象山港	xiang shan gang
 豪伊	hao yi
 豪雨	hao yu
@@ -113915,6 +114149,7 @@
 起诉状	qi su zhuang
 起重船	qi zhong chuan
 趄	ju
+趄	qie
 超前性	chao qian xing
 超时空	chao shi kong
 超级服务器	chao ji fu wu qi
@@ -114210,6 +114445,7 @@
 铜厂	tong chang
 铣削	xi xue
 铤	ding
+铤	ting
 铥	diu
 铲运机	chan yun ji
 银冠	yin guan
@@ -122480,6 +122716,7 @@
 坦诚相见	tan cheng xiang jian
 坪内	ping nei
 坻	chi
+坻	di
 垂髫	chui tiao
 垃圾袋	la ji dai
 垃圾道	la ji dao
@@ -145372,6 +145609,7 @@
 碑廊	bei lang
 碑林区	bei lin qu
 碡	du
+碡	zhou
 碧澄澄	bi cheng cheng
 碧痕	bi hen
 碧纱橱	bi sha chu
@@ -147424,6 +147662,7 @@
 踏雪寻梅	ta xue xun mei
 踢法	ti fa
 蹊	qi
+蹊	xi
 躔	chan
 身不由已	shen bu you yi
 軍	jun

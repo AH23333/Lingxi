@@ -106,6 +106,16 @@ def write_lines(lines):
             f.write(line + "\n")
 
 
+def apply_readings_fix():
+    """多音字读音系统性补全（pypinyin 单词只出一套读音 → 口语常音缺口的类级修复）。
+    见 fix_readings.py：数据交叉审计 + 幂等补全。full 重建与 overlay-only 两条
+    路径统一在最后执行，防止管线任何一条再引入同类缺口。"""
+    sys.path.insert(0, HERE)
+    import fix_readings
+    added = fix_readings.apply_to_file(OUT)
+    print("readings-fix: +%d polyphonic single-char readings" % added)
+
+
 def overlay_only():
     """读取现有 OUT，叠加覆盖层后重写（无需 pypinyin）。"""
     with open(OUT, encoding="utf-8") as f:
@@ -113,6 +123,7 @@ def overlay_only():
     merged = apply_overlay(base_lines)
     added = len(merged) - len(base_lines)
     write_lines(merged)
+    apply_readings_fix()
     print("zh_pinyin.txt: %d entries (%+d from overlay)" % (len(merged), added))
 
 
@@ -127,6 +138,7 @@ def main():
     base_lines = build_from_jieba(cap)
     merged = apply_overlay(base_lines)
     write_lines(merged)
+    apply_readings_fix()
     print("zh_pinyin.txt: %d entries (jieba cap=%d + spoken overlay)"
           % (len(merged), cap))
 
