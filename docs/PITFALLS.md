@@ -209,3 +209,31 @@
 - **症状A（假验证）**：探索文建议"用 `C:\Windows\SysWOW64\notepad.exe` 打字看日志 [pipe] 已连接"验证 32 位 TIP——实测存根 3 秒即退（`Start-Process -PassThru` 的进程 HasExited=True），真身是 **64 位**商店 Notepad；后续 AppActivate(死 PID) 失败、SendKeys 打到别处，首测 44 行日志全是 64 位 DLL 发的，32 位验证形同虚设。
 - **症状B（DLL 不加载）**：自建 32 位宿主只做 `CoInitialize + ProfileMgr::ActivateProfile`（hr=0）——ImeCore.dll 根本不在进程内，模块枚举 exit=4。**TIP 实例化必须有焦点上下文**：窗口 + `ITfThreadMgr::Activate` + `CreateDocumentMgr/CreateContext(TestStore)/Push` + `AssociateFocus` + `SetFocus`，msctf 才会在本进程 CoCreateInstance TIP（deep_test 骨架即为此而生，裸激活不算数）。
 - **正确做法**：验证 32 位 TIP 用 `tools\host32.cpp`（文本宿主+ProfileMgr+模块枚举断言 `dir32=1`，x86 交叉编译 `vcvarsamd64_x86` + `/std:c++17`）；日志归因用"基线长度截取增量"而非行号（LX_LOG 无 PID 前缀）；凡是"启动一个 exe 验证加载"的测试，先核验该进程没被跳板/别名替换（`$p.HasExited`、主模块 PE Machine=014C）。
+
+## 用户六项需求轮（2026-10-28 晚·十）
+
+### 36. PowerShell `Get-Content -Raw` + `Set-Content -NoNewline` 会把 UTF-8 中文源码写成 ANSI 损坏文件 ⭐️
+- **症状**：批量文本替换用 `$c = Get-Content -Raw -Encoding UTF8; $c.Replace(...); Set-Content -NoNewline -Encoding UTF8`——写回后中文全乱码（源文件被 ANSI 重编码）。
+- **根因**：PS5.1 的编码参数链有坑：`Get-Content -Encoding UTF8` 读对，但经变量中转再 `Set-Content` 时 BOM/代码页处理出错，中文字符按系统 ANSI 码页重写。
+- **正确做法**：**批量文本替换一律用 edit 工具**（精确 oldString/newString），不用 PS 字符串替换写回源码文件。
+
+### 37. P/Invoke FindWindowW 传 `$null` 标题封送成空串 `""` 而非 NULL 指针 ⭐
+- **症状**：`FindWindowW($className, $null)` 按标题精确匹配失败，误报"窗口不存在"。
+- **根因**：PowerShell 把 `$null` 字符串参数封送为空字符串引用（非 NULL）——窗口标题非空则永不匹配。
+- **正确做法**：枚举顶层窗口用 `EnumWindows` + 回调里 `GetClassNameW` 匹配类名；判存在性别依赖 FindWindowW 精确双匹配。
+
+### 38. 冷启动（LLM 加载）期间触发二实例命令：转发器 4s 超时弹错误框挂进程 ⭐
+- **症状**：taskkill 后重启 UI 立即 `--settings` 触发——主实例还在 LLM 冷加载（CPU 30s+），命名事件未创建，转发器 SignalNamedEvent 4s 重试耗尽弹"仍在启动中"错误框，进程挂在那里不退；后续烟测进程数判断全乱。
+- **正确做法**：冷启动后**等就绪再触发**（本机 LLM 冷加载实测 45s 稳妥）；烟测脚本轮询判据用"目标窗口类出现"而非进程计数（转发器存活会污染计数）。
+
+### 39. 探针字符串插值 `-band` 表达式字面输出——断言"假绿" ⭐
+- **症状**：`"WS_VSCROLL={(((351207424 -band 0x00200000) -ne 0))}"` 输出原样表达式文本，肉眼看带花括号以为 True——**样式断言根本没算**，得出错误结论。
+- **根因**：PS 双引号字符串里 `{...}` 是 `-f` 格式化占位符语法，不是子表达式；嵌套圆括号不触发求值。
+- **正确做法**：先用变量算布尔再插值（`$v = ($s -band 0x200000) -ne 0; "WS_VSCROLL=$v"`）或用 `-f` 运算符；凡是探针输出里看到裸表达式文本=断言失效，必须返工。
+
+### 40. 依赖环境 HKCU 的测试必须开头 pin 前置；edit 批量替换要带唯一上下文 ⭐
+- **症状A**：deep_test T16 挂三连——环境 `ToggleMode=4`（设置页烟测点组合框留下的），Shift 切换语义不成立；D 轮 regress 时环境还是 1 所以全绿，污染时序一变测试就红。
+- **根因**：DLL 每事件实时读 HKCU（`LoadSettings()`），测试隐式依赖环境状态；烟测动真实设置页=动测试前置。
+- **正确做法**：环境依赖型测试在块开头显式 pin（T16 已修 `c00e972`：PinToggleMode(1)+结束 RestoreToggleMode，DLL 实时读即写即生效，崩溃残留=默认值无污染）。
+- **症状B**：edit 工具改 T16 时 oldString 用 `EnsurePinyinMode(pKm);\nClearFocusedText(pTm);`——该模式在文件里出现 15+ 次，居然"成功"落进了 T15 的块，编译错误才暴露。
+- **正确做法**：编辑重复模式必须带唯一锚（注释行/独有变量名/相邻独有语句），多匹配"成功"≠落对位置。

@@ -1,5 +1,15 @@
 # 交接文档（HANDOFF）
 
+## ⚡ 最新状态速报（2026-10-28 晚·十，用户六项需求 A/D/B(含E)/C 四单元落地——F AI 预测=R3 留下轮）
+
+- **A 自定义中英切换键（`7a28923`）**：toggleMode 扩五态 0关/1 Shift/2 Shift或Ctrl/3 CapsLock/4 Ctrl；CapsLock 三态状态机（OnTestKeyDown 即吞防大小写翻转，KeyUp 干净单击切换）；Shift/Ctrl 组合判定改精确枚举；设置页五态下拉。
+- **D 快捷键句库（`7065b2a`）**：`ui/hotphraseui` 新模块——全局热键一键上屏句子（%APPDATA% 存储，上限 24 条，热键强制 Ctrl/Alt，管理窗热键录制框）；RegisterHotKey id=100 起，插入复用符号面板 MSG_INSERT_TEXT 链路，**DLL 零改动**。
+- **B/E 自定义候选词与词典增强（`ebf0ae1`）**：用户词典窗手动添加词条（拼音留空自动推断——zh_pinyin.txt 整词优先/单字回退）+ 提升/降低选中控排序（count±1000，引擎置顶区口径零改动）；520x480 重排。
+- **C 设置页可缩放美化（`7bf02f5`）**：流式重排布局引擎（加宽自动折多列）+ 纵向滚动（内容超出动态挂/摘 WS_VSCROLL，解"min 高度依赖宽度"死结）+ WS_THICKFRAME 拖拽 + 浅底配色；探针烟测全绿（滚动 Δ=90 精确、双列折行、贴底、滚动条自动消失）。
+- **deep_test T16 加固（`c00e972`）**：T16 前置 PinToggleMode(1)+结束还原——免疫环境设置页烟测残留污染（本轮实证 ToggleMode=4 残留致 T16 三连挂）；DLL 每事件实时读 HKCU，写即生效。
+- **regress ALL PASS**；真实 UI 已重启（PID 25320，晚于构建）。PITFALLS 新增 #36-#40（PS 编码损坏源码/FindWindowW $null 封送/冷加载触发时序/探针插值假绿/环境依赖 pin+edit 多匹配）。
+- **剩余**：F AI 预测 = R3 LLM 整句重排（方案 cur/GLM_EXPLORATION_R3_LLM.md，前置堵点：拼音模式 DLL 补发光标前上文；LlmRerank 已有续写路径可复用——RerankSettleMs=400/RerankBudgetMs=900 两阶段）。
+
 ## ⚡ 最新状态速报（2026-10-28 晚·九，32 位 TIP 落地——R5 工程化整节完成）
 
 - **32 位 TIP（WOW64）全链完成（`88b9252`）**：ImeCore/common 加 Win32 配置（输出 `bin\<C>32\`，x64 零变化）→ `SysWOW64\regsvr32` 注册进 WOW6432Node 与 x64 共存（本机已注册，WOW6432Node CTF TIP Enable=1 实证）→ EnsureUIRunning 回退链（32 位 DLL 目录无 x64 UI 时回退 `..\Debug\`，真机实证杀 UI 后 `[pipe] 已拉起 LingxiUI.exe（32 位回退路径）` 自愈）。真机三环取证（tools\host32.cpp 探针留存）：加载 `bin\Debug32\ImeCore.dll dir32=1` / 管道已连接 / 回退自愈。**弯路**：Win11 24H2 `SysWOW64\notepad.exe` 是商店应用跳板存根（真身 64 位），探索文建议的验证路径不成立——自建 32 位文本宿主才有效；**TIP 实例化必须有焦点上下文**（窗口+ThreadMgr+TestStore+AssociateFocus），裸 ActivateProfile 不加载 DLL。regress ALL PASS，真实 UI 已重启（PID 9628）。

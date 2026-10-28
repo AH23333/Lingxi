@@ -299,3 +299,35 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **验证**：build32 + build（x64）双过；PE 位数核验（Debug32=014C / Debug=8664）；regress **ALL PASS**（engine_test/fix_readings/deep_test/e2e attempt1）；真实 UI 已重启（PID 9628）。
 
 **R5 终态**：稳定性（WER+P2）✅ + 32 位 TIP ✅ + 卸载增强 ✅ + regress 常备 ✅——**R5 工程化整节完成**。剩余大项仅 R3 LLM（方案就绪未实施）。
+
+## 2026-10-28 晚（十） · 用户六项需求：A 切换键/D 快捷短语/B 词典/C 设置页 四单元落地（F AI 预测留下轮）
+
+**范围**：用户六项需求（A 自定义中英切换键 / B 自定义候选词 / C 设置页可缩放美化 / D 快捷键句库 / E 词典管理增强并入 B / F AI 预测=R3）——本轮完成 A/D/B(含E)/C 四单元 + deep_test T16 加固，F=R3 留下轮（核心输入路径大改，收尾段不塞）。
+
+**A 自定义中英切换键（`7a28923`）**：
+
+- `common/settings.cpp`：toggleMode 扩枚举 0 关/1 Shift/2 Shift或Ctrl/**3 CapsLock**/**4 Ctrl**（上限校验 2→4）；HKCU 双键兼容不变（ToggleMode 优先，旧 ShiftToggle 同步写）。
+- `ime/service.cpp/h`：CapsLock 三态状态机——`_capsDown/_capsUsed/_capsWasActive`；`OnTestKeyDown`/`OnKeyDown` mode 3 时吞 CapsLock（**不翻转大小写锁定**），KeyUp 干净单击（未组合使用+按下时无组合+当前无组合+zh 模式）切中英+toast；Shift/Ctrl allowed 判定改精确枚举 `(tm==1||tm==2)`/`(tm==2||tm==4)`，杜绝 mode 3/4 时误判组合使用。
+- 设置页五态下拉；deep_test T16 前置 pin（见文末 T16 加固）。
+
+**D 快捷键句库（`7065b2a`）**：
+
+- 新模块 `ui/hotphraseui.{h,cpp}`：HotPhrase{mods,vk,phrase}；存储 `%APPDATA%\LingxiIme\hotphrases.txt`（UTF-8 BOM 原子写，行格式 `mods,vk<TAB>句子`，上限 24 条，热键强制含 Ctrl/Alt 防占用打字键）；管理窗（热键录制框子类化 EDIT 捕获 KEYDOWN/SYSKEYDOWN、ESC 清空、重复/超限即时反馈）。
+- `ui/main.cpp`：RegisterHotKey id=100 起 + WM_HOTKEY 分发，命中条目经 `g_insertText`→SendInsertText 上屏——**复用符号面板 MSG_INSERT_TEXT 链路，DLL 零改动**；保存后 SetHotPhrasesChangedCallback 全量重注册。
+
+**B/E 自定义候选词与词典管理增强（`ebf0ae1`）**：
+
+- 用户词典管理窗加手动添加词条（词条+拼音框，拼音留空自动推断）：`GetPinyinInfer` 懒加载 `zh_pinyin.txt`（300320 行）——整词精确命中优先、逐字单字条目首见读音连写回退、键口径小写无空格连写（=引擎 NormKey，带空格永不匹配）。
+- 新词条 count=1000 进引擎置顶区；提升/降低选中（±1000，下限 1）——自定义顺序=引擎既有"用户词条置顶区按 count 降序"口径，**零引擎改动**；窗口 520x480 重排（EM_SETCUEBANNER 提示、7 按钮行）。
+
+**C 设置页可缩放美化（`7bf02f5`）**：
+
+- 流式重排布局引擎：`CtlItem{h,h2,pw,ph,lw,flags}` 注册表 + `LayoutSettings()` 按客户区宽度流式排布——加宽自动折多列、拖拽缩放有实际意义；IT_SECTION 段标题独行占满整行（段前双倍间距）、IT_WRAP 放不下换行、IT_BOTTOM 锚底（不早于内容尾，内容短时贴客户区底）。
+- 纵向滚动：`UpdateSettingsScrollbar` 按内容高/客户区高差值动态挂/摘 WS_VSCROLL（FRAMECHANGED 会再触发一次 WM_SIZE，样式已一致收敛）；WM_VSCROLL（行/页/拖拽）+WM_MOUSEWHEEL（120→3 行）；坐标系统一虚拟坐标，MoveWindow 时才减 `g_scrollY`。**解死结**：无滚动时内容高度随宽度变化（min 尺寸依赖宽度，永远定不准），滚动把高度下限解放到 380。
+- 窗口 WS_THICKFRAME|WS_MAXIMIZEBOX 创建（680x560），WM_SIZE/WM_GETMINMAXINFO（min 460x380 DPI 缩放/max 1600x2200）/WM_CTLCOLORSTATIC（浅底 RGB(248,250,252)+灰黑文字）；控件注册式创建 addSection/addCheck（MeasureTextW 实测宽）/addComboPair（标签实测+SS_CENTERIMAGE 垂直居中）/addButton。
+
+**deep_test T16 加固（`c00e972`）**：环境 ToggleMode=4（设置页烟测点组合框残留）致 T16 三连挂——DLL 每事件实时读 HKCU，测试隐式依赖环境。T16 块开头 `PinToggleMode(1,&old)` 固定 Shift 语义+结束 `RestoreToggleMode(old)` 还原（旧键 ShiftToggle 同步，崩溃残留=默认值无污染）。
+
+**验证**：D 轮 regress ALL PASS；C 轮 P/Invoke 探针烟测——默认尺寸滚动条自动出现+SB_LINEDOWN×3 位移精确 Δ=90（3行×30px）、拉大至 1000x1000 滚动条自动消失（style 0x14CF0000 无 0x200000）+复选框双列折行（x=16/x=466 同行）+提示贴底（915+30+16=961=客户底）、段标题全程占满独行、用户词典/快捷短语子窗可达；T16 加固后 regress **ALL PASS**（engine_test/fix_readings/deep_test/e2e attempt1）；真实 UI 已重启（PID 25320，晚于构建）。
+
+**坑固化**：PITFALLS #36（PS Set-Content 编码损坏中文源码——批量替换必须 edit 工具）/ #37（FindWindowW $null 封送空串）/ #38（冷加载期间触发二实例超时挂错误框）/ #39（探针 -band 插值字面输出假绿）/ #40（环境依赖测试必须 pin + edit 多匹配落错块）。
