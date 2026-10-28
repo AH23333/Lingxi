@@ -116,6 +116,19 @@ static LatencyStats MeasureLatency(lingxi::IPredictor* p, const std::wstring& ct
 int wmain()
 {
     lingxi::InitLogging();
+    // —— 用户词典沙盒：Learn 用例会把"脏/喵喵"等测试词写进 %APPDATA%\LingxiIme\
+    // userdict.txt（真实用户的学习数据）；反过来说，上一次运行的残留又会污染本次
+    // 断言（如 nihao 被测试词置顶 → P4b 口语首选翻车）。把 APPDATA 重定向到
+    // exe 旁 userdata\ 并在每次运行前清空 userdict——测试自我隔离且幂等。
+    {
+        std::wstring sandbox = ExeDir() + L"\\userdata";
+        CreateDirectoryW(sandbox.c_str(), NULL);
+        std::wstring lx = sandbox + L"\\LingxiIme";
+        CreateDirectoryW(lx.c_str(), NULL);
+        std::wstring ud = lx + L"\\userdict.txt";
+        DeleteFileW(ud.c_str());
+        SetEnvironmentVariableW(L"APPDATA", sandbox.c_str());
+    }
     if (EnsureWordlists())
         wprintf(L"[INFO] wordlists staged under <exeDir>\\data\n");
     else
@@ -421,6 +434,34 @@ int wmain()
                     _snwprintf_s(detail, _TRUNCATE, L"'%ls' -> first='%ls' expect='%ls'",
                                  cs.in, r.cands.empty() ? L"" : r.cands[0].c_str(), cs.expect);
                     Report(ok, "pinyin spoken first-match", detail);
+                }
+            }
+
+            // P4c. 超长混排 + 末尾残段：>10 音节的长串不应崩溃且首选是连贯整句；
+            //      末尾拖一个未打全的音节（残段）时，仍要产出覆盖该残段的候选。
+            //      这正是 Prune 旧实现（完整/残段同池抢 K_POS 名额）被挤掉的路径：
+            //      旧实现在 "nichifanlemawohenb" 上候选塌到 27 个（残段池被完整池
+            //      吃光配额），分池修复后回到上限 60。
+            {
+                struct LCase { const wchar_t* in; size_t minLen; size_t minCands; };
+                const LCase longs[] = {
+                    { L"womenjintianxiangqugongyuanyiqidakaishui", 8, 5 },  // 12 音节长句
+                    { L"zhegewentihenyijiandanwomenyijingtaolunduo", 7, 5 }, // 长句混排
+                    { L"nichifanlemawohenb", 4, 40 },                          // 长句 + 残段（HEAD 塌缩到 27）
+                };
+                for (const auto& lc : longs)
+                {
+                    lingxi::Prediction r = py->Predict(lc.in);
+                    bool hasLongCand = false;
+                    for (const auto& c : r.cands)
+                        if (c.size() >= lc.minLen) { hasLongCand = true; break; }
+                    if (lc.minCands > 0 && r.cands.size() < lc.minCands) hasLongCand = false;
+                    bool ok = !r.cands.empty() && hasLongCand;
+                    wchar_t detail[256];
+                    _snwprintf_s(detail, _TRUNCATE, L"'%ls…' cands=%zu first='%ls'",
+                                 lc.in, r.cands.size(),
+                                 r.cands.empty() ? L"" : r.cands[0].c_str());
+                    Report(ok, "pinyin long mixed + trailing partial survives", detail);
                 }
             }
 

@@ -595,10 +595,17 @@ private:
                 Extend(dp, i, i + 1, SyllUnit{ SyllUnit::INITIAL, std::string(1, in[i]) }, 4);
         }
 
-        // 收集完整路径 + 末尾残段路径
-        std::vector<SegPath> all;
+        // 收集完整路径 + 末尾残段路径——分池保留，再合并截断。
+        // 旧实现把两池塞进同一个 Prune 全局留 K_POS=7，随后的 K_FINAL=14
+        // 截断形同虚设（死代码）；长串输入时低 cost 的完整路径吃光配额，
+        // 末尾残段（"…des" 这种正在打的最后一个音节）被整池挤掉，
+        // 表现为：拼音越长按空格越容易上屏字母原文。
+        // 现在：完整/残段各留 top K_POS（beam 内已各自按 cost 收敛），
+        // stable_sort 合并去重后限 K_FINAL——两池都保得住，路径数上限 14。
+        std::vector<SegPath> fullPool, partPool;
         if (!dp[n].empty())
-            for (const auto& p : dp[n]) all.push_back(p);
+            for (const auto& p : dp[n])
+                fullPool.push_back(p);
 
         for (int i = 0; i < n; i++)
         {
@@ -615,15 +622,22 @@ private:
                 SegPath np = p;
                 np.units.push_back(SyllUnit{ SyllUnit::PARTIAL, r });
                 np.cost += 3;
-                all.push_back(np);
+                partPool.push_back(std::move(np));
             }
         }
 
-        Prune(all);
-        if ((int)all.size() > K_FINAL) all.resize(K_FINAL);
+        Prune(fullPool, K_POS);
+        Prune(partPool, K_POS);
+
+        std::vector<SegPath> all = std::move(fullPool);
+        all.insert(all.end(), std::make_move_iterator(partPool.begin()),
+                   std::make_move_iterator(partPool.end()));
+        Prune(all, K_FINAL);
         return all;
     }
 
+    // 从 i 位置扩展切分路径：对 dp[from] 里的每条路径追加单元，写入 dp[to]，
+    // 随即 Prune（去重 + 稳定按 cost 截断到 K_POS 的 DP 梁宽）。
     void Extend(std::vector<std::vector<SegPath>>& dp, int from, int to,
                 SyllUnit u, int addCost)
     {
@@ -883,9 +897,11 @@ private:
         return out;
     }
 
-    static void Prune(std::vector<SegPath>& v)
+    // 去重（相同单元序列）+ 按 cost 稳定排序 + 截断到 keep。
+    // 稳定排序是刻意的：同 cost 的平局（多条路径/多个词频相同的词）按生成序
+    // 保留，截断才不抖动——否则同一次输入的两次调用可能给出不同候选池。
+    static void Prune(std::vector<SegPath>& v, int keep = K_POS)
     {
-        // 去重（相同单元序列）
         std::unordered_set<std::string> keys;
         std::vector<SegPath> uniq;
         uniq.reserve(v.size());
@@ -898,11 +914,12 @@ private:
                 k += u.text;
                 k.push_back('|');
             }
-            if (keys.insert(k).second) uniq.push_back(p);
+            if (keys.insert(k).second)
+                uniq.push_back(std::move(p));
         }
-        std::sort(uniq.begin(), uniq.end(),
-                  [](const SegPath& a, const SegPath& b) { return a.cost < b.cost; });
-        if ((int)uniq.size() > K_POS) uniq.resize(K_POS);
+        std::stable_sort(uniq.begin(), uniq.end(),
+                         [](const SegPath& a, const SegPath& b) { return a.cost < b.cost; });
+        if ((int)uniq.size() > keep) uniq.resize(keep);
         v.swap(uniq);
     }
 
