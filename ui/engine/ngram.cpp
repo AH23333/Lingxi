@@ -159,10 +159,17 @@ private:
 
         // M3 策略（诚实定位：无共现语料，质量占位，M4 由 LLM 接管）：
         // 下一词建议 = 词频表头部的高频词（多为"了/是/在/和"类接续字词），
-        // 跳过与尾字相同的单字，避免"……不错"→"不错"这类无意义候选。
+        // 跳过与上文尾部重叠的候选（与尾字相同的单字、与尾 1-2 字相同的双字），
+        // 避免"……不错"→"不错"这类重复/无意义候选（用户实测报告的"完全重复"
+        // 在词表引擎上的同形路径）。
         for (const auto& e : _zh)
         {
-            if (e.word.size() == 1 && e.word[0] == lastChar) continue;
+            bool dup = false;
+            if (e.word.size() == 1)
+                dup = (e.word[0] == lastChar);
+            else if (e.word.size() == 2 && cjkRun >= 2)
+                dup = (ctx.compare(ctx.size() - 2, 2, e.word) == 0);
+            if (dup) continue;
             pred.cands.push_back(e.word);
             if (pred.cands.size() >= kMaxCands) break;
         }

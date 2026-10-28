@@ -436,8 +436,40 @@ private:
         }
 
         std::wstring cont = Utf8ToWide(outUtf8.data(), (int)outUtf8.size());
+        cont = StripPromptEcho(cont, tail);
         pred.cands = SplitContinuation(cont);
         return pred;
+    }
+
+    // 续写输出回显裁剪：小模型常以"复读上文尾部"开头（prompt 上文是…天气，
+    // 输出以"天气不错…"开头），直接当候选上屏 = 输入框出现完全重复的内容
+    // （用户实测报告）。裁掉 cont 与上文尾部重叠的最大前缀（≤40 字防误伤
+    // 真实重复语义如"很好很好"）。
+    static std::wstring StripPromptEcho(std::wstring cont, const std::wstring& tail)
+    {
+        // 前导空白先行跳过，允许"天气 不错"式带空格回显
+        size_t h = 0;
+        while (h < cont.size() && (cont[h] == L' ' || cont[h] == L'\r' || cont[h] == L'\n' ||
+                                   cont[h] == L'\t'))
+            h++;
+        std::wstring body = cont.substr(h);
+        size_t maxK = body.size() < tail.size() ? body.size() : tail.size();
+        if (maxK > 40) maxK = 40;
+        // 阈值 k≥2：单字重叠歧义太大（叠词续写"很好|很好"会被误切）
+        for (size_t k = maxK; k >= 2; k--)
+        {
+            if (body.compare(0, k, tail, tail.size() - k) == 0)
+            {
+                body.erase(0, k);
+                // 回显后常紧跟标点/空白起头真续写，去干净
+                size_t h2 = 0;
+                while (h2 < body.size() && (body[h2] == L' ' || body[h2] == L'\n'))
+                    h2++;
+                body = body.substr(h2);
+                return body;
+            }
+        }
+        return cont;
     }
 
     // 指令式重排：构造 prompt → 生成数字序 → 白名单校验。
