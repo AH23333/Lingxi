@@ -380,3 +380,22 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **验证**：tools\build.cmd 全绿（e2e/common/ImeCore/LingxiUI 四目标，无 error/warning）。窗体视觉无自动化断言（沿用 B2 口径），用户当时在用机器（left4dead2）未跑 UI 验证——留用户空闲时人工确认各窗口视觉。
 
 **兼容注记**：老用户 skinIndex=0 原蓝现翠绿，无迁移（可接受）。
+
+## 2026-10-28 晚（十三） · B6 拼音隔音符 + B7 候选窗滚轮翻页（拓展轮）
+
+**背景**：用户"继续拓展开发"。backlog 盘点——M4.5 KV 增量（`8b5ed3b`）、R4 字号（settings candidateFontSize 12..32 即时生效）、英文句首大写（ngram `_wcsnicmp`+capitalize）、皮肤（晚·十二）均已实现，PROGRESS 旧行是文档债。选定两个真实缺口：隔音符（引擎侧 NormalizeIn/DP 边界/inOfCtx 早已预留撇号处理，但 DLL 键路由缺失使组合中按 ' 落 unmapped-default **误提交首选**——引擎支持是死代码）与候选窗滚轮翻页。
+
+**B6 拼音隔音符（xi'an → 西安，不撞"先"）**：
+
+- DLL（`ime/composition.cpp`）：HandlePinyinKey 在 IsLetterKey 分支后加 VK_OEM_7（'）→ 组合中无 Shift 且非双拼时 `PinyinAppend(L'\'')`（Shift+' 引号、双拼（ShuangpinToQuanpin 滤撇号隔音无意义）、空组合维持原行为）；PinyinKeepRest 字母白名单加 '（含撇号组合的部分提交剩余段不丢边界）。
+- **根因修复（引擎 `ui/engine/pinyin.cpp` MatchWords）**：`xi'an` 里"先"曾以整串 cover=5 出现在候选——[xi][an] 拼接 compact="xian" 撞单音节词"先"：精确 compact 分支与模糊音分支缺音节数校验（PARTIAL 分支早有 `sylls.size()!=n` 校验，另两处漏）。补齐后：隔音输入时"先/建"类跨边界撞键词被拒（隔音语义成立）；无隔音时仅消除跨路径冗余（xian 的"西安"从 [xian] 单元路径消失、[xi][an] 路径唯一命中，行为无损）。
+- **死代码修复（NormalizeIn）**：旧 `ch=='\u2019'` 窄字面量与单字节 char 比较恒假——弯撇号 U+2019（UTF-8 E2 80 99）实被整段丢弃当 xian 整串处理（旧 found=1 是 compact 撞键冗余）。改按 UTF-8 三字节序列探测（U+2019/U+2018 均归一为隔音边界），注释声称的"ASCII/弯体"支持成真；Predict inOfCtx 同款恒假条件一并清理（coverOk 保证 raw 纯 ASCII，弯体走不进该分支）。
+- engine_test P6e +4 断言：`xi'an` 西安 cover=5 / 弯撇号 xi’an 西安同（cover=0——UTF-8 变长不映射，既有口径）/ 裸 xian 先 cover=4 / `xi'an` 先不整串消耗（实测 idx=-1：撞键路径全被音节数校验拒绝，比断言预期更干净）。
+
+**B7 候选窗滚轮翻页（`ui/window.cpp`）**：WM_MOUSEWHEEL → `_pageStart` ± kPageSize 步进夹取 [0, maxStart]，翻页后 hoverRow 复位 + 锁外 LayoutAndPosition 重排。Win10+ 默认"悬停非活动窗口时滚动"把滚轮路由到候选窗（WS_EX_NOACTIVATE 宿主保焦点）；用户关闭该设置则用 PageUp/PageDown 与 -/=（DLL 侧既有）。修 C4267（size_t→uint32_t 显式收窄）。
+
+**文档债**：PROGRESS M4.5 行 ⬜→✅（`8b5ed3b` 早已实现，旧行过时）；`common/settings.h` skinIndex 注释对齐晚·十二实际五皮肤（0 翠绿/1 青碧/2 橙/3 红/4 金）。
+
+**验证**：engine_test 沙盒（APPDATA 隔离）功能断言全绿（P6e 新 4 条全过）；唯一红 = pinyin latency 14.3ms——归因取证 `Get-Process | Sort CPU`：left4dead2（1.5GB WS）+ deveco 多进程常驻，与晚·十一 PITFALLS #41 记录的 7~14ms 漂移同分布 = 环境非代码（B6 不触碰热路径）。tools\build.cmd 全链绿（四目标无 error/warning）。
+
+**边界与债**：deep_test/e2e 未跑（用户用机中）——DLL 键路由（VK_OEM_7）与 UI 滚轮留用户空闲回归（代码审读口径，同晚·五 toggleMode 先例）；真实 UI 未重启（新 DLL 需重启应用生效）。学习键 NormKey 丢撇号（xi'an 与 xian 同键）——隔音选"西安"后打 xian 也置顶，可接受。

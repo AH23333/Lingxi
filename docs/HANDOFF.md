@@ -1,5 +1,13 @@
 # 交接文档（HANDOFF）
 
+## ⚡ 最新状态速报（2026-10-28 晚·十三，B6 拼音隔音符 + B7 候选窗滚轮翻页——拓展轮）
+
+- **B6 拼音隔音符**：组合中 `'`（VK_OEM_7 无 Shift）进组合当切分边界（xi'an→西安；此前落 unmapped-default **误提交首选**）；根因修复 MatchWords 精确 compact/模糊音分支补音节数校验（[xi][an] 拼接 compact="xian" 撞单音节词"先"——PARTIAL 分支有校验另两处漏）；NormalizeIn 弯撇号改 UTF-8 三字节序列探测（旧 `'\u2019'` 窄字面量与单字节 char 比较恒假死代码）。双拼/Shift+' 引号/空组合行为不变。engine_test P6e +4 断言全绿。
+- **B7 滚轮翻页**：候选窗 WM_MOUSEWHEEL 翻页（±kPageSize 夹取；Win10+ 悬停滚动路由；键盘 PageUp/PageDown、-/= 不变）。纯 UI。
+- **文档债**：PROGRESS M4.5 KV 增量 ⬜→✅（`8b5ed3b` 早已实现，旧行过时）；settings.h skinIndex 注释对齐五皮肤实际。
+- **验证**：engine_test 沙盒功能全绿；唯一红 latency 14.3ms = left4dead2+deveco 后台漂移（PITFALLS #41 归因口径，安静基线 ~7ms）。build.cmd 全链绿（C4267 已修）。**deep_test/e2e 未跑**（用户用机中）——DLL 键路由 + UI 滚轮留空闲回归；**真实 UI 未重启**（新 DLL 待重启应用生效）。
+- **待做**：用户空闲后 regress 一键回归 + 真实 UI 重启 + UI 视觉人工确认（晚·十二遗留一并）；R3 压测收尾（真机 p50/p95 对标 ≤450ms）；卸载清理/代码签名（M6 尾巴）。
+
 ## ⚡ 最新状态速报（2026-10-28 晚·十二，全应用 WinUI 风格重做——去蓝紫收口）
 
 - **UI WinUI 化全量完成（`bc7be9e`）**：新共享 `ui/uistyle.h` 设计令牌——中性灰阶八常量（kUiBg/kUiCard/kUiCardBorder/kUiFlyoutBg/kUiFlyoutBorder/kUiText/kUiText2/kUiControlEdge）+ 非蓝紫五皮肤（0 翠绿默认/1 青碧/2 橙/3 红/4 金，Settings.skinIndex 全 UI 统一换肤）+ `UiApplyRoundCorners`（Win11 DWMWCP_ROUND 优先一次登记、CreateRoundRectRgn 回退随尺寸重设）。候选窗 DWM 圆角+CS_DROPSHADOW+圆角行高亮（选中 accent 白字/hover hoverLight）+组合回显去蓝；设置页白卡化（SECTION 开合卡片+RoundRect 16 描边+FW_SEMIBOLD 段标题+皮肤色 owner-draw 勾选框/按钮+WM_CTLCOLOR 全套+滚动全量重绘防残影）；符号面板圆角浮层+药丸分类；词典窗/快捷短语窗统一中性底+雅黑。
