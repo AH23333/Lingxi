@@ -11,7 +11,9 @@ namespace lingxi {
 
 constexpr uint32_t kDebounceMs = 120;   // 预测防抖（仅英文/续写：拼音引擎 µs 级，无需防抖）
 constexpr size_t kMaxQueue = 8;         // 有界队列
-constexpr uint32_t kRerankSettleMs = 120;   // 触发后先观察：被新键取代则立即退出（合并连击）
+constexpr uint32_t kRerankSettleMs = 400;   // 停顿观察窗：连打中不算（用户继续敲=结果必作废，
+                                            // 白烧 CPU），停下来"看一眼候选"时才算（体验实测
+                                            // 120ms 时打字全程 0.7 核占用、重排几乎全作废）
 constexpr uint32_t kRerankBudgetMs = 900;    // 两阶段重排总预算（不阻塞首次候选）
 
 namespace {
