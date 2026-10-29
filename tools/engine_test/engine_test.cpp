@@ -537,6 +537,24 @@ int wmain()
                 }
             }
 
+            // P4b++ 变体质量闸（用户走查发现首页被单字替换垃圾变体刷屏）：
+            // jinwantianshanghenhaode 的首页不得出现「进/金/近/浸/禁+万…天上…」类低质变体。
+            {
+                lingxi::Prediction r = py->Predict(L"jinwantianshanghenhaode");
+                bool dirty = false;
+                const wchar_t* junk[] = { L"进万", L"金丸", L"今万", L"近万", L"浸完", L"禁完" };
+                size_t head = std::min<size_t>(r.cands.size(), lingxi::kPageSize);
+                for (size_t k = 0; k < head; k++)
+                    for (const wchar_t* j : junk)
+                        if (r.cands[k].size() > 6 && r.cands[k].compare(0, 2, j) == 0)
+                            dirty = true;
+                bool topOk = !r.cands.empty() && r.cands[0].compare(0, 2, L"今晚") == 0;
+                wchar_t detail[160];
+                _snwprintf_s(detail, _TRUNCATE, L"top1=%ls dirty=%d",
+                             r.cands.empty() ? L"" : r.cands[0].c_str(), dirty);
+                Report(!dirty && topOk, "pinyin variant quality gate (no junk on page1)", detail);
+            }
+
             // P4c. 超长混排 + 末尾残段：>10 音节的长串不应崩溃且首选是连贯整句；
             //      末尾拖一个未打全的音节（残段）时，仍要产出覆盖该残段的候选。
             //      这正是 Prune 旧实现（完整/残段同池抢 K_POS 名额）被挤掉的路径：

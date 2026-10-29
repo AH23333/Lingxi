@@ -1406,6 +1406,10 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 add(reconstruct(dp, n, 0), dp[0].cost, n, dp[0].nWords, coverOf(n));
 
             // 2) 首词不同的整句变体（用于给出同拼音的其他整词）
+            // 质量闸（用户实测"首页被单字替换垃圾变体刷屏"——进万/金丸/浸完类）：
+            //   ① 词长偏好：首词覆盖音节数 < 最优链首词 → 每个短一截罚 1.5
+            //      （jinwan：今晚[2音节] 压过 进[1音节]+晚上）；
+            //   ② cost 上限：变体总 cost 超最优链 +2.5（≈首词频率低 12 倍）直接不出。
             for (int span = 1; span <= 4 && span <= n; span++)
             {
                 const std::vector<WordMatch>& ws = getMatches(0, span);
@@ -1424,6 +1428,9 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                         c += dp[span].cost;
                         nwords += dp[span].nWords;
                     }
+                    if (dp[0].firstSpan > span)
+                        c += 1.5 * (double)(dp[0].firstSpan - span); // 词长偏好
+                    if (c > dp[0].cost + 2.5) continue;              // 低频变体闸
                     if (allInit && nwords != 1) continue; // 纯简拼只给整词，不拼尾巴
                     add(s, c, n, nwords, coverOf(n));
                     added++;
