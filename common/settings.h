@@ -41,5 +41,7 @@ struct Settings
 
 Settings LoadSettings();
 void SaveSettings(const Settings& s);
+// 只写与当前落盘值不同的键（防"整页回写"把未同步/未加载的控件状态覆盖全部设置）
+void SaveSettingsDiff(const Settings& s);
 
 } // namespace lingxi

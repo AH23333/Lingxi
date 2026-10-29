@@ -119,4 +119,40 @@ void SaveSettings(const Settings& s)
     RegCloseKey(hKey);
 }
 
+
+namespace {
+// 单键 diff 写：值与当前磁盘值不同才写（写失败静默，语义同 SaveSettings）
+void PutDwordDiff(HKEY hKey, const wchar_t* name, DWORD want)
+{
+    DWORD cur = 0;
+    if (GetDword(hKey, name, cur) && cur == want) return;
+    SetDword(hKey, name, want);
+}
+} // namespace
+
+void SaveSettingsDiff(const Settings& s)
+{
+    HKEY hKey = nullptr;
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, ActiveKey(), 0, NULL, REG_OPTION_NON_VOLATILE,
+                        KEY_READ | KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
+        return;
+    PutDwordDiff(hKey, L"PinyinEnabled", s.pinyinEnabled ? 1 : 0);
+    PutDwordDiff(hKey, L"CandidateCount", s.candidateCount);
+    PutDwordDiff(hKey, L"CandidateFontSize", s.candidateFontSize);
+    PutDwordDiff(hKey, L"DarkMode", s.darkMode);
+    PutDwordDiff(hKey, L"EnCompletion", s.enCompletion ? 1 : 0);
+    PutDwordDiff(hKey, L"Paused", s.paused ? 1 : 0);
+    PutDwordDiff(hKey, L"CnPunct", s.cnPunct ? 1 : 0);
+    PutDwordDiff(hKey, L"FuzzyPinyin", s.fuzzyPinyin ? 1 : 0);
+    PutDwordDiff(hKey, L"ShiftToggle", s.toggleMode != 0 ? 1 : 0);
+    PutDwordDiff(hKey, L"ToggleMode", s.toggleMode);
+    PutDwordDiff(hKey, L"VMode", s.vMode ? 1 : 0);
+    PutDwordDiff(hKey, L"Shuangpin", s.shuangpin ? 1 : 0);
+    PutDwordDiff(hKey, L"SymbolHotkey", s.symbolHotkey ? 1 : 0);
+    PutDwordDiff(hKey, L"Traditional", s.traditionalOutput ? 1 : 0);
+    PutDwordDiff(hKey, L"LlmRerank", s.llmRerank ? 1 : 0);
+    PutDwordDiff(hKey, L"LlmMultiPath", s.llmMultiPath ? 1 : 0);
+    PutDwordDiff(hKey, L"SkinIndex", s.skinIndex);
+    RegCloseKey(hKey);
+}
 } // namespace lingxi

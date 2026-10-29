@@ -249,6 +249,7 @@ HBRUSH g_hBgBrush = nullptr;    // WinUI 中性窗体底
 HBRUSH g_hCardBrush = nullptr;  // WinUI 卡片白
 HWND g_hHint = nullptr;         // 锚底提示（不落卡片上：CTLCOLOR 区分用）
 bool g_updating = false; // 程序性改控件时不回写设置
+bool g_controlsLoaded = false; // 控件尚未从设置加载同步——禁止回写（防刷零事故）
 
 HICON g_hIcon = nullptr;
 UINT g_taskbarCreatedMsg = 0;
@@ -281,12 +282,15 @@ void LoadToControls()
     ComboBox_SetCurSel(g_hCmbFontSize, fsSel);
     ComboBox_SetCurSel(g_hCmbSkin, (int)s.skinIndex);
     ComboBox_SetCurSel(g_hCmbDark, (int)s.darkMode);
+    g_controlsLoaded = true;
     g_updating = false;
 }
 
 void SaveFromControls()
 {
-    if (g_updating) return;
+    // 双保险（2026-10-29 复盘：真实设置两次被"整页回写未同步控件"刷零）：
+    // ① 控件从未 LoadToControls 过 → 拒写；② 改用 diff 落盘，未变字段不触碰。
+    if (g_updating || !g_controlsLoaded) return;
     Settings s = LoadSettings(); // 保留未在此窗口编辑的字段
     s.pinyinEnabled = Button_GetCheck(g_hChkPinyin) == BST_CHECKED;
     s.enCompletion = Button_GetCheck(g_hChkEn) == BST_CHECKED;
@@ -313,7 +317,7 @@ void SaveFromControls()
     if (skinSel >= 0 && skinSel <= 4) s.skinIndex = (uint32_t)skinSel;
     int sel = ComboBox_GetCurSel(g_hCmbDark);
     if (sel >= 0) s.darkMode = (uint32_t)sel;
-    SaveSettings(s);
+    SaveSettingsDiff(s);
     if (g_settingsChanged) g_settingsChanged();
     if (g_hSettings) InvalidateRect(g_hSettings, NULL, TRUE); // 换肤等即时重绘自绘控件
     LX_LOG(L"ui", L"设置已保存: pinyin=%d count=%u dark=%u en=%d cnPunct=%d fuzzy=%d toggleMode=%u v=%d",
