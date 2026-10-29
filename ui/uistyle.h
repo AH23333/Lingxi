@@ -74,4 +74,17 @@ inline void UiApplyRoundCorners(HWND hwnd, int w, int h)
     SetWindowRgn(hwnd, rgn, TRUE);
 }
 
+// Win11 给顶层窗默认画 1px 深色边框线（候选窗上=黑描边观感）。
+// DWMWA_BORDER_COLOR(34) = DWMWA_COLOR_NONE 关掉它；属性不支持则静默忽略。
+inline void UiDisableFrameBorder(HWND hwnd)
+{
+    HMODULE m = GetModuleHandleW(L"dwmapi.dll");
+    if (!m) return;
+    typedef HRESULT(WINAPI* PSet)(HWND, DWORD, const void*, DWORD);
+    PSet p = (PSet)GetProcAddress(m, "DwmSetWindowAttribute");
+    if (!p) return;
+    COLORREF none = (COLORREF)0xFFFFFFFE; // DWMWA_COLOR_NONE
+    p(hwnd, 34, &none, sizeof(none));
+}
+
 } // namespace lingxi

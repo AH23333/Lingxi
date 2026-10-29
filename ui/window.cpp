@@ -23,7 +23,9 @@ bool CandWindow::Init(HINSTANCE hInst)
     _csInit = true;
 
     WNDCLASSEXW wc = { sizeof(wc) };
-    wc.style = CS_HREDRAW | CS_VREDRAW | CS_DROPSHADOW; // WinUI 浮层级浅投影
+    // 注意：不加 CS_DROPSHADOW——Win11 下它对 DWM 圆角窗算出**方角投影**，
+    // 视觉为黑色描边、移动/隐藏后拖出残影（用户实测报告）；浮层阴影交给 DWM。
+    wc.style = CS_HREDRAW | CS_VREDRAW;
     wc.lpfnWndProc = s_WndProc;
     wc.hInstance = hInst;
     wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
@@ -44,6 +46,8 @@ bool CandWindow::Init(HINSTANCE hInst)
         return false;
     }
     SetWindowLongPtrW(_hwnd, GWLP_USERDATA, (LONG_PTR)this);
+    // Win11 顶层窗默认自带 1px 深色边框线——在浅色浮层上就是用户报告的「黑描边」。
+    UiDisableFrameBorder(_hwnd);
     UiApplyRoundCorners(_hwnd, 240, 120); // Win11 DWM 圆角 / 老系统 RGN
 
     RebuildFonts(LoadSettings().candidateFontSize);
@@ -160,13 +164,6 @@ void CandWindow::LayoutAndPosition()
     {
         HGDIOBJ old = SelectObject(hdc, _font);
         SIZE sz{};
-        if (!composing.empty())
-        {
-            // 回显行文本 = 组合串 + "："（与 OnPaint 绘制一致），参与宽度竞争
-            std::wstring comp = composing + L"\xFF1A";
-            GetTextExtentPoint32W(hdc, comp.c_str(), (int)comp.size(), &sz);
-            if (sz.cx > textMax) textMax = sz.cx;
-        }
         for (const auto& s : page)
         {
             GetTextExtentPoint32W(hdc, s.c_str(), (int)s.size(), &sz);
@@ -177,28 +174,42 @@ void CandWindow::LayoutAndPosition()
     }
     _width = max(180, textMax + pad * 2 + MulDiv(28, 96, 96) + 24);
 
-    int x = _caret.left, y = _caret.bottom + 4;
-    if (_caret.right == 0 && _caret.bottom == 0)
-    {
-        x = _lastX;
-        y = _lastY;
-    }
-    HMONITOR mon = MonitorFromRect(&_caret, MONITOR_DEFAULTTONEAREST);
+    // 锚定策略（用户报告"输入框什么都没有也弹预测、遮住屏幕一角"的体验修）：
+    //   caret 有效→caret；caret 退化→**当前鼠标位（注意力所在）**；都拿不到→
+    //   上次记忆位。旧实现退到构造期固定 (120,120)/陈旧历史位 = 空 caret 场景
+    //   把面板拍在屏幕角落遮挡内容。y 轴补 work-area 钳制（原实现只钳 x，
+    //   下翻场景可整体出屏）。
+    const bool caretOk = (_caret.right != 0 || _caret.bottom != 0);
+    POINT pt{};
+    const bool havePt = GetCursorPos(&pt);
+    int ax, ay;
+    if (caretOk) { ax = _caret.left; ay = _caret.bottom; }
+    else if (havePt) { ax = pt.x; ay = pt.y; }
+    else { ax = _lastX; ay = _lastY; }
+
+    HMONITOR mon = MonitorFromPoint(POINT{ ax, ay }, MONITOR_DEFAULTTONEAREST);
     MONITORINFO mi{ sizeof(mi) };
-    if (GetMonitorInfoW(mon, &mi))
+    if (!GetMonitorInfoW(mon, &mi))
     {
-        if (y + _height > mi.rcWork.bottom)
-            y = _caret.top - _height - 4;
-        if (y < mi.rcWork.top) y = mi.rcWork.top;
-        x = max(mi.rcWork.left, min(x, mi.rcWork.right - _width));
+        mi.rcWork.left = 0; mi.rcWork.top = 0;
+        mi.rcWork.right = 1920; mi.rcWork.bottom = 1040;
     }
+    int x = caretOk ? _caret.left : ax + MulDiv(12, 96, 96);
+    int y = caretOk ? ay + 4 : ay + MulDiv(24, 96, 96);
+    if (caretOk && y + _height > mi.rcWork.bottom)
+        y = _caret.top - _height - 4; // 下方放不下翻上方（仅 caret 场景，鼠标位不翻）
+    // 最终钳制双轴：任何来源的坐标都不会越出工作区（遮挡/半出屏根治）
+    x = max(mi.rcWork.left + 4, min(x, mi.rcWork.right - _width - 4));
+    y = max(mi.rcWork.top + 4, min(y, mi.rcWork.bottom - _height - 4));
     _lastX = x;
     _lastY = y;
 
     SetWindowPos(_hwnd, HWND_TOPMOST, x, y, _width, _height,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
     UiApplyRoundCorners(_hwnd, _width, _height); // RGN 回退路径需随尺寸重设
-    InvalidateRect(_hwnd, NULL, TRUE);
+    // 移动/缩放后**同步**补画一帧：异步 WM_PAINT 会让新位置先闪露上一帧旧像素
+    //（"残留屏幕"残影根因；CS_DROPSHADOW 方影已在 Init 移除，黑描边另一半）。
+    RedrawWindow(_hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE);
 }
 
 void CandWindow::Show(const RECT& caretScreen, const std::vector<std::wstring>& cands,
@@ -458,7 +469,18 @@ LRESULT CandWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         EnterCriticalSection(&_cs);
         _toastMode = false;
         LeaveCriticalSection(&_cs);
-        ShowWindow(hwnd, SW_HIDE);
+        // toast 结束必须走**完整隐藏语义**：裸 SW_HIDE 会留下 _visible=true，
+        // 下次 Show 跳过显示路径且旧 toast 大色块作为上一帧闪进候选窗（残影观感）
+        if (_visible)
+        {
+            _visible = false;
+            ShowWindow(hwnd, SW_HIDE);
+            EnterCriticalSection(&_cs);
+            _cands.clear();
+            _composing.clear();
+            _pageStart = 0;
+            LeaveCriticalSection(&_cs);
+        }
         return 0;
 
     case WM_MOUSEMOVE:
