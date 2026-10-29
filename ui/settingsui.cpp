@@ -1617,6 +1617,8 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(menu, MF_STRING, 2005, L"符号面板（Ctrl+Shift+B）");
         AppendMenuW(menu, MF_STRING, 2002, L"设置...");
+        AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(menu, MF_STRING, 2006, L"卸载灵犀输入法...");
         AppendMenuW(menu, MF_STRING, 2003, L"退出");
         POINT pt;
         GetCursorPos(&pt);
@@ -1642,6 +1644,34 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         case 2005:
             if (g_showSymbols) g_showSymbols();
             break;
+        case 2006:
+        {
+            // 一键卸载：确认后提权跑 tools\uninstall.cmd（注销输入法+清注册表/
+            // 用户数据+零残留校验）。本进程随卸载脚本 taskkill 退出。
+            if (MessageBoxW(hwnd,
+                    L"将彻底卸载灵犀输入法：\n"
+                    L"  · 注销输入法（COM/CTF 注册表，需 UAC 管理员确认）\n"
+                    L"  · 从语言列表移除灵犀、清理全部注册表痕迹\n"
+                    L"  · 删除用户数据（已学习词典、设置）\n"
+                    L"  · 卸载后自动校验零残留\n\n"
+                    L"确定要继续吗？",
+                    L"卸载灵犀输入法", MB_OKCANCEL | MB_ICONQUESTION) == IDOK)
+            {
+                wchar_t dir[MAX_PATH] = {};
+                GetModuleFileNameW(NULL, dir, MAX_PATH);
+                wchar_t* slash = wcsrchr(dir, L'\\');
+                if (slash)
+                {
+                    slash[1] = 0; // 截到 bin/Debug 目录
+                    wchar_t script[MAX_PATH * 2];
+                    _snwprintf_s(script, _TRUNCATE, L"%s..\\..\\tools\\uninstall.cmd", dir);
+                    wchar_t params[MAX_PATH * 2 + 16];
+                    _snwprintf_s(params, _TRUNCATE, L"/c \"%s\"", script);
+                    ShellExecuteW(NULL, L"runas", L"cmd.exe", params, NULL, SW_SHOWNORMAL);
+                }
+            }
+            break;
+        }
         case 2002:
             CreateSettingsWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
             break;
