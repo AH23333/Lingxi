@@ -1071,6 +1071,44 @@ int wmain()
                 }
             }
 
+            // P11. R3 日期时间直出：rq/sj/xq/rqsj 整串触发注入置顶
+            {
+                struct DtCase { const wchar_t* input; const wchar_t* must1; const wchar_t* must2; };
+                const DtCase kDt[] = {
+                    { L"rq", L"年", L"月" },   // 2026年10月29日
+                    { L"sj", L":", L":" },     // 21:45
+                    { L"xq", L"星", L"期" },   // 星期四
+                    { L"rqsj", L"年", L":" },  // 2026年10月29日 21:45
+                };
+                for (const auto& dc : kDt)
+                {
+                    lingxi::Prediction r = py->Predict(dc.input);
+                    bool ok = !r.cands.empty() &&
+                              r.cands[0].find(dc.must1) != std::wstring::npos &&
+                              r.cands[0].find(dc.must2) != std::wstring::npos;
+                    wchar_t detail[160];
+                    _snwprintf_s(detail, _TRUNCATE, L"'%ls' first='%ls'",
+                                 dc.input, r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                    Report(ok, "R3 datetime trigger", detail);
+                }
+                // 非触发不误伤：继续输入 rqa 首选不再是日期
+                {
+                    lingxi::Prediction r = py->Predict(L"rqa");
+                    bool ok = r.cands.empty() || r.cands[0].find(L"年") == std::wstring::npos;
+                    Report(ok, "R3 no hijack on longer input",
+                           r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                }
+                // 格式多样性：rq 至少含 - 或 / 数字格式备选
+                {
+                    lingxi::Prediction r = py->Predict(L"rq");
+                    bool alt = false;
+                    for (const auto& w : r.cands)
+                        if (w.find(L"-") != std::wstring::npos ||
+                            w.find(L"/") != std::wstring::npos) { alt = true; break; }
+                    Report(alt, "R3 rq alt formats", L"");
+                }
+            }
+
             delete py;
         }
     }

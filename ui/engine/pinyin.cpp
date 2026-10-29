@@ -176,6 +176,86 @@ bool CorrectSyllableTypo(const std::string& s, std::string& out)
 }
 
 // ---------------------------------------------------------------------------
+// R3 日期时间直出（GAP-VS-MSFT §8 R3）：整串触发 rq/sj/xq/rqsj（NormalizeIn
+// 口径，双拼转换前计算——双拼键序 rq/sj 本无解，触发是纯增益）。候选按
+// 本地时间实时生成注入置顶；数字为主，年/月/日/星期 简繁同形，走通用
+// 繁化链无害。学习/Boost 均不作用于注入候选（确定性便民，不参与调频）。
+// ---------------------------------------------------------------------------
+std::vector<std::wstring> BuildDateTimeCands(const std::string& in)
+{
+    std::vector<std::wstring> out;
+    SYSTEMTIME st{};
+    GetLocalTime(&st);
+    wchar_t d[48], t[32], t2[40], b[48];
+    _snwprintf_s(d, _TRUNCATE, L"%u年%02u月%02u日", st.wYear, st.wMonth, st.wDay);
+    _snwprintf_s(t, _TRUNCATE, L"%02u:%02u", st.wHour, st.wMinute);
+    _snwprintf_s(t2, _TRUNCATE, L"%02u:%02u:%02u", st.wHour, st.wMinute, st.wSecond);
+    if (in == "rqsj")
+    {
+        out.push_back(std::wstring(d) + L" " + t);
+        out.push_back(std::wstring(d) + L" " + t2);
+    }
+    else if (in == "rq")
+    {
+        out.push_back(d);
+        _snwprintf_s(b, _TRUNCATE, L"%u-%02u-%02u", st.wYear, st.wMonth, st.wDay);
+        out.push_back(b);
+        _snwprintf_s(b, _TRUNCATE, L"%u/%02u/%02u", st.wYear, st.wMonth, st.wDay);
+        out.push_back(b);
+    }
+    else if (in == "sj")
+    {
+        out.push_back(t);
+        out.push_back(t2);
+        unsigned h12 = st.wHour % 12;
+        if (h12 == 0) h12 = 12;
+        _snwprintf_s(b, _TRUNCATE, L"%ls%u:%02u",
+                     st.wHour < 12 ? L"上午" : L"下午", h12, st.wMinute);
+        out.push_back(b);
+    }
+    else if (in == "xq")
+    {
+        static const wchar_t* kDay[] = { L"日", L"一", L"二", L"三", L"四", L"五", L"六" };
+        out.push_back(std::wstring(L"星期") + kDay[st.wDayOfWeek]);
+        out.push_back(std::wstring(L"周") + kDay[st.wDayOfWeek]);
+    }
+    return out;
+}
+
+// 显式意图候选（R3 日期时间 / R2 自定义短语）置顶注入：注入词去重后置于
+// 列表头（注入侧优先，正文中同形候选剔除）；正文保序追后，截断到
+// kPredictMaxCandidates。cover 恒 0=整串触发全清语义（提交即整体替换）。
+void InjectExplicitTop(Prediction& p, std::vector<uint32_t>& covers,
+                       const std::vector<std::wstring>& add)
+{
+    if (add.empty()) return;
+    std::vector<std::wstring> nc;
+    std::vector<uint32_t> ncv;
+    nc.reserve(add.size() + p.cands.size());
+    ncv.reserve(add.size() + p.cands.size());
+    std::unordered_set<std::wstring> seen;
+    for (const auto& w : add)
+        if (!w.empty() && seen.insert(w).second)
+        {
+            nc.push_back(w);
+            ncv.push_back(0);
+        }
+    for (size_t k = 0; k < p.cands.size() && nc.size() < kPredictMaxCandidates; k++)
+        if (seen.insert(p.cands[k]).second)
+        {
+            nc.push_back(p.cands[k]);
+            ncv.push_back(covers[k]);
+        }
+    if (nc.size() > kPredictMaxCandidates)
+    {
+        nc.resize(kPredictMaxCandidates);
+        ncv.resize(kPredictMaxCandidates);
+    }
+    p.cands = std::move(nc);
+    covers = std::move(ncv);
+}
+
+// ---------------------------------------------------------------------------
 // 音节单元与切分路径
 // ---------------------------------------------------------------------------
 struct SyllUnit
@@ -254,6 +334,12 @@ public:
             }
             if (inOfCtx.size() != inForCover.size()) coverOk = false;
         }
+        // R3/R2 整串触发输入（NormalizeIn 口径）：必须在双拼转换前计算——
+        // 转换后字母语义已变（双拼 rq/sj 键序本无解，触发是纯增益）。
+        // 触发串为纯字母，EnumeratePaths 的单字母简拼兜底保证恒有路径，
+        // 不会落进下面 paths.empty() 早退分支。
+        std::string inTrig = NormalizeIn(raw);
+        std::vector<std::wstring> dtCands = BuildDateTimeCands(inTrig);
         if (st.shuangpin) raw = ShuangpinToQuanpin(raw); // 双拼→全拼
         // 显式隔音判定（与 EnumeratePaths 同一归一口径，弯撇号 U+2019 同算）：
         // 有隔音时 MatchWords 紧校验音节数（拒跨边界 compact 撞键），无隔音时
@@ -355,6 +441,11 @@ public:
             p.cands = std::move(reordered);
             covers = std::move(reorderedCover);
         }
+
+        // R3 日期时间直出注入：整串触发的确定性便民候选置顶；排序=
+        // 用户自学习置顶 > 日期时间 > 常规候选（习惯优先于便民）。
+        if (!dtCands.empty())
+            InjectExplicitTop(p, covers, dtCands);
 
         if (st.traditionalOutput)
             for (auto& w : p.cands) w = ToTraditional(w);
