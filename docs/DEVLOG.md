@@ -518,5 +518,17 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 - **验证**：x64+Win32 双构建绿；修复后带日志 deep_test 日志仅 28 行（降级日志恰 1 条、旧"放弃"0 条、无风暴）；**deep_test attempt 2 = 29/29 全绿 exit=0**（attempt 1 用户活跃 fgIsLingxi=0，内部重试壳按设计工作）。**终验（用户配合安静窗口）**：e2e exit=0（attempt 1 typing 已过仅 1 项冷启动时序红，attempt 2 全绿）；engine_test exit=0 全绿（拼音时延 median 9.727ms<10ms 预算，证实白昼 16.1ms 红=后台负载 #41）。四套（engine/fix_readings/deep/e2e）全绿收口。
 - **工具坑（本条随记）**：`cmd /c '"含空格路径.exe"'` 的引号转写在 PS 5.1 下偶发剥引号（报 `'D:\Visual' is not recognized`，且会掩盖"文件根本不存在"的真相）——原生 exe 直接用 PS 调用操作符 `& '完整路径'`，或先 Test-Path。engine_test 实际产物在 `bin\enginetest\`（非 tools 下 bin\Debug）。
 
+## 2026-10-29 深夜终 · GAP §8 路线图三连发：R4 拼音纠错 + R3 日期时间直出 + R2 自定义短语
+
+深度回归收口后按路线图连做三个功能（各带 engine_test 断言组+小步提交），注入链统一设计：**自学习置顶重排 > 自定义短语 > 日期时间 > 常规**（习惯优先于便民、显式配置次之）。
+
+- **R4 拼音纠错 `d9c109e`**：文件级 `CorrectSyllableTypo`——仅当子串非合法音节时尝试改写且命中 `_syllables` 才生效：①韵母全写→缩写（iou→iu/uei→ui/uen→un）；②gn→ng 颠倒；③丢 g 补全（末尾 n→ng）。rawLen=原串长保证 cover 回放；Extend 罚 5（正常 FULL=2、简拼=4），合法切分永不劫持（`ren` 等不动；yingnuo 类改写形不命中音节表自然出局）。engine_test P10：8 误拼用例（niou→牛/shuei→水/chuen→春/shegn→生/magn→忙/zhon→中/din→定/son→送）+ren 不劫持全 PASS。
+- **R3 日期时间直出 `e6d551a`**：文件级 `BuildDateTimeCands`——整串触发 rq/sj/xq/rqsj（GetLocalTime 实时；rq=年月日/-//三格式、sj=HH:MM/HH:MM:SS/上午下午 12 时制、xq=星期N/周N、rqsj=日期+时间）+ `InjectExplicitTop`（注入去重前插置顶、cover=0 全清语义、截断 kPredictMaxCandidates）。触发串 `inTrig` 在**双拼转换前**计算（NormalizeIn 口径；双拼 rq/sj 键序本无解，触发是纯增益）。P11：4 触发+不劫持(rqa)+备选格式全 PASS。
+- **R2 自定义短语 `b41109f`**：引擎 `_phrases` 表+`LoadPhrasesLocked`（缩写<TAB>短语，UTF-8 BOM 容忍，缩写归一小写 2..16 位纯字母，短语≤200 字符），与用户词典同通道热载（LoadUserDict 尾部同锁装载）；UI 新增 phraseui（仿 hotphraseui：缩写/短语编辑+列表+增删校验+原子写，settingsui 词典页入口 IDC_BTN_PHRASES=120，main 绑 SetPhrasesChangedCallback→ReloadUserDict）。P12：整串命中/大小写归一/短语高于日期时间/加长不劫持/删文件热卸载全 PASS。
+- **顺带根治 e6d551a 注入顺序缺陷**：R3 提交时 dt/phrase 注入写在 ups 锁块**之后**但拷出在锁内——注入执行时 phraseCands 恒为空，R2 引擎侧首版照抄同结构复现同一缺陷（注入点先于锁内 `_phrases.find` 拷出）。修复：ups 锁块（含 _phrases 拷出）整体前移至注入之前，单次加锁语义不变；注入后 ups 重排天然保 learned 第一。
+- **时延踩线红的 A/B 判据**：P12 轮 engine_test 拼音时延两连红（11.9/13.5ms>10ms）——worktree checkout HEAD 基线（R3 提交时 9.6ms 绿）同负载复测 **18.9ms**：基线比工作区更差，确证环境负载（atrustagent 84%+双 deveco 实例 39/37%，#41）非代码回归。此后时延红先 worktree A/B 再下结论，不盲改热路径。
+- **验证**：engine_test 全绿（P10/P11/P12 全 PASS，唯一时延红 A/B 判环境）；deep_test attempt 3 **29/29** exit=0（attempt 1/2 T12 翻页抖动，内部重试壳按设计工作）；docs/GAP-VS-MSFT.md 路线图 R2/R3/R4 标已完成。
+
+
 
 
