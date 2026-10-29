@@ -97,7 +97,7 @@
 - **✅ B8 亦完成（`06548a8`）**：symbolHotkey 默认关 + 设置页文案（Edge 冲突注明）；用户 HKCU 残留已清 0，真实 UI 已重启（热键即时释放）。
 - **✅ B4 亦完成（`2b3b477`）**：纯英文上下文（整段<0x80）链路由改词表优先、LLM 兜底候选过滤为纯 ASCII（全滤空则无候选）；复读裁剪升级 StripContinuationEcho（标点归一/tail 全长上限/整段复读循环剥）。ChainPredictor 与裁剪移入 ngram.cpp（engine_test 不编 llm.cpp），+14 断言全 PASS；`--probe-chain` 真机端到端："Today is a nice "→纯 ASCII 英文续写、inte→词表 0ms 短路、中文上下文不变。probe 盲区注意：`--probe-llm` 直连 LlmPredictor **不经链路由**，B4 类路由/过滤只能 `--probe-chain` 验证。真实 UI 已重启（PID 7616）。剩余 backlog：B3 → B5 → B2。
 
-## ⚡ 最新状态速报（2026-10-28 下午，Loomy 轮）
+## ⚡ 状态速报（2026-10-28 下午轮，历史基线——**其后的晚·十三/十四更新见下方另一速报，为准**）
 
 - 13 提交后工作区干净，regress 三件套+词典闸门全绿；R3 重排从 WIP 到全部落地并按实测**默认关**（打字 CPU 66%->3.5%，候选窗抖动清零）。
 - 词库进入管线时代：tools/fix_readings.py（多音补全+--check 闸门，228 字/239 读音）+ tools/modern_terms.txt（现代词层，build_pinyin --modern-only 幂等）。

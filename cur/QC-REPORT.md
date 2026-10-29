@@ -304,4 +304,4 @@
 
 —— Loomy，2026-10-28
 
-> 后记（10-28 下午收口）：engine_test 断言 127 后又补多音/现代词用例至 **142**；全链 13 提交；三级生效模型与词库管线坑已固化 docs/PITFALLS.md #25-#28；交接正本=cur/LOOMY-HANDOFF.md。
+> 后记（10-28 下午收口）：engine_test 断言 127 后又补多音/现代词用例至 **142**；全链 13 提交（其后并行线程至晚·十四续有更新，以 docs/HANDOFF.md 为准）；三级生效模型与词库管线坑已固化 docs/PITFALLS.md #25-#28；交接正本=cur/LOOMY-HANDOFF.md。
