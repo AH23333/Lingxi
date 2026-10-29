@@ -211,6 +211,23 @@ static BOOL RegisterCategories()
                                     GUID_TFCAT_TIP_KEYBOARD,
                                     CLSID_LingxiTextService);
         LX_LOG(L"reg", L"RegisterCategory(TIP_KEYBOARD): 0x%08X", hr);
+        if (SUCCEEDED(hr))
+        {
+            // UWP/XAML 打包应用（Windows Terminal、设置等）只激活声明了
+            // 沉浸式支持能力的 TIP，缺此类别时这些应用内 Win+Space 会跳过
+            // 本输入法。GUID 为 msctf.h 内置 SDK 符号（值在 uuid.lib）。
+            HRESULT hrImm = pCat->RegisterCategory(CLSID_LingxiTextService,
+                                                   GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
+                                                   CLSID_LingxiTextService);
+            LX_LOG(L"reg", L"RegisterCategory(TIPCAP_IMMERSIVESUPPORT): 0x%08X", hrImm);
+            // 清理 2026-10-29 误注册：当时把 {CCF05DD7-...} 当作 IMM32 兼容
+            // 注册，实为 INPUTMODECOMPARTMENT（中/英模式同步，本 TIP 未实现，
+            // 不应声明）。幂等，键不存在时无副作用。
+            pCat->UnregisterCategory(CLSID_LingxiTextService,
+                                     GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT,
+                                     CLSID_LingxiTextService);
+            if (FAILED(hrImm)) hr = hrImm;
+        }
         pCat->Release();
     }
 
@@ -251,6 +268,17 @@ static HRESULT UnregisterCategories()
                                       CLSID_LingxiTextService);
         if (FAILED(hr))
             LX_LOG(L"reg", L"UnregisterCategory: 0x%08X（无管理员时预期失败）", hr);
+        {
+            HRESULT hrImm = pCat->UnregisterCategory(CLSID_LingxiTextService,
+                                                     GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,
+                                                     CLSID_LingxiTextService);
+            if (FAILED(hrImm))
+                LX_LOG(L"reg", L"UnregisterCategory(IMMERSIVESUPPORT): 0x%08X（无管理员时预期失败）", hrImm);
+            pCat->UnregisterCategory(CLSID_LingxiTextService,
+                                     GUID_TFCAT_TIPCAP_INPUTMODECOMPARTMENT,
+                                     CLSID_LingxiTextService); // 清理历史误注册
+            if (SUCCEEDED(hr) && FAILED(hrImm)) hr = hrImm;
+        }
         pCat->Release();
     }
     if (SUCCEEDED(hrInit)) CoUninitialize();
