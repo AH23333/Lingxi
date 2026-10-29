@@ -874,6 +874,19 @@ static const char* ZeroInitialShorthand(const std::string& s)
     return nullptr;
 }
 
+// 拟声音节判定：不含 a/e/i/o/u 元音的"音节"（m/n/hm→呣/嗯/噷 等叹词注音）。
+// 它们在音节表里合法（单独输入仍需出字），但作为 FULL 单元参与 DP 时若
+// 成本低于简拼(4/格)，[z][m:FULL 2]=6 会把正常简拼链 [z][m]=8 压到次级
+// tier，表现为 zm→"在呣"、zn→"在嗯" 这类拼装垃圾盖过"怎么/字母"。
+// 故对这类音节加罚 5（>4）：正常简拼路径永远 tier 优先，拟声只兜底。
+static bool IsInterjectionSyllable(const std::string& s)
+{
+    for (char c : s)
+        if (c == 'a' || c == 'e' || c == 'i' || c == 'o' || c == 'u')
+            return false;
+    return !s.empty();
+}
+
 std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     {
         std::string in = NormalizeIn(rawIn);
@@ -900,7 +913,11 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 std::string s = in.substr(i, L);
                 if (_syllables.count(s))
                 {
-                    Extend(dp, i, i + L, SyllUnit{ SyllUnit::FULL, s }, 2);
+                    // 无元音拟声音节（m/n/hm）加罚 5：高于简拼(4)，不再
+                    // 压制 [z][m]→"怎么/字母" 的正常简拼链；与简拼并存
+                    // 于不同 tier，单独打 m/n 时呣/嗯 仍可作为候选出现。
+                    int cost = IsInterjectionSyllable(s) ? 5 : 2;
+                    Extend(dp, i, i + L, SyllUnit{ SyllUnit::FULL, s }, cost);
                     continue;
                 }
                 // R4 拼音纠错：非合法音节时尝试常见误拼改写，改写命中音节表

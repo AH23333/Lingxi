@@ -1305,6 +1305,68 @@ int wmain()
                 }
             }
 
+            // P15. 拟声音节罚：无元音音节（m/n/hm→呣/嗯/噷）作 FULL 单元加罚 5，
+            // 不再压制 [z][m] 简拼链（zm/zn 垃圾拼装"在呣/在嗯"降 tier）；
+            // 单独输入 m/n 时拟声字仍在候选中（tier 1），不因罚分消失
+            {
+                auto indexOf = [](const lingxi::Prediction& r, const wchar_t* w) -> int {
+                    for (size_t k = 0; k < r.cands.size(); k++)
+                        if (r.cands[k] == w) return (int)k;
+                    return -1;
+                };
+                // zm：怎么进前三、字母在列，拼装垃圾"在呣"要么被挤出候选
+                // （60 上限截断），要么必须排在怎么/字母之后。首选为更高频的
+                // 合法 zm 简拼词（如"在吗"），不算垃圾
+                {
+                    lingxi::Prediction r = py->Predict(L"zm");
+                    int iZm = indexOf(r, L"怎么");
+                    int iZimu = indexOf(r, L"字母");
+                    int iZai = indexOf(r, L"在呣");
+                    bool orderOk = iZm >= 0 && iZm < 3 && iZimu >= 0 &&
+                                   (iZai < 0 || (iZm < iZai && iZimu < iZai));
+                    wchar_t detail[256];
+                    _snwprintf_s(detail, _TRUNCATE, L"zm=%d zimu=%d zaimu=%d first='%ls'",
+                                 iZm, iZimu, iZai,
+                                 r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                    Report(orderOk, "P15 zm simple-initial beats interjection junk",
+                           detail);
+                }
+                // zn：垃圾"在嗯"不得进前三
+                {
+                    lingxi::Prediction r = py->Predict(L"zn");
+                    int iZai = indexOf(r, L"在嗯");
+                    bool ok = iZai < 0 || iZai >= 3;
+                    wchar_t detail[192];
+                    _snwprintf_s(detail, _TRUNCATE, L"zaien=%d first='%ls'",
+                                 iZai, r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                    Report(ok, "P15 zn no interjection junk in top3", detail);
+                }
+                // 单独 m/n：呣/嗯 仍在候选中（tier 1，罚分不除名）
+                {
+                    lingxi::Prediction rm = py->Predict(L"m");
+                    lingxi::Prediction rn = py->Predict(L"n");
+                    int iMu = indexOf(rm, L"呣");
+                    int iEn = indexOf(rn, L"嗯");
+                    wchar_t detail[192];
+                    _snwprintf_s(detail, _TRUNCATE, L"mu=%d en=%d",
+                                 iMu, iEn);
+                    Report(iMu >= 0 && iEn >= 0, "P15 standalone m/n keep interjection chars",
+                           detail);
+                }
+                // mm：妈妈（简拼整词）居首，拟声拼装"呣呣"不夺位
+                {
+                    lingxi::Prediction r = py->Predict(L"mm");
+                    int iMama = indexOf(r, L"妈妈");
+                    int iMMu = indexOf(r, L"呣呣");
+                    bool ok = iMama >= 0 && iMama < 5 && (iMMu < 0 || iMMu > iMama);
+                    wchar_t detail[192];
+                    _snwprintf_s(detail, _TRUNCATE, L"mama=%d mumu=%d first='%ls'",
+                                 iMama, iMMu,
+                                 r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                    Report(ok, "P15 mm mama beats interjection junk", detail);
+                }
+            }
+
             delete py;
         }
     }
