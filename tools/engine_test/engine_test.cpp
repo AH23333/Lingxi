@@ -1243,6 +1243,68 @@ int wmain()
                 }
             }
 
+            // P14. R6 屏蔽词：blocked.txt 热载过滤（Generate+自学习）+ 卸载恢复
+            {
+                wchar_t appdataB[MAX_PATH] = {0};
+                GetEnvironmentVariableW(L"APPDATA", appdataB, MAX_PATH);
+                std::wstring dirB = std::wstring(appdataB) + L"\\LingxiIme";
+                CreateDirectoryW(dirB.c_str(), NULL);
+                std::wstring bpath = dirB + L"\\blocked.txt";
+                std::vector<uint8_t> backupB;
+                bool existedB = false;
+                HANDLE hb = CreateFileW(bpath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                if (hb != INVALID_HANDLE_VALUE)
+                {
+                    existedB = true;
+                    DWORD sz = GetFileSize(hb, NULL);
+                    backupB.resize(sz);
+                    DWORD rd = 0;
+                    ReadFile(hb, backupB.data(), sz, &rd, NULL);
+                    CloseHandle(hb);
+                }
+
+                // 写屏蔽词"谢谢"（UTF-8 BOM + E8B0A2E8B0A2）——选 spoken 高频词
+                // 验证 Generate 输出被过滤；emoji 融合随触发词消失（同气连枝）
+                const char kBlocked[] =
+                    "\xEF\xBB\xBF\xE8\xB0\xA2\xE8\xB0\xA2\r\n";
+                {
+                    HANDLE hw = CreateFileW(bpath.c_str(), GENERIC_WRITE, 0, NULL,
+                                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                    DWORD wr = 0;
+                    WriteFile(hw, kBlocked, (DWORD)strlen(kBlocked), &wr, NULL);
+                    CloseHandle(hw);
+                }
+                py->ReloadUserDict();
+                {
+                    lingxi::Prediction r = py->Predict(L"xiexie");
+                    bool gone = true;
+                    for (const auto& w : r.cands)
+                        if (w == L"谢谢" || w == L"🙏") { gone = false; break; }
+                    Report(gone, "R6 blocked word filtered",
+                           r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                }
+                // 删文件热卸载：谢谢回归首选、emoji 融合恢复
+                DeleteFileW(bpath.c_str());
+                py->ReloadUserDict();
+                {
+                    lingxi::Prediction r = py->Predict(L"xiexie");
+                    bool back = r.cands.size() >= 2 && r.cands[0] == L"谢谢" &&
+                                r.cands[1] == L"🙏";
+                    Report(back, "R6 blocked hot-unload restores",
+                           r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                }
+                // 恢复原文件（无则保持删除）
+                if (existedB)
+                {
+                    HANDLE hw = CreateFileW(bpath.c_str(), GENERIC_WRITE, 0, NULL,
+                                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                    DWORD wr = 0;
+                    WriteFile(hw, backupB.data(), (DWORD)backupB.size(), &wr, NULL);
+                    CloseHandle(hw);
+                }
+            }
+
             delete py;
         }
     }

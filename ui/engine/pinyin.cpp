@@ -393,6 +393,14 @@ public:
         for (const auto& c : out)
             LX_LOGV(L"py", L"cand cost=%.2f %hs", c.cost, ToUtf8(c.word).c_str());
 
+        // R6 屏蔽词：锁内一次拷出（通常空集，微秒级），去重循环与 ups 注入
+        // 同口径过滤；显式意图（dt/短语/emoji）不受影响——用户显式配置优先。
+        std::unordered_set<std::wstring> blocked;
+        {
+            std::lock_guard<std::mutex> lk(_udMtx);
+            if (!_blocked.empty()) blocked = _blocked;
+        }
+
         // 去重（保序，已按优先级排序）；cover 经 inOfCtx 映射回 context 字符数
         std::unordered_set<std::wstring> seen;
         std::vector<uint32_t> covers;
@@ -400,6 +408,7 @@ public:
         for (auto& c : out)
         {
             if (c.word.empty() || seen.count(c.word)) continue;
+            if (!blocked.empty() && blocked.count(c.word)) continue;
             seen.insert(c.word);
             uint32_t cv = 0;
             if (coverOk && c.coverEnd > 0 && (size_t)c.coverEnd <= inOfCtx.size())
@@ -467,6 +476,13 @@ public:
             if (auto pit = _phrases.find(inTrig); pit != _phrases.end())
                 phraseCands = pit->second;
         }
+        // R6：自学习候选同口径过滤（屏蔽词对用户历史同样生效）
+        if (!blocked.empty() && !ups.empty())
+            ups.erase(std::remove_if(ups.begin(), ups.end(),
+                                     [&](const UserPick& u) {
+                                         return blocked.count(u.word) > 0;
+                                     }),
+                      ups.end());
 
         // R2/R3 显式意图注入：整串触发的确定性候选置顶——先注入，再走自学习
         // 置顶重排（习惯优先于便民：用户在该串下反复选过的词仍排最前）。
@@ -566,6 +582,10 @@ private:
     // 列表（同缩写多条按文件顺序全注入）。phrases.txt 与 userdict 同目录同锁
     // （_udMtx）——LoadUserDict 一并重载，UI 保存后经 ReloadUserDict 热生效。
     std::unordered_map<std::string, std::vector<std::wstring>> _phrases;
+    // R6 屏蔽词（GAP §8 R6 长尾池）：blocked.txt 每行一个词，Generate 输出
+    // 与自学习候选同口径过滤（显式意图 dt/短语/emoji 不受影响——用户显式
+    // 配置优先）。同 _udMtx 锁，LoadUserDict 通道热载。
+    std::unordered_set<std::wstring> _blocked;
     mutable std::mutex _udMtx;
 
     // 简体→繁体字符映射（Unicode 码点，正确处理扩展区代理对）
@@ -1068,6 +1088,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         LX_LOG(L"py", L"用户词典加载: %zu 个拼音键, %zu 个简拼键",
                _userDict.size(), _userByInit.size());
         LoadPhrasesLocked(); // R2：与用户词典同一通道热载（同锁）
+        LoadBlockedLocked(); // R6：屏蔽词同通道热载（同锁）
     }
 
     // R2 短语装载（调用方持 _udMtx）：行格式 缩写<TAB>短语（UTF-8，BOM 容忍）。
@@ -1101,6 +1122,40 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
             _phrases[norm].push_back(std::move(phrase));
         }
         LX_LOG(L"py", L"自定义短语加载: %zu 个缩写", _phrases.size());
+    }
+
+    // R6 屏蔽词存储（与 userdict/phrases 同目录；每行一个词，UTF-8 BOM 容忍）
+    static std::string BlockedPath()
+    {
+        char buf[MAX_PATH] = {};
+        DWORD n = GetEnvironmentVariableA("APPDATA", buf, MAX_PATH);
+        if (n > 0 && n < MAX_PATH)
+        {
+            std::string dir = std::string(buf) + "\\LingxiIme";
+            CreateDirectoryA(dir.c_str(), NULL);
+            return dir + "\\blocked.txt";
+        }
+        return ExeDir() + "\\blocked.txt";
+    }
+
+    // R6 屏蔽词装载（调用方持 _udMtx）：词≤50 字符，上限 500 条
+    void LoadBlockedLocked()
+    {
+        _blocked.clear();
+        std::string raw = ReadAll(BlockedPath());
+        if (raw.empty()) return;
+        for (auto& line : Split(raw, '\n'))
+        {
+            std::string l = line;
+            if (!l.empty() && l.back() == '\r') l.pop_back();
+            if (l.size() >= 3 && (unsigned char)l[0] == 0xEF &&
+                (unsigned char)l[1] == 0xBB && (unsigned char)l[2] == 0xBF)
+                l.erase(0, 3); // UTF-8 BOM
+            std::wstring w = FromUtf8(l);
+            if (w.empty() || w.size() > 50 || _blocked.size() >= 500) continue;
+            _blocked.insert(std::move(w));
+        }
+        LX_LOG(L"py", L"屏蔽词加载: %zu 条", _blocked.size());
     }
 
     // 构建用户词简拼索引（调用方持 _udMtx）：全拼键切出音节，取首字母串
