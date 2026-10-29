@@ -383,9 +383,28 @@ void CandWindow::OnPaint()
         DeleteObject(hComp);
         std::wstring comp = composing + L"\xFF1A";
         SetTextColor(hdc, dark ? RGB(180, 180, 180) : _accent);
+        HGDIOBJ oldCompFont = SelectObject(hdc, _font); // 此前未选字体=系统默认小字（走查发现）
         RECT compText = { pad, pad, rc.right - pad, pad + compH };
-        DrawTextW(hdc, comp.c_str(), -1, &compText,
-                  DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+        {
+            // 超长掐头保尾：用户关心刚敲的尾部拼音，截头保留 + "…" 前缀
+            const int avail = compText.right - compText.left;
+            SIZE szc{};
+            GetTextExtentPoint32W(hdc, comp.c_str(), (int)comp.size(), &szc);
+            if (szc.cx > avail)
+            {
+                const std::wstring full = comp;
+                const wchar_t* ell = L"\u2026";
+                for (size_t keep = comp.size() - 1; keep >= 1; keep--)
+                {
+                    std::wstring trial = std::wstring(ell) + full.substr(full.size() - keep);
+                    GetTextExtentPoint32W(hdc, trial.c_str(), (int)trial.size(), &szc);
+                    if (szc.cx <= avail) { comp = trial; break; }
+                }
+            }
+            DrawTextW(hdc, comp.c_str(), -1, &compText,
+                      DT_SINGLELINE | DT_VCENTER | DT_LEFT);
+        }
+        SelectObject(hdc, oldCompFont);
     }
 
     HGDIOBJ oldPen = SelectObject(hdc, GetStockObject(NULL_PEN));
@@ -439,9 +458,14 @@ void CandWindow::OnPaint()
             RECT rcPg = { 6, rc.bottom - 16, rc.right / 2, rc.bottom };
             DrawTextW(hdc, pg, -1, &rcPg, DT_SINGLELINE | DT_LEFT | DT_VCENTER);
         }
-        SetTextColor(hdc, dark ? RGB(120, 120, 120) : RGB(170, 170, 170));
-        RECT rcStamp = { rc.right / 2, rc.bottom - 16, rc.right - 4, rc.bottom };
-        DrawTextW(hdc, kBuildStamp, -1, &rcStamp, DT_SINGLELINE | DT_RIGHT | DT_VCENTER);
+        // 构建戳只作开发诊断（LINGXI_BUILD_STAMP=1 才画）——用户界面不露版本号
+        static const bool sShowStamp = GetEnvironmentVariableW(L"LINGXI_BUILD_STAMP", NULL, 0) > 0;
+        if (sShowStamp)
+        {
+            SetTextColor(hdc, dark ? RGB(120, 120, 120) : RGB(170, 170, 170));
+            RECT rcStamp = { rc.right / 2, rc.bottom - 16, rc.right - 4, rc.bottom };
+            DrawTextW(hdc, kBuildStamp, -1, &rcStamp, DT_SINGLELINE | DT_RIGHT | DT_VCENTER);
+        }
         SelectObject(hdc, oldFont);
     }
 
