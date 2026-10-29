@@ -297,3 +297,9 @@
 - **根因**：settingsui.cpp 的 helpers（UserDictPathW/ReadFileBytes/WriteFileBytes/ParseUserDict/SerializeUserDict/InferPinyinKey 等）都住在**匿名命名空间**里，按惯性把新导出函数也写进了同一区域——匿名命名空间成员是内部链接， extern 声明对不上，链接器当作不存在。
 - **正确做法**：导出函数实现在 settingsui.cpp 必须放在匿名命名空间（`} // namespace`）之后、文件尾 `} // namespace lingxi` 之前的具名区域；匿名命名空间内的 helpers 对其依然可见，不影响复用。**规约：往"helpers 全在匿名命名空间"的文件里加导出函数时，先定位匿名命名空间的闭合大括号再落笔。**
 
+### 52. 周期 SetTimer 的"放弃"分支只打日志不 KillTimer：重试预算耗尽后定时器照样每拍回调——永久空转泄漏 ⭐⭐
+- **症状**：LINGXI_LOG 日志 97 秒刷出 390 行 DetectPinyinMode"放弃"（≈4 行/秒）——250ms 周期定时器在重试预算耗尽后从未停止；宿主进程每秒 4 次 TSF 前台查询，与设计注释"不会在正常场景空转"直接矛盾。
+- **根因**：`SetTimer` 是**周期**定时器不是 one-shot；DetectPinyinMode 耗尽分支只打日志 return——"放弃"实际是"以原节拍永远重试"。通病：写"预算重试"代码时把 `return` 当成了终止。放大器：无 OnActivated/ITfTextInputProcessorActivationSink 实现，纯 TSF profile 切换不改线程 HKL（#18）也不回调 DLL 刷新预算——注释宣称的"待按键触发重检"名存实亡。
+- **正确做法**：耗尽分支降级为慢速自愈轮询（SetTimer 1000ms + `_modeSlowRetry` 标志 log-once 降级日志），premature 判定每次仅进程内 GetForeground µs 级查询（CoCreateInstance 仅 weForeground 时执行），前台回归后 ≤1s 自愈进位；恢复分支 KillTimer+复位预算。选降级而非 KillTimer 硬停：负载机 ctfmon 过渡可超 2s 快速预算，硬停会把 settle 假红引进来。**规约：周期 SetTimer 的每个"不再快试"分支必须显式改节拍或 KillTimer——`return` 不会替你停定时器。**
+- **配套判读法**（LINGXI_LOG 干扰期三指纹）：①attempt 日志 **0 条 [key] 行**=探键根本没到本 DLL（前台被其他 TIP 持有，环境干扰非代码回归）；②"放弃"行风暴=本条定时器泄漏；③降级日志恰 1 条+总行数很少=慢速轮询按设计工作。
+

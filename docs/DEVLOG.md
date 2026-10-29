@@ -508,4 +508,14 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 - **构建+回归**：build.cmd（x64）✓、build32.cmd（Win32 ImeCore）✓、deep_test 重建 ✓。deep_test Run B 9/29 三 attempt settle 全红（probe_q_eaten=0）→锁定 `_pinyinMode false→TestKeyDown 放行`（composition.cpp:603）→复跑 Run C：settle 3/3 过，attempt 3=28/29（唯一红 T10 连击时序压测 badRound=16，用户活跃期典型干扰），T0-T17 产品用例安静窗口全过 AV=0——确认 9/29 为环境干扰非代码回归（用户活跃期实时切 IME 抢 ctfmon 前台，与 #19/#49 同源）。
 - **用户侧说明**：右键菜单/符号面板全在 LingxiUI 进程——运行中实例（20:39 新二进制）**无需重启即可测**；托盘菜单或 Ctrl+Shift+B（需 symbolHotkey=1）开符号面板。
 
+## 2026-10-29 深夜续 · 深度回归轮：日志取证揪出 DetectPinyinMode 定时器泄漏并根治
+
+用户质问"你难道忘了要深度测试"→ 全套 regress.cmd + 带日志取证 + 修复取证中暴露的真 bug。
+
+- **全套回归**（tmp/regress-2922522603）：engine_test 186 断言绿、仅时延红（median 16.1ms>10ms 预算，#41 后台负载——deveco 4967s CPU+LingxiUI LLM 活跃，空载基线 8.9ms）；fix_readings PASS；**e2e attempt 1 绿**；deep_test 干扰期红。**#43/#50 硬判据**：回归前后真实 `HKCU\Software\LingxiIme` reg export 逐字节一致（零污染），沙箱键仅 ToggleMode/ShiftToggle 残留。
+- **LINGXI_LOG=1 取证锁定真 bug（PITFALLS #52）**：DetectPinyinMode "放弃"分支只打日志不 KillTimer——SetTimer 是周期定时器，预算耗尽后仍以 250ms 节拍永久空转（干扰期 97 秒刷 390 行风暴），宿主进程每秒 4 次 TSF 查询泄漏；同时干扰期 attempt 日志 **0 条 [key] 行**=探键根本没到本 DLL（前台被其他 TIP 持有，#49 同源环境干扰）。
+- **修复**（service.h:220 `_modeSlowRetry` 标志 + composition.cpp:220-248 DetectPinyinMode 耗尽分支）：放弃→**降级 1s 慢速自愈轮询**（SetTimer 1000ms、降级日志 log-once、premature 每拍仅进程内 GetForeground µs 级查询），前台回归后 ≤1s 自愈进位；正常路径 KillTimer 完全静止。选降级而非 KillTimer 硬停：负载机 ctfmon 过渡可超 2s 快速预算，硬停会把 settle 假红引进来。
+- **验证**：x64+Win32 双构建绿；修复后带日志 deep_test 日志仅 28 行（降级日志恰 1 条、旧"放弃"0 条、无风暴）；**deep_test attempt 2 = 29/29 全绿 exit=0**（attempt 1 用户活跃 fgIsLingxi=0，内部重试壳按设计工作）。e2e 9 连红 typing pass-through（foreground 实时翻转+读回空，#49 干扰签名）=用户活跃抢 profile，待安静窗口终验——deep_test 29/29 已覆盖新 DLL 全键路径（T7 直通/T16 切换在内）。
+
+
 

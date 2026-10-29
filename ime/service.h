@@ -217,6 +217,7 @@ private:
     bool _capsWasActive = false; // CapsLock 按下时是否正在拼音输入
     std::atomic<bool> _modeDirty{ false }; // 语言/前台/焦点变化置位，按键路径执行检测
     int _modeRetryLeft = 8; // 激活过渡窗口有限次延迟重检计数（见 DetectPinyinMode 自愈）
+    bool _modeSlowRetry = false; // 快速重检耗尽后已降级慢速自愈（降级日志只打一次）
     std::wstring _pinyin;         // 当前拼音字母串
     ITfComposition* _pComposition = nullptr;
     ITfRange* _compRange = nullptr;

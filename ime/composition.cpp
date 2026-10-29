@@ -217,8 +217,12 @@ void CTextService::DetectPinyinMode()
     // ActivateEx 只投递一次检测；若那一次落在 "TIP 激活过渡窗口"（前台 TIP 尚未
     // 切到我们），纯 TSF profile 切换又不改线程 HKL（#18），MaybeRedetect 永远
     // 不再触发，_pinyinMode 卡死 false → 拼音静默降级成直通且不自愈。
-    // 这里对"还没进位"（premature）判据做有限次 250ms 延迟重检（≤8 次≈2s 窗口），
-    // 进位成功或稳定英文（非 premature）即停表——不会在正常场景空转。
+    // 两级自愈：①快速重检 8×250ms≈2s 覆盖常规激活过渡；②耗尽后降级 1s 慢速
+    // 轮询——premature 判定每次只有一次进程内 GetForeground 查询（µs 级，
+    // CoCreateInstance 仅在 weForeground 时才执行），前台回归后 ≤1s 自愈进位；
+    // 正常场景（py 判定完成）KillTimer 完全静止，不会空转。原实现耗尽后
+    // "只打日志不 KillTimer"——250ms 周期定时器泄漏，宿主进程 4/秒 TSF 查询
+    // 永久空转（曾刷出 390 行/97 秒日志风暴）。
     if (premature && _hwndMarshal)
     {
         if (_modeRetryLeft > 0)
@@ -226,14 +230,20 @@ void CTextService::DetectPinyinMode()
             _modeRetryLeft--;
             SetTimer(_hwndMarshal, kModeRetryTimer, 250, NULL);
         }
-        else if (_modeRetryLeft == 0 && !_pinyinMode)
+        else if (!_pinyinMode)
         {
-            LX_LOG(L"ime", L"模式重检定限放弃（前台仍未进位），保持直通待按键触发重检");
+            if (!_modeSlowRetry)
+            {
+                _modeSlowRetry = true;
+                LX_LOG(L"ime", L"模式快速重检耗尽，降级 1s 慢速自愈轮询（前台回归后自动进位）");
+            }
+            SetTimer(_hwndMarshal, kModeRetryTimer, 1000, NULL); // 降级慢速：KeepTimer 自愈
         }
     }
     else
     {
         _modeRetryLeft = 8; // 下一次 RequestModeDetect 重新享有完整重试预算
+        _modeSlowRetry = false;
         if (_hwndMarshal) KillTimer(_hwndMarshal, kModeRetryTimer);
     }
 }
