@@ -253,6 +253,21 @@ HBRUSH g_hBgBrush = nullptr;    // WinUI 中性窗体底
 HBRUSH g_hCardBrush = nullptr;  // WinUI 卡片白
 bool g_updating = false; // 程序性改控件时不回写设置
 bool g_controlsLoaded = false; // 控件尚未从设置加载同步——禁止回写（防刷零事故）
+// BS_AUTOCHECKBOX|BS_OWNERDRAW 位或后=0xB=纯 BS_OWNERDRAW：自绘按钮不维护勾选
+// 态，BM_GETCHECK 恒返 0——历史两次"整页刷零"事故与本次设置全零的真凶。
+// 开关状态改由此映射外置维护，绘制/读写/点击翻转全走它。
+std::unordered_map<HWND, bool> g_toggleOn;
+void SetToggle(HWND h, bool on)
+{
+    if (!h) return;
+    g_toggleOn[h] = on;
+    InvalidateRect(h, NULL, TRUE); // owner-draw 无自动重绘：翻转必须手动失效
+}
+bool ToggleOn(HWND h)
+{
+    auto it = g_toggleOn.find(h);
+    return it != g_toggleOn.end() && it->second;
+}
 
 HICON g_hIcon = nullptr;
 UINT g_taskbarCreatedMsg = 0;
@@ -264,17 +279,17 @@ void LoadToControls()
 {
     Settings s = LoadSettings();
     g_updating = true;
-    Button_SetCheck(g_hChkPinyin, s.pinyinEnabled ? BST_CHECKED : BST_UNCHECKED);
-    Button_SetCheck(g_hChkEn, s.enCompletion ? BST_CHECKED : BST_UNCHECKED);
-    Button_SetCheck(g_hChkCnPunct, s.cnPunct ? BST_CHECKED : BST_UNCHECKED);
-    Button_SetCheck(g_hChkFuzzy, s.fuzzyPinyin ? BST_CHECKED : BST_UNCHECKED);
+    SetToggle(g_hChkPinyin, s.pinyinEnabled);
+    SetToggle(g_hChkEn, s.enCompletion);
+    SetToggle(g_hChkCnPunct, s.cnPunct);
+    SetToggle(g_hChkFuzzy, s.fuzzyPinyin);
     ComboBox_SetCurSel(g_hCmbToggleMode, (int)(s.toggleMode <= 4 ? s.toggleMode : 1));
-    Button_SetCheck(g_hChkVMode, s.vMode ? BST_CHECKED : BST_UNCHECKED);
-    Button_SetCheck(g_hChkShuangpin, s.shuangpin ? BST_CHECKED : BST_UNCHECKED);
-    Button_SetCheck(g_hChkSymbolHotkey, s.symbolHotkey ? BST_CHECKED : BST_UNCHECKED);
-    Button_SetCheck(g_hChkTraditional, s.traditionalOutput ? BST_CHECKED : BST_UNCHECKED);
-    Button_SetCheck(g_hChkLlmRerank, s.llmRerank ? BST_CHECKED : BST_UNCHECKED);
-    Button_SetCheck(g_hChkLlmMultiPath, s.llmMultiPath ? BST_CHECKED : BST_UNCHECKED);
+    SetToggle(g_hChkVMode, s.vMode);
+    SetToggle(g_hChkShuangpin, s.shuangpin);
+    SetToggle(g_hChkSymbolHotkey, s.symbolHotkey);
+    SetToggle(g_hChkTraditional, s.traditionalOutput);
+    SetToggle(g_hChkLlmRerank, s.llmRerank);
+    SetToggle(g_hChkLlmMultiPath, s.llmMultiPath);
     wchar_t buf[16];
     _snwprintf_s(buf, _TRUNCATE, L"%u", s.candidateCount);
     Edit_SetText(g_hEdtCount, buf);
@@ -295,18 +310,18 @@ void SaveFromControls()
     // ① 控件从未 LoadToControls 过 → 拒写；② 改用 diff 落盘，未变字段不触碰。
     if (g_updating || !g_controlsLoaded) return;
     Settings s = LoadSettings(); // 保留未在此窗口编辑的字段
-    s.pinyinEnabled = Button_GetCheck(g_hChkPinyin) == BST_CHECKED;
-    s.enCompletion = Button_GetCheck(g_hChkEn) == BST_CHECKED;
-    s.cnPunct = Button_GetCheck(g_hChkCnPunct) == BST_CHECKED;
-    s.fuzzyPinyin = Button_GetCheck(g_hChkFuzzy) == BST_CHECKED;
+    s.pinyinEnabled = ToggleOn(g_hChkPinyin);
+    s.enCompletion = ToggleOn(g_hChkEn);
+    s.cnPunct = ToggleOn(g_hChkCnPunct);
+    s.fuzzyPinyin = ToggleOn(g_hChkFuzzy);
     int tsel = ComboBox_GetCurSel(g_hCmbToggleMode);
         if (tsel >= 0 && tsel <= 4) s.toggleMode = (uint32_t)tsel;
-    s.vMode = Button_GetCheck(g_hChkVMode) == BST_CHECKED;
-    s.shuangpin = Button_GetCheck(g_hChkShuangpin) == BST_CHECKED;
-    s.symbolHotkey = Button_GetCheck(g_hChkSymbolHotkey) == BST_CHECKED;
-    s.traditionalOutput = Button_GetCheck(g_hChkTraditional) == BST_CHECKED;
-    s.llmRerank = Button_GetCheck(g_hChkLlmRerank) == BST_CHECKED;
-    s.llmMultiPath = Button_GetCheck(g_hChkLlmMultiPath) == BST_CHECKED;
+    s.vMode = ToggleOn(g_hChkVMode);
+    s.shuangpin = ToggleOn(g_hChkShuangpin);
+    s.symbolHotkey = ToggleOn(g_hChkSymbolHotkey);
+    s.traditionalOutput = ToggleOn(g_hChkTraditional);
+    s.llmRerank = ToggleOn(g_hChkLlmRerank);
+    s.llmMultiPath = ToggleOn(g_hChkLlmMultiPath);
     wchar_t buf[16] = L"";
     Edit_GetText(g_hEdtCount, buf, 16);
     int n = _wtoi(buf);
@@ -645,7 +660,7 @@ namespace {
 // 右侧控件形态
 enum CtlKind
 {
-    CK_TOGGLE, // Win11 药丸开关（BS_AUTOCHECKBOX|BS_OWNERDRAW 自绘）
+    CK_TOGGLE, // Win11 药丸开关（BS_OWNERDRAW 自绘，状态外置 g_toggleOn）
     CK_COMBO,  // CBS_DROPDOWNLIST 下拉
     CK_EDIT,   // 数字输入
     CK_BUTTON, // 强调色按钮（词典/短语入口）
@@ -930,7 +945,7 @@ void UpdateSettingsScrollbar(int contentH)
 
 // Win11 开关（ToggleSwitch）：44×24 热区内绘 40×20 全圆角药丸——
 // 开=皮肤强调色+白钮居右；关=浅灰底+深灰钮居左+1px 灰描边。
-// BS_AUTOCHECKBOX|BS_OWNERDRAW 保持点击/键盘/取值语义不变。
+// 纯 BS_OWNERDRAW：状态读外置 g_toggleOn（勾选位会被 OWNERDRAW 归并吞掉）。
 void DrawToggle(const DRAWITEMSTRUCT* dis)
 {
     HDC hdc = dis->hDC;
@@ -944,7 +959,7 @@ void DrawToggle(const DRAWITEMSTRUCT* dis)
     int px = rc.left + ((rc.right - rc.left) - pillW) / 2;
     int py = rc.top + ((rc.bottom - rc.top) - pillH) / 2;
     RECT pr{ px, py, px + pillW, py + pillH };
-    bool on = SendMessageW(dis->hwndItem, BM_GETCHECK, 0, 0) == BST_CHECKED;
+    bool on = ToggleOn(dis->hwndItem); // 外置状态（BS_OWNERDRAW 无勾选态）
     COLORREF accent = UiSkin(LoadSettings().skinIndex).accent;
 
     HGDIOBJ oldPen = SelectObject(hdc, GetStockObject(NULL_PEN));
@@ -1020,7 +1035,12 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CHK_TRADITIONAL:
         case IDC_CHK_LLMRERANK:
         case IDC_CHK_LLMMULTIPATH:
-            if (HIWORD(wParam) == BN_CLICKED) SaveFromControls();
+            // owner-draw 无自动勾选：先翻外置状态再回写（翻转即失效重绘药丸）
+            if (HIWORD(wParam) == BN_CLICKED)
+            {
+                SetToggle((HWND)lParam, !ToggleOn((HWND)lParam));
+                SaveFromControls();
+            }
             return 0;
         case IDC_EDT_COUNT:
             if (HIWORD(wParam) == EN_CHANGE) SaveFromControls();
@@ -1115,8 +1135,11 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         auto* dis = (const DRAWITEMSTRUCT*)lParam;
         if (dis && dis->CtlType == ODT_BUTTON)
         {
-            LONG_PTR st = GetWindowLongPtrW(dis->hwndItem, GWL_STYLE);
-            if (st & BS_AUTOCHECKBOX) { DrawToggle(dis); return TRUE; }
+            if (g_toggleOn.find(dis->hwndItem) != g_toggleOn.end())
+            {
+                DrawToggle(dis); // 药丸开关（状态外置 g_toggleOn）
+                return TRUE;
+            }
             for (HWND h : g_accentBtns)
                 if (h == dis->hwndItem) { DrawAccentBtn(dis); return TRUE; }
         }
@@ -1293,10 +1316,14 @@ void CreateSettingsWindow(HINSTANCE hInst)
         g_pages.back().cards.back().rows.push_back(row);
     };
     auto mkToggle = [&](int id) -> HWND {
-        return CreateWindowExW(0, L"BUTTON", L"",
-                               WS_CHILD | WS_TABSTOP |
-                               BS_AUTOCHECKBOX | BS_OWNERDRAW, // Win11 自绘药丸开关
-                               0, 0, 44, 24, g_hSettings, (HMENU)(INT_PTR)id, hInst, NULL);
+        // 不能写 BS_AUTOCHECKBOX|BS_OWNERDRAW：低位样式位或后=0xB 归并为纯
+        // BS_OWNERDRAW，勾选态静默丢失（BM_GETCHECK 恒 0 → 历史刷零真凶）。
+        // 状态外置 g_toggleOn，点击在 WM_COMMAND 里翻转。
+        HWND h = CreateWindowExW(0, L"BUTTON", L"",
+                                 WS_CHILD | WS_TABSTOP | BS_OWNERDRAW,
+                                 0, 0, 44, 24, g_hSettings, (HMENU)(INT_PTR)id, hInst, NULL);
+        g_toggleOn[h] = false;
+        return h;
     };
     auto mkCombo = [&](int id, void (*fill)(HWND)) -> HWND {
         HWND h = CreateWindowExW(0, L"COMBOBOX", L"",
