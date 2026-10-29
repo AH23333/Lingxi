@@ -687,6 +687,7 @@ void UdNudgeSelected(int delta)
         delta > 0 ? L"已提升排序（+1000）" : L"已降低排序（-1000，下限 1）");
 }
 
+
 LRESULT CALLBACK UserDictWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg)
@@ -1739,6 +1740,97 @@ void InitTrayAndSettings(HINSTANCE hInst)
 
     g_hMain = CreateWindowExW(0, kMainWndClass, L"", WS_POPUP, 0, 0, 0, 0, HWND_MESSAGE, NULL, hInst, NULL);
     AddTrayIcon();
+}
+
+// ---------------- 候选词右键词典操作（候选窗右键菜单，2026-10-29） ----------------
+// 注意：这两个函数必须保持在匿名命名空间之外（外部链接，window.cpp 引用）；
+// 它们调用的 UserDictPathW/ParseUserDict/InferPinyinKey 等助手在同 TU 匿名
+// 命名空间内，此处仍可见。
+
+bool UserDictHasWord(const std::wstring& word)
+{
+    if (word.empty()) return false;
+    std::string raw;
+    if (!ReadFileBytes(UserDictPathW(), raw)) return false;
+    for (const auto& e : ParseUserDict(raw))
+        if (e.word == word) return true;
+    return false;
+}
+
+bool ApplyCandidateDictOp(const std::wstring& word, const std::wstring& keyHint,
+                          CandDictOp op)
+{
+    if (word.empty()) return false;
+    // 新词条键推导：拼音推断优先（小写全拼连写，与引擎 NormKey 口径一致，
+    // 与用户用什么输入方式打的无关）；推断失败回退 keyHint（当前组合串）——
+    // 仅全拼模式可用，双拼下组合串是键位序列而非全拼（引擎 Learn 同因先转换）。
+    auto deriveKey = [&]() -> std::wstring
+    {
+        std::wstring k = InferPinyinKey(word);
+        if (!k.empty()) return k;
+        if (LoadSettings().shuangpin) return L"";
+        for (wchar_t ch : keyHint)
+        {
+            if (ch >= L'a' && ch <= L'z') k.push_back(ch);
+            else if (ch >= L'A' && ch <= L'Z') k.push_back((wchar_t)towlower(ch));
+        }
+        return k;
+    };
+
+    std::string raw;
+    std::vector<UdEntry> entries;
+    if (ReadFileBytes(UserDictPathW(), raw)) entries = ParseUserDict(raw);
+
+    if (op == CandDictOp::Delete)
+    {
+        // 按词内容匹配删除全部读音条目（引擎并发重写文件，索引不可信）
+        size_t before = entries.size();
+        for (size_t i = 0; i < entries.size(); )
+        {
+            if (entries[i].word == word) entries.erase(entries.begin() + i);
+            else ++i;
+        }
+        if (entries.size() == before)
+        {
+            LX_LOG(L"ui", L"右键删除落空（基础词典词，非用户词条）: %ls", word.c_str());
+            return false;
+        }
+    }
+    else
+    {
+        int delta = (op == CandDictOp::Pin) ? 10000 : 1000;
+        bool found = false;
+        for (auto& e : entries)
+        {
+            if (e.word != word) continue;
+            found = true;
+            if (op == CandDictOp::Lower) { e.count -= 1000; if (e.count < 1) e.count = 1; }
+            else e.count += delta;
+        }
+        if (!found)
+        {
+            if (op == CandDictOp::Lower)
+            {
+                LX_LOG(L"ui", L"右键降频落空（词条不在用户词典）: %ls", word.c_str());
+                return false;
+            }
+            std::wstring k = deriveKey();
+            if (k.empty())
+            {
+                LX_LOG(L"ui", L"右键新增落空（无法确定拼音键）: %ls", word.c_str());
+                return false;
+            }
+            entries.push_back({ word, k, delta });
+        }
+    }
+    if (!WriteFileBytes(UserDictPathW(), SerializeUserDict(entries)))
+    {
+        LX_LOG(L"ui", L"右键词典操作写入失败（文件被占用或无权限）: %ls", word.c_str());
+        return false;
+    }
+    if (g_reloadUserDict) g_reloadUserDict();
+    LX_LOG(L"ui", L"右键词典操作完成: op=%d word=%ls", (int)op, word.c_str());
+    return true;
 }
 
 } // namespace lingxi

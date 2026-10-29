@@ -6,6 +6,7 @@
 #include "../common/log.h"
 #include "../common/settings.h"
 #include "uistyle.h"
+#include "settingsui.h"
 
 namespace lingxi {
 
@@ -621,6 +622,52 @@ LRESULT CandWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         {
             _pick(ver, globalIdx);
             Hide();
+        }
+        return 0;
+    }
+
+    case WM_RBUTTONUP:
+    {
+        // 右键候选词 → 词典操作菜单（置顶/提升/降频/删除用户词条）。
+        // 命中测试与 WM_LBUTTONUP 同口径：回显行偏移 + 页内行号。
+        POINT pt = { GET_X_LPARAM(lParam), GET_Y_LPARAM(lParam) };
+        int itemH = 0, pad = 0;
+        LayoutMetrics(&itemH, &pad);
+        std::wstring word, composing;
+        {
+            EnterCriticalSection(&_cs);
+            composing = _composing;
+            int yOff = pad + (composing.empty() ? 0 : itemH);
+            int row = (pt.y - yOff) / itemH;
+            size_t pgBegin = 0, pgEnd = 0;
+            CurrentPageRangeLocked(&pgBegin, &pgEnd);
+            if (row >= 0 && (size_t)row < (pgEnd - pgBegin))
+                word = _cands[pgBegin + (size_t)row];
+            LeaveCriticalSection(&_cs);
+        }
+        if (word.empty()) return 0; // 点在回显行/页外：无菜单
+
+        bool inDict = UserDictHasWord(word);
+        HMENU menu = CreatePopupMenu();
+        AppendMenuW(menu, MF_STRING, 1, L"置顶该词");
+        AppendMenuW(menu, MF_STRING, 2, L"提升词频");
+        AppendMenuW(menu, MF_STRING | (inDict ? 0 : MF_GRAYED), 3, L"降低词频");
+        AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(menu, MF_STRING | (inDict ? 0 : MF_GRAYED), 4, L"从用户词典删除");
+        POINT screen = pt;
+        ClientToScreen(hwnd, &screen);
+        SetForegroundWindow(hwnd); // 菜单在外部点击时正确消失
+        int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY,
+                                 screen.x, screen.y, 0, hwnd, NULL);
+        DestroyMenu(menu);
+        if (cmd == 1 || cmd == 2 || cmd == 3 || cmd == 4)
+        {
+            CandDictOp op = (cmd == 1) ? CandDictOp::Pin
+                        : (cmd == 2) ? CandDictOp::Boost
+                        : (cmd == 3) ? CandDictOp::Lower : CandDictOp::Delete;
+            // 失败仅记日志不打断输入（词典窗提供手动键兜底）；成功后下一次
+            // 击键即见新排序（引擎经 g_reloadUserDict 已重载）。
+            ApplyCandidateDictOp(word, composing, op);
         }
         return 0;
     }

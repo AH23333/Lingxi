@@ -11,22 +11,91 @@ namespace {
 
 struct Category
 {
-    const wchar_t* name;
-    const wchar_t* symbols;
+    const wchar_t* name;          // 标签名（≤3 全角字符宽，kCatTabW 内放得下）
+    const wchar_t* const* items;  // 条目：单符号或颜文字串（可含 VS16 变体选择符）
+    int count;
+    int cellW;                    // 单元格宽（颜文字加宽）
+    int cols;                     // 列数
+};
+
+// ---------------- 分类内容（2026-10-29 扩充：对标 Win+. 的 emoji/颜文字深度） ----------------
+
+const wchar_t* const kSymCommon[] = {
+    L"，", L"。", L"、", L"；", L"：", L"？", L"！", L"…", L"—", L"·", L"〜", L"～",
+    L"「", L"」", L"『", L"』", L"《", L"》", L"【", L"】", L"（", L"）", L"〔", L"〕",
+    L"‘", L"’", L"“", L"”", L"〖", L"〗",
+};
+
+const wchar_t* const kSymMath[] = {
+    L"±", L"×", L"÷", L"≠", L"≤", L"≥", L"≈", L"≡", L"≌", L"∞", L"∑", L"∏",
+    L"√", L"∂", L"∫", L"∈", L"∉", L"⊆", L"⊇", L"∪", L"∩", L"∧", L"∨", L"⊥",
+    L"∥", L"∠", L"∴", L"∵", L"‰", L"°", L"℉", L"℃", L"∆", L"∇",
+};
+
+const wchar_t* const kSymCurrency[] = {
+    L"￥", L"＄", L"€", L"￠", L"￡", L"¥", L"$", L"¢", L"£", L"₩", L"₽", L"₹",
+    L"₫", L"₴", L"₺", L"₦",
+};
+
+const wchar_t* const kSymArrow[] = {
+    L"←", L"↑", L"→", L"↓", L"↖", L"↗", L"↘", L"↙", L"⇐", L"⇒", L"⇑", L"⇓",
+    L"⇔", L"↔", L"↕", L"➜", L"➔", L"►", L"◄", L"▶", L"▼", L"◀", L"▲", L"▽",
+    L"◈", L"◇", L"○", L"●", L"◎", L"☆", L"★", L"■", L"□",
+};
+
+const wchar_t* const kSymFace[] = {
+    L"😀", L"😁", L"😂", L"🤣", L"😊", L"😋", L"😍", L"🥰", L"😘", L"😜", L"🤪", L"🤔",
+    L"🤨", L"😐", L"😑", L"😶", L"🙄", L"😏", L"😣", L"😥", L"😭", L"😤", L"😠", L"😡",
+    L"🥵", L"🥶", L"😴", L"🤤", L"🥴", L"🤢", L"🤮", L"🤯", L"🥳", L"😎", L"🤓",
+};
+
+const wchar_t* const kSymGesture[] = {
+    L"👍", L"👎", L"👌", L"✌️", L"🤞", L"🤟", L"🤘", L"🤙", L"👈", L"👉", L"👆", L"👇",
+    L"☝️", L"✋", L"🤚", L"🖐️", L"🖖", L"👋", L"🤝", L"🙏", L"💪", L"🦾", L"✊", L"👏",
+    L"🤲",
+};
+
+const wchar_t* const kSymAnimal[] = {
+    L"🐱", L"🐶", L"🐭", L"🐹", L"🐰", L"🦊", L"🐻", L"🐼", L"🐨", L"🐯", L"🦁", L"🐮",
+    L"🐷", L"🐸", L"🐵", L"🐔", L"🐧", L"🐦", L"🦆", L"🦅", L"🦉", L"🐴", L"🦄", L"🐝",
+    L"🦋", L"🐌", L"🐞", L"🐢", L"🐍", L"🐙", L"🦀", L"🐬", L"🐳", L"🐠",
+};
+
+const wchar_t* const kSymFood[] = {
+    L"🍎", L"🍊", L"🍋", L"🍌", L"🍉", L"🍇", L"🍓", L"🍒", L"🍑", L"🥭", L"🍍", L"🥥",
+    L"🥝", L"🍅", L"🥑", L"🍆", L"🥔", L"🥕", L"🌽", L"🌶️", L"🥦", L"🍄", L"🥜", L"🍞",
+    L"🥐", L"🧀", L"🍗", L"🍔", L"🍟", L"🍕", L"🌭", L"🥪", L"🍜", L"🍣", L"🍩", L"🍪",
+};
+
+const wchar_t* const kSymActivity[] = {
+    L"❤️", L"🧡", L"💛", L"💚", L"💙", L"💜", L"🖤", L"🤍", L"💕", L"💖", L"💗", L"💘",
+    L"💝", L"🎉", L"🎊", L"🎈", L"🎁", L"🏆", L"⚽", L"🏀", L"🎮", L"🎲", L"🎵", L"🎶",
+    L"📞", L"📧", L"💡", L"🔧", L"🔒", L"⏰",
+};
+
+const wchar_t* const kSymKaomoji[] = {
+    L"(^_^)", L"(T_T)", L"(>_<)", L"(^o^)", L"(^3^)", L"(-_-)", L"(._.)", L"(¬_¬)",
+    L"(＠_＠)", L"(⊙o⊙)", L"(⊙ω⊙)", L"(Ｔ▽Ｔ)", L"(￣▽￣)", L"(￣ー￣)", L"(ToT)/", L"/(^_^)",
+    L"(>3<)", L"(;-;)", L"(X_X)", L"(O_O)", L"(o_o)", L"(Q_Q)", L"(^_~)", L"(^_-)",
 };
 
 const Category kCats[] = {
-    { L"常用", L"，。、；：？！…—·「」『』《》【】（）" },
-    { L"数学", L"±×÷≠≤≥≈∞∑∏√∂∫∈∧∨⊥∥∠⊙≡≌∆∇‰°′″" },
-    { L"货币", L"￥＄€￠￡¥$¢£₩₽₹" },
-    { L"箭头", L"←↑→↓↖↗↘↙⇐⇒⇑⇓⇔↔↕➜➔►◄▶▲▼◀◆◇○●◎☆★■□" },
-    { L"表情", L"😀😁😂🤣😊😍😎🤔😴😭😡👍👏🙏🎉🔥⭐✨" },
+    { L"常用",   kSymCommon,   (int)(sizeof(kSymCommon) / sizeof(kSymCommon[0])),   38, 12 },
+    { L"数学",   kSymMath,     (int)(sizeof(kSymMath) / sizeof(kSymMath[0])),      38, 12 },
+    { L"货币",   kSymCurrency, (int)(sizeof(kSymCurrency) / sizeof(kSymCurrency[0])), 38, 12 },
+    { L"箭头",   kSymArrow,    (int)(sizeof(kSymArrow) / sizeof(kSymArrow[0])),    38, 12 },
+    { L"表情",   kSymFace,     (int)(sizeof(kSymFace) / sizeof(kSymFace[0])),      38, 12 },
+    { L"手势",   kSymGesture,  (int)(sizeof(kSymGesture) / sizeof(kSymGesture[0])), 38, 12 },
+    { L"动物",   kSymAnimal,   (int)(sizeof(kSymAnimal) / sizeof(kSymAnimal[0])),   38, 12 },
+    { L"食物",   kSymFood,     (int)(sizeof(kSymFood) / sizeof(kSymFood[0])),       38, 12 },
+    { L"活动",   kSymActivity, (int)(sizeof(kSymActivity) / sizeof(kSymActivity[0])), 38, 12 },
+    { L"^_^",   kSymKaomoji,  (int)(sizeof(kSymKaomoji) / sizeof(kSymKaomoji[0])), 104, 4 },
 };
 
-constexpr int kCell = 38;
-constexpr int kCols = 9;
+constexpr int kCell = 38;      // 单元格高（宽随分类：普通 38 / 颜文字 104）
 constexpr int kCatH = 26;
 constexpr int kPad = 4;
+constexpr int kCatTabW = 48;   // 标签宽（10 分类×48=480，3 全角字标签也放得下）
 constexpr int kCatCount = (int)(sizeof(kCats) / sizeof(kCats[0]));
 
 HWND g_hPanel = nullptr;
@@ -34,38 +103,19 @@ int g_cat = 0;
 HFONT g_font = nullptr;
 std::function<void(const std::wstring&)> g_onInsert;
 
-const wchar_t* CurrentSymbols() { return kCats[g_cat].symbols; }
-
-// 码点数量：UTF-16 代理对按 1 个码点计。
-int SymCount(const wchar_t* s)
-{
-    int n = 0;
-    for (int i = 0; s[i];)
-    {
-        if (IS_SURROGATE_PAIR(s[i], s[i + 1])) i += 2;
-        else i += 1;
-        ++n;
-    }
-    return n;
-}
-
-// 第 idx 个码点的 wchar 偏移与长度（代理对 len=2）。
-void SymAt(const wchar_t* s, int idx, int* off, int* len)
-{
-    int o = 0;
-    for (int i = 0; i < idx; ++i)
-        o += (IS_SURROGATE_PAIR(s[o], s[o + 1])) ? 2 : 1;
-    *off = o;
-    *len = (IS_SURROGATE_PAIR(s[o], s[o + 1])) ? 2 : 1;
-}
+const Category& CurCat() { return kCats[g_cat]; }
 
 int PanelHeight()
 {
-    int rows = (SymCount(CurrentSymbols()) + kCols - 1) / kCols;
+    const Category& c = CurCat();
+    int rows = (c.count + c.cols - 1) / c.cols;
     return kCatH + kPad + rows * kCell + kPad;
 }
 
-int PanelWidth() { return kPad + kCell * kCols + kPad; }
+int PanelWidth() { return kPad + kCatTabW * kCatCount + kPad; }
+
+// 网格水平居中于面板（不同分类网格宽不同）
+int GridX() { return kPad + (PanelWidth() - 2 * kPad - CurCat().cellW * CurCat().cols) / 2; }
 
 void ClosePanel()
 {
@@ -83,8 +133,7 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         int y = GET_Y_LPARAM(lp);
         if (y < kCatH)
         {
-            int cw = (PanelWidth() - 2 * kPad) / kCatCount;
-            int c = (x - kPad) / cw;
+            int c = (x - kPad) / kCatTabW;
             if (c >= 0 && c < kCatCount && c != g_cat)
             {
                 g_cat = c;
@@ -95,16 +144,14 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             }
             return 0;
         }
-        int col = (x - kPad) / kCell;
+        const Category& cat = CurCat();
+        int gx = GridX();
+        int col = (x - gx) / cat.cellW;
         int row = (y - kCatH - kPad) / kCell;
-        int idx = row * kCols + col;
-        int total = SymCount(CurrentSymbols());
-        if (col >= 0 && col < kCols && idx >= 0 && idx < total)
+        int idx = row * cat.cols + col;
+        if (col >= 0 && col < cat.cols && x >= gx && idx >= 0 && idx < cat.count)
         {
-            int off = 0, len = 1;
-            SymAt(CurrentSymbols(), idx, &off, &len);
-            std::wstring s(CurrentSymbols() + off, len);
-            if (g_onInsert) g_onInsert(s);
+            if (g_onInsert) g_onInsert(std::wstring(cat.items[idx]));
             // 插入后保留面板（便于连续输入）；点击符号不抢焦点
             return 0;
         }
@@ -138,10 +185,9 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         HGDIOBJ oldFont = SelectObject(hdc, g_font);
 
         // 分类按钮：选中=皮肤浅底药丸 + 强调色字；未选中=次级灰字
-        int cw = (PanelWidth() - 2 * kPad) / kCatCount;
         for (int i = 0; i < kCatCount; i++)
         {
-            RECT cr{ kPad + i * cw, 2, kPad + (i + 1) * cw, kCatH - 1 };
+            RECT cr{ kPad + i * kCatTabW, 2, kPad + (i + 1) * kCatTabW, kCatH - 1 };
             if (i == g_cat)
             {
                 RECT pr = cr;
@@ -164,19 +210,17 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
 
-        // 网格符号（按码点步进，cell 与点击换算一致）
-        const wchar_t* sym = CurrentSymbols();
-        int total = SymCount(sym);
+        // 网格符号（字符串条目：单符号/颜文字/含 VS16 变体选择符的 emoji）
+        const Category& cat = CurCat();
+        int gx = GridX();
         SetTextColor(hdc, kUiText);
-        for (int i = 0; i < total; i++)
+        for (int i = 0; i < cat.count; i++)
         {
-            int c = i % kCols;
-            int r = i / kCols;
-            RECT cell{ kPad + c * kCell, kCatH + kPad + r * kCell,
-                       kPad + (c + 1) * kCell, kCatH + kPad + (r + 1) * kCell };
-            int off = 0, len = 1;
-            SymAt(sym, i, &off, &len);
-            DrawTextW(hdc, sym + off, len, &cell,
+            int c = i % cat.cols;
+            int r = i / cat.cols;
+            RECT cell{ gx + c * cat.cellW, kCatH + kPad + r * kCell,
+                       gx + (c + 1) * cat.cellW, kCatH + kPad + (r + 1) * kCell };
+            DrawTextW(hdc, cat.items[i], -1, &cell,
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
 

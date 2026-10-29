@@ -6,6 +6,7 @@
 //
 #include <windows.h>
 #include <functional>
+#include <string>
 
 namespace lingxi {
 
@@ -20,5 +21,23 @@ void SetUserDictReloadCallback(std::function<void()> cb);
 void SetShowSymbolsCallback(std::function<void()> cb);
 // 注册"设置已保存"回调，由 main 绑定（用于同步热键等需随设置变化的状态）。
 void SetSettingsChangedCallback(std::function<void()> cb);
+
+// 候选词右键词典操作类型（候选窗右键菜单入口，2026-10-29 补齐遗忘需求）。
+enum class CandDictOp
+{
+    Pin,    // 置顶：已有词条 +10000；未收录则按 count=10000 新增
+    Boost,  // 提升：已有词条 +1000；未收录则按 count=1000 新增
+    Lower,  // 降频：已有词条 -1000（下限 1）；未收录则失败
+    Delete  // 删除：移除该词在用户词典中的全部词条；未收录则失败
+};
+
+// 该词是否已存在于用户词典（任一读音键）——右键菜单灰显"降频/删除"用。
+bool UserDictHasWord(const std::wstring& word);
+
+// 对候选词执行用户词典操作并通知引擎重载。
+// keyHint：当前拼音组合串（推断拼音失败且非双拼时的键回退来源，可传空）。
+// 返回 false=操作未生效（词条不存在/写入失败/无法确定键）。
+bool ApplyCandidateDictOp(const std::wstring& word, const std::wstring& keyHint,
+                          CandDictOp op);
 
 } // namespace lingxi
