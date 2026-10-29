@@ -539,6 +539,19 @@ R2-R4 收口后用户要求继续低难度功能、40 分钟内收口——选 R
 - **验证**：engine_test P13/P14 全 PASS（时延红 17ms 同 #41 环境负载——atrustagent/deveco 持续占用，R5/R6 热路径增量=一次空集锁拷+一次哈希查找/候选，µs 级）；deep_test **attempt 1 = 29/29** AV=0（优于上轮 attempt 3）；e2e 未跑（引擎候选追加/过滤，不触 TSF/协议层，deep_test+engine_test 已覆盖）。
 - **工具坑复发确认**：Start-Process 重定向 stdout 时子进程（LingxiUI/deep_test 派生）继承管道写端致 -Wait 挂起，输出已完整写出后才被超时杀壳——判读以输出文件内容为准，勿误判测试挂死。
 
+## 2026-10-30 深夜 · 用户报障两连修（v 模式吞字母 + 简拼拟声垃圾）+ 选字链路性能根治
+
+用户报两 bug：①v 模式后按字母被吞；②简拼 zm 首选出"在呣"类拼装词。修复过程中 deep_test 暴露 T10/T14 回归（Learn 持锁拖垮 Predict），一并根治，三连提交收口。
+
+- **v 模式直通+悬账 `6368930`**：弃缓冲式（_inlineComp=false 下字母无显示、英文续写断裂）改直通——v 触发只置 `_vDebt` 悬账，字母经宿主原生上屏免费获得显示与续写；首个字母键消费悬账进 vbug 语义，退格撤销、Esc 取消、其他键补写 v 再放行，DetectPinyinMode 复位清账。deep_test T15 四块（i/u/in/iu 直通、悬账消费、退步撤销、双出口）全绿。
+- **拟声音节加罚 `f469ed1`**：根因=m/n/hm 等无元音叹词注音在音节表合法，FULL 成本 2/格使 [z][m:FULL]=6 压过正常简拼链 [z][m]=8。IsInterjectionSyllable 判定加罚 cost 5（>简拼 4/格），单独打 m/n 呣/嗯 仍出字。engine_test P15 四断言（zm=怎么/zn 无垃圾/mu=55 en=25/mm=妈妈）全 PASS。
+- **T10/T14 根因=Learn 持锁盘写+全量重建饿死 Predict（PITFALLS #53）**：时间戳取证（log.h 本轮加 HH:MM:SS.mmm 前缀）实测 ver=118 SendCtx→候选回包 **464ms**——选字后 NotifyPicked→Learn 在管道读线程持 `_udMtx` 跑 SaveUserDictLocked（全量盘写）+BuildUserInitIndex（~200 键×EnumeratePaths≈300-600ms），Predict 同锁被饿；空格等待 80ms 超时退化 PinyinCommitRaw 提交裸字母"hao"。空闲基线 9.6ms 无感，重载机（Predict 30-156ms）越预算。
+- **修复双管 `75e4ee9`**：①Learn 锁内只做内存更新+简拼索引单键增量（UpdateUserInitIndexLocked，保持"新词即时可简拼调出"同步语义），磁盘落盘移后台 detached 线程（KickPersist，_persistBusy CAS 防管道读线程/UI 拾取回调两入口并发，快照即清脏、写失败恢复脏位）；②提交键等待预算 80→400ms（空格/数字/标点默认/CommitChinesePunct 四处同口径，标点两处原无等待补齐）——候选就绪零等待，最坏键延迟优于提交错误文本。
+- **测试适配异步落盘**：engine_test Learn 用例重载实例前轮询 userdict 等后台写完成、恢复备份前等喵喵落盘落地（防迟到异步写覆盖备份）。
+- **验证**：engine_test 全绿（Learn 置顶/重载持久化/喵喵/mm 简拼、P15）；LINGXI_LOG=1 deep_test **attempt 1 = 31/31** AV=0（T10 badRound=-1、T14 digit=6 final=你好 noLetter=1）；日志复测 SendCtx→回包 **max 280ms**（原 464ms）p95 210ms avg 91ms——400ms 预算覆盖最坏值留余量。
+- **UI 侧日志缺失之谜（PITFALLS #54）**：deep_test 拉起的有 env LingxiUI 实例总被单例弹掉——taskkill 后用户其他持有 DLL 的 app 1 秒内抢 respawn 无 env 实例占住单例；如需 UI 文件日志须让 env 实例先占单例（或杀 orphan 宿主）。
+
+
 
 
 

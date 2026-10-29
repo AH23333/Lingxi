@@ -303,3 +303,15 @@
 - **正确做法**：耗尽分支降级为慢速自愈轮询（SetTimer 1000ms + `_modeSlowRetry` 标志 log-once 降级日志），premature 判定每次仅进程内 GetForeground µs 级查询（CoCreateInstance 仅 weForeground 时执行），前台回归后 ≤1s 自愈进位；恢复分支 KillTimer+复位预算。选降级而非 KillTimer 硬停：负载机 ctfmon 过渡可超 2s 快速预算，硬停会把 settle 假红引进来。**规约：周期 SetTimer 的每个"不再快试"分支必须显式改节拍或 KillTimer——`return` 不会替你停定时器。**
 - **配套判读法**（LINGXI_LOG 干扰期三指纹）：①attempt 日志 **0 条 [key] 行**=探键根本没到本 DLL（前台被其他 TIP 持有，环境干扰非代码回归）；②"放弃"行风暴=本条定时器泄漏；③降级日志恰 1 条+总行数很少=慢速轮询按设计工作。
 
+### 53. Learn 在管道读线程持锁做磁盘 I/O + 全量索引重建：Predict 同锁被饿数百 ms，选字后提交键退化裸字母 ⭐⭐
+- **症状**：deep_test T10 间歇 badRound（第 N 轮空格提交字母原文而非"今天"）、T14 数字选字后空格提交裸"hao"（final=你,h,a,o）；多轮 attempt 一致复现，负载越高越稳。DLL 日志里提交"凭空"出现（no-inline 模式 PinyinCommitRaw 无日志行）。
+- **根因**：每次选字 NotifyPicked→ApplyLearn→`_pinyinEngine->Learn` 在**管道读线程持 `_udMtx`** 执行 SaveUserDictLocked（全量原子盘写）+ BuildUserInitIndex（对每个 userdict 键跑 EnumeratePaths，~200 键≈300-600ms）；Predict 热路径同锁两次 → 选字后的预测被饿。空格路径 WaitForLatestCandidates(80) 超时 → GetCandidateEx 失败 → PinyinCommitRaw 提交裸字母。空闲基线 9.6ms 完全无感——**典型"低负载全绿、高负载越过预算"的隐性锁竞争**。
+- **取证手法**：日志行加 HH:MM:SS.mmm 时间戳后逐帧配对 SendCtx ver=N → 收到候选 ver=N：ver=118 间隔 464ms（对照 ver=117 仅 26ms），失败帧=选字后首帧；锁定"选字→Learn→下一帧预测"因果链。
+- **正确做法**（75e4ee9 双管）：①锁内只做内存词典更新+简拼索引**单键增量**（UpdateUserInitIndexLocked——保持"新词即时可简拼调出"同步语义，µs~ms 级），磁盘落盘移后台 detached 线程（_persistBusy CAS 防两入口并发：管道读线程 MSG_NOTIFY_PICKED 与 UI 线程鼠标拾取回调都可能调 Learn；快照即清脏防写期间新学习丢账，写失败恢复脏位保留重试语义）；②提交键等待预算 80→400ms（候选就绪时 WaitForLatestCandidates 零开销，仅 pending 时兜底）——最坏键延迟优于提交错误文本。**规约：读线程回调里绝不持跨线程热锁做 I/O 或 O(n) 重建；同锁的热路径调用方有超时退化语义时，退化路径的"错误输出"（裸字母）必须也留日志。**
+
+### 54. taskkill LingxiUI 后 orphan 宿主 1 秒内抢 respawn 无 env 实例占单例——deep_test 永远拿不到 UI 侧文件日志 ⭐
+- **症状**：LINGXI_LOG=1 跑 deep_test，DLL 侧日志文件齐全，UI 侧（[py]/[ui] 引擎日志）永远缺失；手动 Start-Process 带 env 的 LingxiUI 又被单例弹掉。
+- **根因**：taskkill LingxiUI 只杀 UI 进程，**加载着 TSF DLL 的宿主应用还活着**——DLL 的 EnsureUIRunning 探测到 UI 不在，1 秒内 respawn 新 LingxiUI；这个实例继承的是**宿主应用**的环境（无 LINGXI_LOG），抢先占住单例互斥锁；deep_test 随后拉起的有 env 实例被单例机制弹掉 → 文件日志永远来自无 env 实例=永远没有。
+- **取证手法**：日志文件本身是 **UTF-16 无 BOM**——Select-String 直接搜会漏/乱，必须 `[System.IO.File]::ReadAllLines($p, [System.Text.Encoding]::Unicode)` 读；两实例竞争与否看日志里 [py] 行有无即可判定（DLL 与 UI 同文件追加写）。
+- **正确做法**：需要 UI 侧日志时先让 env 实例占住单例（taskkill 后立即以 env 拉起，抢在 orphan 宿主 respawn 之前；或先杀掉持有 DLL 的宿主）。**规约：单例程序被外部 respawn 时，"谁先占坑"取决于宿主环境而非启动者意图——带环境变量调试单例服务，先清占坑者。**
+
