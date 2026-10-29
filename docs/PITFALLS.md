@@ -292,3 +292,8 @@
 - **取证手法**：①注册表键 LastWriteTime（P/Invoke RegQueryInfoKeyW）对齐事件时间线——真实键 19:31:22=deep_test pin、沙箱键 19:40:31=用户保存、用户词典 19:40:39=用户真在打字；②读活进程环境块（NtQueryInformationProcess→PEB→ProcessParameters→Environment）确认幸存实例干净、写入者另有其"进程"。
 - **正确做法**：生产入口强制清除沙箱变量（main.cpp 在 probe 分发后、单例前 `SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", NULL)`——probe 子命令保留沙箱因 e2e 断言依赖）；deep_test 的 PinToggleMode/RestoreToggleMode 同步改走 ActiveKey 同口径沙箱键（旧实现直写真实键，违反自己 #43 宣称的"真实 HKCU 从此不共轨"）。**规约：进程级沙箱变量防不住"子进程继承"这条路——生产可执行文件必须在入口自证清白；涉及沙箱的测试工具连带检查"它 spawn 的一切"。**
 
+### 51. settingsui.cpp 的导出函数放进匿名命名空间=内部链接，跨文件调用直接 LNK2019 ⭐
+- **症状**：window.cpp 调 `lingxi::UserDictHasWord`/`lingxi::ApplyCandidateDictOp`，链接报 LNK2019 无法解析的外部符号；声明在 settingsui.h、实现明明就写在 settingsui.cpp 里。
+- **根因**：settingsui.cpp 的 helpers（UserDictPathW/ReadFileBytes/WriteFileBytes/ParseUserDict/SerializeUserDict/InferPinyinKey 等）都住在**匿名命名空间**里，按惯性把新导出函数也写进了同一区域——匿名命名空间成员是内部链接， extern 声明对不上，链接器当作不存在。
+- **正确做法**：导出函数实现在 settingsui.cpp 必须放在匿名命名空间（`} // namespace`）之后、文件尾 `} // namespace lingxi` 之前的具名区域；匿名命名空间内的 helpers 对其依然可见，不影响复用。**规约：往"helpers 全在匿名命名空间"的文件里加导出函数时，先定位匿名命名空间的闭合大括号再落笔。**
+

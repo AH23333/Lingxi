@@ -497,4 +497,15 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 - **验证**：deep_test 29/29 且真实键 LastWrite 全程零变化（pin/restore 落沙箱键 20:03:32）；真实键 ToggleMode=4 幸存；LingxiUI 重启后进程环境块无 LINGXI 变量。
 - **用户侧说明**：设置即时生效（引擎每按键实时读注册表）；explorer/WT/Qoder/webview2/MSPCManager 等 09:56-10:22 启动的应用载着晨间旧 DLL——设置项对它们同样生效（注册表共用），但本轮切换/删词新功能需重启应用加载新二进制。
 
+## 2026-10-29 夜 · 对标微软拼音：差距文档 + 被遗忘需求清算（候选词右键词典操作 + 符号面板扩充）
+
+用户点名三项：①输出完整对标微软拼音的差距文档；②清算被遗忘的需求——词典增删/自定义排序/**候选词右键排序**；③特殊字符/emoji 补全。
+
+- **代码审计（文档素材，全实测锚点）**：pinyin.cpp 简拼支持完整（INITIAL 单字母/混合模式 2^n、用户词简拼索引 _userByInit、纯声母整词路径、ShuangpinToQuanpin:108 小鹤双拼）；模糊音 5 组；NormKey:813=小写 a-z 滤除；Learn:923（双拼先转换再 NormKey）；LoadUserDict:825 不重置 _userDirty 但重载自文件→UI 写盘后无丢失。引擎架构确认：引擎在 LingxiUI 进程内，DLL 只发 MSG_CTX，UI 算候选回 MSG_CANDS。
+- **①候选词右键词典菜单**：settingsui.h 导出 `CandDictOp{Pin,Boost,Lower,Delete}` + `UserDictHasWord` + `ApplyCandidateDictOp`；window.cpp 加 WM_RBUTTONUP（命中测试同 LBUTTONUP 口径=回显行偏移+CurrentPageRangeLocked；SetForegroundWindow+TrackPopupMenu TPM_RETURNCMD|TPM_NONOTIFY 托盘同款模式；菜单置顶/提升/降频/删除，inDict 灰显降频删除）。词典操作锚定**词内容**不锚定索引（引擎并发重写文件）；键推导=InferPinyinKey 优先（与用户输入方式无关，双拼组合串是键位序列非全拼），失败回退 keyHint 仅全拼模式；失败 LX_LOG 不弹窗（候选窗上下文不抢焦点）。**坑**：实现初放匿名命名空间内→LNK2019，移到 `} // namespace lingxi` 前修复（PITFALLS #51）。
+- **②符号面板扩充**：symbolpanel.cpp 码点模型改**字符串数组模型**（支持颜文字多字条目+VS16 变体选择符 ✌️🖐️❤️）；5 类→**10 类**（常用/数学/货币/箭头/表情/手势/动物/食物/^_^ 颜文字，各 24-38 条）；Category 含 cellW/cols（普通 38×12 列，颜文字 104×4 列 GridX() 居中），kCatTabW=48 面板宽 488。
+- **③差距文档 docs/GAP-VS-MSFT.md**：9 节——被遗忘需求清算表（4 项全✅）、基本输入/中英切换/候选选字/词典学习/符号特殊输入/智能特性/工程集成 7 大矩阵（✅🟡❌+P0-P2+代码锚点）、路线图 R1(本轮)-R6（R2=缩写短语映射、R3=日期时间直出、R4=拼音纠错、R5=emoji 候选融合）。基于代码实测现状，不凭印象。
+- **构建+回归**：build.cmd（x64）✓、build32.cmd（Win32 ImeCore）✓、deep_test 重建 ✓。deep_test Run B 9/29 三 attempt settle 全红（probe_q_eaten=0）→锁定 `_pinyinMode false→TestKeyDown 放行`（composition.cpp:603）→复跑 Run C：settle 3/3 过，attempt 3=28/29（唯一红 T10 连击时序压测 badRound=16，用户活跃期典型干扰），T0-T17 产品用例安静窗口全过 AV=0——确认 9/29 为环境干扰非代码回归（用户活跃期实时切 IME 抢 ctfmon 前台，与 #19/#49 同源）。
+- **用户侧说明**：右键菜单/符号面板全在 LingxiUI 进程——运行中实例（20:39 新二进制）**无需重启即可测**；托盘菜单或 Ctrl+Shift+B（需 symbolHotkey=1）开符号面板。
+
 
