@@ -1497,7 +1497,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
             ComboBox_AddString(h, s);
     };
     g_hCmbToggleMode = mkCombo(IDC_CMB_TOGGLEMODE, fillToggle);
-    mkRow(L"中英切换键", L"单击切换中英文，候选窗显示中/英提示",
+    mkRow(L"中英切换键", L"单击切换中英文，候选窗显示中/英提示；CapsLock 模式下键盘大小写灯仍会翻转（系统底层行为），介意请用 Shift 模式",
           g_hCmbToggleMode, CK_COMBO, 150);
     addCard(L"符号");
     g_hChkSymbolHotkey = mkToggle(IDC_CHK_SYMBOLHOTKEY);

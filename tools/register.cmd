@@ -34,4 +34,17 @@ if exist "%DLL32%" (
 ) else (
     echo [register] 32-bit ImeCore.dll not found - skipping WOW64 registration.
 )
+
+rem Autostart (complete-app hygiene): launch LingxiUI at logon so tray,
+rem hotkeys and the engine are up before the first IME use. LingxiUI has a
+rem single-instance mutex, so a manual launch while autostarted is a no-op.
+rem Removed by uninstall.ps1 (zero-residue check 9).
+set "RUNKEY=HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
+reg add "%RUNKEY%" /v LingxiIme /t REG_SZ /d "\"%~dp0..\bin\%CONFIG%\LingxiUI.exe\"" /f >nul 2>&1
+if errorlevel 1 (
+    echo [register] WARNING: autostart entry not written.
+) else (
+    echo [register] autostart enabled ^(HKCU Run - LingxiIme^).
+)
+
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0imecheck.ps1"

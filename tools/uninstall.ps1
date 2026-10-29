@@ -2,7 +2,8 @@
 # Companion of uninstall.cmd (elevation wrapper / tray entry).
 # Cleans: COM CLSID (x64+x86), CTF TIP trees (HKLM+HKCU), SortOrder
 # assembly items, language list tips, HKCU settings, APPDATA user data,
-# running processes. Verifies zero residue and exits with residue count.
+# autostart Run entry, running processes. Verifies zero residue and
+# exits with residue count.
 #requires -Version 5.1
 param([string]$Root = (Split-Path -Parent $PSScriptRoot))
 
@@ -47,6 +48,10 @@ $null = reg delete "HKLM\SOFTWARE\Classes\WOW6432Node\CLSID\$tip" /f 2>$null
 $null = reg delete "HKLM\SOFTWARE\Microsoft\CTF\TIP\$tip" /f 2>$null
 $null = reg delete "HKCU\Software\Microsoft\CTF\TIP\$tip" /f 2>$null
 $null = reg delete "HKCU\Software\LingxiIme" /f 2>$null
+
+Step "remove autostart Run entry"
+Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
+    -Name LingxiIme -ErrorAction SilentlyContinue
 
 Step "remove SortOrder assembly items (keep other IMEs' items)"
 Get-ChildItem 'HKCU:\Software\Microsoft\CTF\SortOrder\AssemblyItem' -ErrorAction SilentlyContinue |
@@ -102,7 +107,10 @@ $checks = @(
     @{ n = 'HKCU settings key';   ok = -not (Test-Path "HKCU:\Software\LingxiIme") },
     @{ n = 'SortOrder items';     ok = -not (Test-SortOrderResidue) },
     @{ n = 'language list tips';  ok = -not (Test-LangListResidue) },
-    @{ n = 'APPDATA user data';   ok = -not (Test-Path "$env:APPDATA\LingxiIme") }
+    @{ n = 'APPDATA user data';   ok = -not (Test-Path "$env:APPDATA\LingxiIme") },
+    @{ n = 'autostart Run entry'; ok = $null -eq (Get-ItemProperty `
+        'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
+        -Name LingxiIme -ErrorAction SilentlyContinue) }
 )
 foreach ($c in $checks) {
     if ($c.ok) { Write-Host "  [OK]      $($c.n)" }
