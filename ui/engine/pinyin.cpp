@@ -340,6 +340,7 @@ public:
         // 不会落进下面 paths.empty() 早退分支。
         std::string inTrig = NormalizeIn(raw);
         std::vector<std::wstring> dtCands = BuildDateTimeCands(inTrig);
+        std::vector<std::wstring> phraseCands; // R2：锁内拷出（见下），锁外注入
         if (st.shuangpin) raw = ShuangpinToQuanpin(raw); // 双拼→全拼
         // 显式隔音判定（与 EnumeratePaths 同一归一口径，弯撇号 U+2019 同算）：
         // 有隔音时 MatchWords 紧校验音节数（拒跨边界 compact 撞键），无隔音时
@@ -408,7 +409,19 @@ public:
                     if (!dup) ups.push_back({ ip.word, ip.count });
                 }
             }
+            // R2 自定义短语：整串精确命中缩写（同锁拷出，注入在锁外）
+            if (auto pit = _phrases.find(inTrig); pit != _phrases.end())
+                phraseCands = pit->second;
         }
+
+        // R2/R3 显式意图注入：整串触发的确定性候选置顶——先注入，再走自学习
+        // 置顶重排（习惯优先于便民：用户在该串下反复选过的词仍排最前）。
+        // 注入序=先日期时间后短语（InjectExplicitTop 前插）→ 短语 > 日期时间 > 常规。
+        if (!dtCands.empty())
+            InjectExplicitTop(p, covers, dtCands);
+        if (!phraseCands.empty())
+            InjectExplicitTop(p, covers, phraseCands);
+
         if (!ups.empty())
         {
             std::stable_sort(ups.begin(), ups.end(),
@@ -441,11 +454,6 @@ public:
             p.cands = std::move(reordered);
             covers = std::move(reorderedCover);
         }
-
-        // R3 日期时间直出注入：整串触发的确定性便民候选置顶；排序=
-        // 用户自学习置顶 > 日期时间 > 常规候选（习惯优先于便民）。
-        if (!dtCands.empty())
-            InjectExplicitTop(p, covers, dtCands);
 
         if (st.traditionalOutput)
             for (auto& w : p.cands) w = ToTraditional(w);
@@ -500,6 +508,10 @@ private:
     struct UserInitPick { std::wstring word; int count; std::string fullKey; };
     std::unordered_map<std::string, std::vector<UserInitPick>> _userByInit;
     bool _userDirty = false;
+    // R2 自定义短语（GAP §8 R2）：缩写（NormalizeIn 口径小写字母串）→ 短语
+    // 列表（同缩写多条按文件顺序全注入）。phrases.txt 与 userdict 同目录同锁
+    // （_udMtx）——LoadUserDict 一并重载，UI 保存后经 ReloadUserDict 热生效。
+    std::unordered_map<std::string, std::vector<std::wstring>> _phrases;
     mutable std::mutex _udMtx;
 
     // 简体→繁体字符映射（Unicode 码点，正确处理扩展区代理对）
@@ -949,6 +961,20 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         return ExeDir() + "\\userdict.txt";
     }
 
+    // R2 自定义短语存储（与 userdict 同目录；UI 侧 phraseui.cpp 同格式写）
+    static std::string PhrasesPath()
+    {
+        char buf[MAX_PATH] = {};
+        DWORD n = GetEnvironmentVariableA("APPDATA", buf, MAX_PATH);
+        if (n > 0 && n < MAX_PATH)
+        {
+            std::string dir = std::string(buf) + "\\LingxiIme";
+            CreateDirectoryA(dir.c_str(), NULL);
+            return dir + "\\phrases.txt";
+        }
+        return ExeDir() + "\\phrases.txt";
+    }
+
     // 学习键：只保留小写字母（与音节切分规范化一致，空格/分隔符丢弃）。
     static std::string NormKey(const std::string& raw)
     {
@@ -967,24 +993,60 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         std::lock_guard<std::mutex> lk(_udMtx);
         _userDict.clear();
         std::string raw = ReadAll(UserDictPath());
+        if (!raw.empty())
+        {
+            for (auto& line : Split(raw, '\n'))
+            {
+                std::string l = line;
+                if (!l.empty() && l.back() == '\r') l.pop_back();
+                size_t t1 = l.find('\t');
+                if (t1 == std::string::npos) continue;
+                size_t t2 = l.find('\t', t1 + 1);
+                if (t2 == std::string::npos) continue;
+                std::wstring word = FromUtf8(l.substr(0, t1));
+                std::string key = l.substr(t1 + 1, t2 - t1 - 1);
+                int count = std::atoi(l.substr(t2 + 1).c_str());
+                if (!word.empty() && !key.empty() && count > 0)
+                    _userDict[key].push_back({ word, count });
+            }
+        }
+        BuildUserInitIndex();
+        LX_LOG(L"py", L"用户词典加载: %zu 个拼音键, %zu 个简拼键",
+               _userDict.size(), _userByInit.size());
+        LoadPhrasesLocked(); // R2：与用户词典同一通道热载（同锁）
+    }
+
+    // R2 短语装载（调用方持 _udMtx）：行格式 缩写<TAB>短语（UTF-8，BOM 容忍）。
+    // 缩写归一=只留小写 a-z（2..16 位）且必须纯字母；短语非空 ≤200 字符。
+    void LoadPhrasesLocked()
+    {
+        _phrases.clear();
+        std::string raw = ReadAll(PhrasesPath());
         if (raw.empty()) return;
         for (auto& line : Split(raw, '\n'))
         {
             std::string l = line;
             if (!l.empty() && l.back() == '\r') l.pop_back();
-            size_t t1 = l.find('\t');
-            if (t1 == std::string::npos) continue;
-            size_t t2 = l.find('\t', t1 + 1);
-            if (t2 == std::string::npos) continue;
-            std::wstring word = FromUtf8(l.substr(0, t1));
-            std::string key = l.substr(t1 + 1, t2 - t1 - 1);
-            int count = std::atoi(l.substr(t2 + 1).c_str());
-            if (!word.empty() && !key.empty() && count > 0)
-                _userDict[key].push_back({ word, count });
+            if (l.size() >= 3 && (unsigned char)l[0] == 0xEF &&
+                (unsigned char)l[1] == 0xBB && (unsigned char)l[2] == 0xBF)
+                l.erase(0, 3); // UTF-8 BOM
+            size_t tab = l.find('\t');
+            if (tab == std::string::npos) continue;
+            std::string abbrev = l.substr(0, tab);
+            std::wstring phrase = FromUtf8(l.substr(tab + 1));
+            if (abbrev.empty() || phrase.empty()) continue;
+            std::string norm;
+            for (char c : abbrev)
+            {
+                char lc = (c >= 'A' && c <= 'Z') ? (char)(c + 32) : c;
+                if (lc >= 'a' && lc <= 'z') norm.push_back(lc);
+            }
+            if (norm.size() < 2 || norm.size() > 16 || norm.size() != abbrev.size() ||
+                phrase.size() > 200)
+                continue;
+            _phrases[norm].push_back(std::move(phrase));
         }
-        BuildUserInitIndex();
-        LX_LOG(L"py", L"用户词典加载: %zu 个拼音键, %zu 个简拼键",
-               _userDict.size(), _userByInit.size());
+        LX_LOG(L"py", L"自定义短语加载: %zu 个缩写", _phrases.size());
     }
 
     // 构建用户词简拼索引（调用方持 _udMtx）：全拼键切出音节，取首字母串

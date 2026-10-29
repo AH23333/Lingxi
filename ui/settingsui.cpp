@@ -7,6 +7,7 @@
 //
 #include "settingsui.h"
 #include "hotphraseui.h"
+#include "phraseui.h"
 
 #include <shellapi.h>
 #include <commdlg.h>
@@ -292,6 +293,7 @@ constexpr int IDC_CMB_SKIN = 115;
 constexpr int IDC_CHK_LLMRERANK = 116;
 constexpr int IDC_CHK_LLMMULTIPATH = 119; // LLM 多路采样（R3 §3，默认关）
 constexpr int IDC_BTN_HOTPHRASES = 118; // 快捷短语管理入口
+constexpr int IDC_BTN_PHRASES = 120;    // R2 自定义短语管理入口
 
 HWND g_hMain = nullptr;    // 隐藏消息窗口（托盘宿主）
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
@@ -1179,6 +1181,9 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_BTN_HOTPHRASES:
             ShowHotPhraseWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE), hwnd);
             return 0;
+        case IDC_BTN_PHRASES:
+            ShowPhraseWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE), hwnd);
+            return 0;
         }
         break;
 
@@ -1543,6 +1548,9 @@ void CreateSettingsWindow(HINSTANCE hInst)
     mkRow(L"用户词典", L"管理用户词典与自定义词条", hBtnDict, CK_BUTTON, 130);
     HWND hBtnPhrases = mkBtn(L"管理短语", IDC_BTN_HOTPHRASES);
     mkRow(L"快捷短语", L"查看和维护快捷短语", hBtnPhrases, CK_BUTTON, 130);
+    HWND hBtnCphrases = mkBtn(L"管理短语", IDC_BTN_PHRASES);
+    mkRow(L"自定义短语", L"缩写一打就出长句（如 addr→地址，整串输入触发）",
+          hBtnCphrases, CK_BUTTON, 130);
 
     // ---- 页 5：智能 ----
     addPage(L"智能");

@@ -1109,6 +1109,106 @@ int wmain()
                 }
             }
 
+            // P12. R2 自定义短语：缩写整串命中注入置顶，热载增删生效
+            {
+                wchar_t appdata[MAX_PATH] = {0};
+                GetEnvironmentVariableW(L"APPDATA", appdata, MAX_PATH);
+                std::wstring dir = std::wstring(appdata) + L"\\LingxiIme";
+                CreateDirectoryW(dir.c_str(), NULL);
+                std::wstring ppath = dir + L"\\phrases.txt";
+                std::vector<uint8_t> backup;
+                bool existed = false;
+                HANDLE hb = CreateFileW(ppath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                if (hb != INVALID_HANDLE_VALUE)
+                {
+                    existed = true;
+                    DWORD sz = GetFileSize(hb, NULL);
+                    backup.resize(sz);
+                    DWORD rd = 0;
+                    ReadFile(hb, backup.data(), sz, &rd, NULL);
+                    CloseHandle(hb);
+                }
+
+                // 写测试短语（UTF-8 带 BOM）：addr→地址长句；sj→收件人一行
+                auto wToUtf8 = [](const std::wstring& w) {
+                    if (w.empty()) return std::string();
+                    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(),
+                                                NULL, 0, NULL, NULL);
+                    std::string s(n, 0);
+                    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(),
+                                        s.data(), n, NULL, NULL);
+                    return s;
+                };
+                const std::wstring kAddr = L"某省某市某区幸福路88号";
+                std::string content = "\xEF\xBB\xBF" +
+                    wToUtf8(L"addr\t" + kAddr + L"\r\n") +
+                    wToUtf8(L"sj\t收件人：灵犀（13800000000）\r\n");
+                {
+                    HANDLE hw = CreateFileW(ppath.c_str(), GENERIC_WRITE, 0, NULL,
+                                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                    DWORD wr = 0;
+                    WriteFile(hw, content.data(), (DWORD)content.size(), &wr, NULL);
+                    CloseHandle(hw);
+                }
+                py->ReloadUserDict();
+
+                // 整串命中：addr 首选=长句
+                {
+                    lingxi::Prediction r = py->Predict(L"addr");
+                    bool ok = !r.cands.empty() && r.cands[0] == kAddr;
+                    wchar_t detail[192];
+                    _snwprintf_s(detail, _TRUNCATE, L"first='%ls'",
+                                 r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                    Report(ok, "R2 phrase exact trigger", detail);
+                }
+                // 大小写归一：ADDR 同样命中
+                {
+                    lingxi::Prediction r = py->Predict(L"ADDR");
+                    bool ok = !r.cands.empty() && r.cands[0] == kAddr;
+                    Report(ok, "R2 phrase case-insensitive",
+                           r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                }
+                // 与 R3 共存：sj=时间触发 + 短语注入（短语在时间之上）
+                {
+                    lingxi::Prediction r = py->Predict(L"sj");
+                    bool ok = !r.cands.empty() && r.cands[0] == L"收件人：灵犀（13800000000）" &&
+                              r.cands.size() > 1 && r.cands[1].find(L":") != std::wstring::npos;
+                    wchar_t detail[192];
+                    _snwprintf_s(detail, _TRUNCATE, L"first='%ls' second='%ls'",
+                                 r.cands.empty() ? L"<none>" : r.cands[0].c_str(),
+                                 r.cands.size() > 1 ? r.cands[1].c_str() : L"<none>");
+                    Report(ok, "R2 phrase above R3 datetime", detail);
+                }
+                // 非整串不命中：addrx 首选不是短语
+                {
+                    lingxi::Prediction r = py->Predict(L"addrx");
+                    bool ok = r.cands.empty() || r.cands[0] != kAddr;
+                    Report(ok, "R2 phrase no hijack on longer input",
+                           r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                }
+                // 热载移除：删文件+重载后不再注入
+                DeleteFileW(ppath.c_str());
+                py->ReloadUserDict();
+                {
+                    lingxi::Prediction r = py->Predict(L"addr");
+                    bool gone = true;
+                    for (const auto& w : r.cands)
+                        if (w == kAddr) { gone = false; break; }
+                    Report(gone, "R2 phrase hot-unload",
+                           r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                }
+                // 恢复原文件（无则保持删除）
+                if (existed)
+                {
+                    HANDLE hw = CreateFileW(ppath.c_str(), GENERIC_WRITE, 0, NULL,
+                                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                    DWORD wr = 0;
+                    WriteFile(hw, backup.data(), (DWORD)backup.size(), &wr, NULL);
+                    CloseHandle(hw);
+                }
+            }
+
             delete py;
         }
     }

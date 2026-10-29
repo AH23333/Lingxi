@@ -9,6 +9,7 @@
 #include "pipeserver.h"
 #include "settingsui.h"
 #include "hotphraseui.h"
+#include "phraseui.h"
 #include "symbolpanel.h"
 #include "engine/predictor.h"
 #include "../common/log.h"
@@ -324,6 +325,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     // 用户词典管理变更后让拼音引擎重新加载
     if (pinyinEngine)
         lingxi::SetUserDictReloadCallback([&] { pinyinEngine->ReloadUserDict(); });
+    // R2 自定义短语：与用户词典同一热载通道（phrases.txt 在同一次重载里装入）
+    lingxi::SetPhrasesChangedCallback([&] { if (pinyinEngine) pinyinEngine->ReloadUserDict(); });
     lingxi::InitTrayAndSettings(hInst); // 托盘 + 设置入口（右下角）
 
     // 单实例命令转发：命名事件（自动重置）+ 隐藏通知窗口 + 等待线程

@@ -63,6 +63,7 @@
     <ClCompile Include="pipeserver.cpp" />
     <ClCompile Include="settingsui.cpp" />
     <ClCompile Include="hotphraseui.cpp" />
+    <ClCompile Include="phraseui.cpp" />
     <ClCompile Include="symbolpanel.cpp" />
     <ClCompile Include="engine\ngram.cpp" />
     <ClCompile Include="engine\llm.cpp" />
@@ -73,6 +74,7 @@
     <ClInclude Include="pipeserver.h" />
     <ClInclude Include="settingsui.h" />
     <ClInclude Include="hotphraseui.h" />
+    <ClInclude Include="phraseui.h" />
     <ClInclude Include="symbolpanel.h" />
     <ClInclude Include="uistyle.h" />
     <ClInclude Include="engine\predictor.h" />
