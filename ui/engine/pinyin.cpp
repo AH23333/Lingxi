@@ -137,6 +137,45 @@ std::string ShuangpinToQuanpin(const std::string& sp)
 }
 
 // ---------------------------------------------------------------------------
+// R4 拼音纠错（引擎音节切分层，GAP-VS-MSFT §8 R4）：仅当子串不是合法音节时
+// 尝试常见误拼改写，改写后仍须命中音节表才生效（方向单一，不做双向猜测）：
+//   ① 韵母全写 → 缩写：iou→iu / uei→ui / uen→un（liou→liu、shuei→shui、
+//      chuen→chun）——词典与音节表均用缩写形，全写形态今天必落空候选；
+//   ② 手滑颠倒：gn → ng（shegn→sheng、magn→mang）；
+//   ③ 丢 g 补全：末尾 n → ng（zhon→zhong、din→ding）——仅当补后命中。
+// 安全性：合法音节（ren/nv/lve…）永远不进本函数；跨音节边界串（yingnuo）
+// 的改写形（yinng/yinnu）不命中音节表自然出局——纠错只救活"打错必挂"的
+// 输入，不劫持任何本来合法的切分；与合法路径并存时靠 DP cost 落败让位。
+// ---------------------------------------------------------------------------
+bool CorrectSyllableTypo(const std::string& s, std::string& out)
+{
+    if (s.size() < 3) return false;
+    static const char* kFull[] = { "iou", "uei", "uen" };
+    static const char* kAbbr[] = { "iu", "ui", "un" };
+    for (int i = 0; i < 3; i++)
+    {
+        size_t p = s.find(kFull[i]);
+        if (p != std::string::npos)
+        {
+            out = s.substr(0, p) + kAbbr[i] + s.substr(p + 3);
+            return true;
+        }
+    }
+    size_t p = s.find("gn");
+    if (p != std::string::npos)
+    {
+        out = s.substr(0, p) + "ng" + s.substr(p + 2);
+        return true;
+    }
+    if (s.back() == 'n')
+    {
+        out = s + "g";
+        return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------------------
 // 音节单元与切分路径
 // ---------------------------------------------------------------------------
 struct SyllUnit
@@ -682,8 +721,18 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
             for (int L = 1; L <= 6 && i + L <= bound; L++)
             {
                 std::string s = in.substr(i, L);
-                if (!_syllables.count(s)) continue;
-                Extend(dp, i, i + L, SyllUnit{ SyllUnit::FULL, s }, 2);
+                if (_syllables.count(s))
+                {
+                    Extend(dp, i, i + L, SyllUnit{ SyllUnit::FULL, s }, 2);
+                    continue;
+                }
+                // R4 拼音纠错：非合法音节时尝试常见误拼改写，改写命中音节表
+                // 才扩展（rawLen=原串长，供 cover 回放不错位）。加 3 罚分：
+                // 高于简拼(4/格)的正常路径——正常读法永远优先，仅救活
+                // "打错必挂"的输入；残段(PARTIAL)纠错暂不支持。
+                std::string fixedSyl;
+                if (CorrectSyllableTypo(s, fixedSyl) && _syllables.count(fixedSyl))
+                    Extend(dp, i, i + L, SyllUnit{ SyllUnit::FULL, fixedSyl, L }, 5);
             }
             // 零声母简写兜底（B3）：i/u 打头省略 y/w 的写法作为完整音节
             // 单元扩展，与上方逐字全拼/简拼并存，由 DP cost 自然竞争；

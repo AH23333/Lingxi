@@ -1037,6 +1037,40 @@ int wmain()
                 else DeleteFileW(upath.c_str());
             }
 
+            // P10. R4 拼音纠错：常见误拼（韵母全写/gn 颠倒/丢 g）改写后仍出词
+            {
+                struct TypoCase { const wchar_t* input; const wchar_t* expect; };
+                const TypoCase kTypos[] = {
+                    // ① 韵母全写 → 缩写（liou→liu、shuei→shui、chuen→chun）
+                    { L"niou", L"牛" }, { L"shuei", L"水" }, { L"chuen", L"春" },
+                    // ② gn → ng 颠倒（shegn→sheng、magn→mang）
+                    { L"shegn", L"生" }, { L"magn", L"忙" },
+                    // ③ 丢 g 补全（zhon→zhong、din→ding、son→song）
+                    { L"zhon", L"中" }, { L"din", L"定" }, { L"son", L"送" },
+                };
+                for (const auto& tc : kTypos)
+                {
+                    lingxi::Prediction r = py->Predict(tc.input);
+                    bool found = false;
+                    for (const auto& w : r.cands)
+                        if (w.find(tc.expect) != std::wstring::npos) { found = true; break; }
+                    wchar_t detail[160];
+                    _snwprintf_s(detail, _TRUNCATE, L"'%ls' 含'%ls'=%d (cands=%zu first='%ls')",
+                                 tc.input, tc.expect, found ? 1 : 0, r.cands.size(),
+                                 r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                    Report(found, "R4 typo correction", detail);
+                }
+                // 边界安全：纠错不得劫持合法切分——ren 的首选仍是"人"
+                {
+                    lingxi::Prediction r = py->Predict(L"ren");
+                    bool ok = !r.cands.empty() && r.cands[0].find(L"人") != std::wstring::npos;
+                    wchar_t detail[160];
+                    _snwprintf_s(detail, _TRUNCATE, L"first='%ls'",
+                                 r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                    Report(ok, "R4 valid syllable not hijacked", detail);
+                }
+            }
+
             delete py;
         }
     }
