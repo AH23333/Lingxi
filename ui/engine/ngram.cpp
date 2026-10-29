@@ -149,31 +149,14 @@ private:
 
     void PredictChinese(const std::wstring& ctx, Prediction& pred)
     {
-        // 统计尾部连续 CJK 数：中文上下文至少 1 字才建议
-        size_t i = ctx.size();
-        while (i > 0 && IsCjkChar(ctx[i - 1])) i--;
-        size_t cjkRun = ctx.size() - i;
-        if (cjkRun == 0 || _zh.empty()) return;
-
-        wchar_t lastChar = ctx.back();
-
-        // M3 策略（诚实定位：无共现语料，质量占位，M4 由 LLM 接管）：
-        // 下一词建议 = 词频表头部的高频词（多为"了/是/在/和"类接续字词），
-        // 跳过与上文尾部重叠的候选（与尾字相同的单字、与尾 1-2 字相同的双字），
-        // 避免"……不错"→"不错"这类重复/无意义候选（用户实测报告的"完全重复"
-        // 在词表引擎上的同形路径）。
-        for (const auto& e : _zh)
-        {
-            bool dup = false;
-            if (e.word.size() == 1)
-                dup = (e.word[0] == lastChar);
-            else if (e.word.size() == 2 && cjkRun >= 2)
-                dup = (ctx.compare(ctx.size() - 2, 2, e.word) == 0);
-            if (dup) continue;
-            pred.cands.push_back(e.word);
-            if (pred.cands.size() >= kMaxCands) break;
-        }
-        // replaceLen=0：纯插入（中文续写不做替换）
+        // M3 词频表头部占位于 2026-10-29 退役（用户投诉「候选污染」）：
+        // 旧版对任何中文上下文返回词频表头部（"了/是/在/和/有/他/不/我/的…"
+        // 高频字词），注释自认"质量占位，M4 由 LLM 接管"——LLM 一空
+        // （回显剥净/生成失败）整张垃圾列表就漏给用户。中文续写由 LLM
+        // 独占；词表引擎只做英文前缀补全。真实中文 ngram 共现模型接入
+        // （R3 尾巴）前不再给中文上下文出占位候选。
+        (void)ctx;
+        (void)pred;
     }
 
     std::vector<WordEntry> _en;
@@ -335,6 +318,68 @@ std::wstring StripContinuationEcho(std::wstring cont, const std::wstring& tail)
         if (!matched || !full) break;
     }
     return any ? body : cont;
+}
+
+// ---- 补全候选三重去重（2026-10-29 用户投诉「AI 补全词大量重复」修复）----
+// 形态取证见 --probe-typing 与 predictor.h 注释。
+namespace {
+
+// 归一（去重比较口径）：剥首尾空白/句读（IsEchoSkippable 同集）
+std::wstring NormCandForDedup(const std::wstring& s)
+{
+    size_t b = 0, e = s.size();
+    while (b < e && IsEchoSkippable(s[b])) b++;
+    while (e > b && IsEchoSkippable(s[e - 1])) e--;
+    return s.substr(b, e - b);
+}
+
+// 候选与上文的字符二元组重叠率（标点/空白断组；连续真续写偶有一组撞上
+// 不会过阈值，整段复读必过）
+double CandCtxOverlap(const std::wstring& cand, const std::wstring& ctx)
+{
+    size_t total = 0, hit = 0;
+    wchar_t prev = 0;
+    for (wchar_t ch : cand)
+    {
+        if (IsEchoSkippable(ch)) { prev = 0; continue; }
+        if (prev != 0)
+        {
+            total++;
+            for (size_t k = 1; k < ctx.size(); k++)
+                if (ctx[k - 1] == prev && ctx[k] == ch) { hit++; break; }
+        }
+        prev = ch;
+    }
+    return total == 0 ? 0.0 : (double)hit / (double)total;
+}
+
+} // namespace
+
+std::vector<std::wstring> DedupCompletions(const std::vector<std::wstring>& cands,
+                                           const std::wstring& context)
+{
+    std::vector<std::wstring> out;
+    out.reserve(cands.size());
+    for (const auto& raw : cands)
+    {
+        std::wstring n = NormCandForDedup(raw);
+        if (n.empty()) continue;
+        // ③ 上文复读：二元组重叠率 ≥60% 剔除（0.5B 模型循环复读已输入内容）
+        if (n.size() >= 2 && !context.empty() && CandCtxOverlap(n, context) >= 0.6)
+            continue;
+        bool dropped = false;
+        for (size_t k = 0; k < out.size(); k++)
+        {
+            std::wstring kn = NormCandForDedup(out[k]);
+            if (kn == n) { dropped = true; break; }                 // ① 归一相等
+            if (kn.size() >= 2 && n.compare(0, kn.size(), kn) == 0) // ② 新项是已选项的延伸
+            { dropped = true; break; }                              //   → 保留较短
+            if (n.size() >= 2 && kn.compare(0, n.size(), n) == 0)   // ② 已选项是新项的延伸
+            { out[k] = raw; dropped = true; break; }                //   → 换成较短
+        }
+        if (!dropped) out.push_back(raw);
+    }
+    return out;
 }
 
 IPredictor* CreateChainPredictor(std::vector<IPredictor*>&& chain)

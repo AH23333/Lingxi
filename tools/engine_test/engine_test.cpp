@@ -196,14 +196,15 @@ int wmain()
         Report(ok, "en completion: good inte", detail);
     }
 
-    // 3. 中文高频接续："今天天气不错" 应给出非空候选
+    // 3. 中文上下文：M3 词频占位已退役（2026-10-29「候选污染」修复）——
+    //    不再返回"了/是/在/和…"高频字垃圾列表；中文续写由 LLM 独占
     {
         lingxi::Prediction r = p->Predict(L"今天天气不错");
         wchar_t detail[160];
         _snwprintf_s(detail, _TRUNCATE, L"cands=%zu first='%ls'",
                      r.cands.size(),
                      r.cands.empty() ? L"" : r.cands[0].c_str());
-        Report(!r.cands.empty(), "zh continuation: 今天天气不错", detail);
+        Report(r.cands.empty(), "zh continuation: placeholder junk retired", detail);
     }
 
     // 4. 空上下文：不产生任何候选
@@ -1161,6 +1162,55 @@ int wmain()
                          r.cands.size(), r.cands.empty() ? L"" : r.cands[0].c_str());
             Report(ok, "chain: real wordlist pure-ascii boundary", detail);
             delete c;
+        }
+
+        // E8. DedupCompletions：补全候选三重去重矩阵（2026-10-29「AI 补全大量重复」）
+        {
+            auto dedupCase = [](const std::vector<std::wstring>& in, const std::wstring& ctx,
+                                const std::vector<std::wstring>& expect, const char* name)
+            {
+                std::vector<std::wstring> got = lingxi::DedupCompletions(in, ctx);
+                bool ok = got == expect;
+                std::wstring inj, gotj;
+                for (size_t k = 0; k < in.size(); k++)
+                {
+                    if (k) inj += L"|";
+                    inj += in[k];
+                }
+                for (size_t k = 0; k < got.size(); k++)
+                {
+                    if (k) gotj += L"|";
+                    gotj += got[k];
+                }
+                wchar_t detail[256];
+                _snwprintf_s(detail, _TRUNCATE, L"in[%ls] ctx='%ls' -> [%ls]",
+                             inj.c_str(), ctx.c_str(), gotj.c_str());
+                Report(ok, name, detail);
+            };
+            // ① 归一相等：同源首句/全句只差尾标点 → 保留首个
+            dedupCase({ L"散心", L"散心。" }, L"", { L"散心" }, "dedup: norm-equal keeps first");
+            dedupCase({ L"a text", L"a text." }, L"", { L"a text" }, "dedup: en norm-equal");
+            // ② 前缀堆叠：全句是首句的延伸 → 保留较短（0.5B 长尾易循环）
+            dedupCase({ L"晴，气温20℃-30℃", L"晴，气温20℃-30℃，湿度70%-80%。" }, L"",
+                      { L"晴，气温20℃-30℃" }, "dedup: prefix stack keeps short");
+            // ② 长在前短在后 → 换短
+            dedupCase({ L"可以去公园散步，享受大自然。", L"可以去公园散步" }, L"",
+                      { L"可以去公园散步" }, "dedup: reverse order swaps to short");
+            // ② 单字前缀不合并（"天"不足以证明同源，③ 兜底）
+            dedupCase({ L"天", L"天，你好" }, L"", { L"天", L"天，你好" },
+                      "dedup: 1-char prefix not merged");
+            // ③ 上文复读：整段复读已输入内容 → 剔除，保留真续写
+            dedupCase({ L"天，今天天气真不错", L"可以去公园散步" },
+                      L"今天天气真不错，我们一起去公园",
+                      { L"可以去公园散步" }, "dedup: context loop dropped");
+            // ③ 不误杀：真续写与上文仅零星重叠
+            dedupCase({ L"好，天气真好，出门可以穿短袖短裤" }, L"今天天气真",
+                      { L"好，天气真好，出门可以穿短袖短裤" }, "dedup: real continuation kept");
+            // ③ 英文复读
+            dedupCase({ L"nice day", L"for walking" }, L"have a nice day",
+                      { L"for walking" }, "dedup: en context loop dropped");
+            // 空/纯标点候选剔除
+            dedupCase({ L"，", L"好" }, L"", { L"好" }, "dedup: punct-only dropped");
         }
     }
 

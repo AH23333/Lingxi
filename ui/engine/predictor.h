@@ -76,6 +76,18 @@ IPredictor* CreatePredictorChain(IPredictor* sharedLlm = nullptr);
 // 实现于 ngram.cpp（engine_test 直接单测）。
 std::wstring StripContinuationEcho(std::wstring cont, const std::wstring& tail);
 
+// 补全候选三重去重（2026-10-29 用户投诉「AI 补全词大量重复」修复）。
+// 实测三种重复形态（--probe-typing 取证）：
+//   ① 归一相等：同源"首句/全句"对只差尾标点（"散心" vs "散心。"）→ 保留首个；
+//   ② 前缀堆叠：首句与全句、贪心+采样近重复互为前缀（"晴，气温20℃-30℃" vs
+//      "晴，气温20℃-30℃，湿度70%-80%。"）→ 保留较短（0.5B 长尾易循环，短=安全），
+//      较短者 ≥2 字才合并（单字前缀"天"不足以证明同源）；
+//   ③ 上文复读：模型循环复读已输入内容（上文"…一起去公园"候选"天，今天天气
+//      真不错"）→ 候选与上文（标点/空白断组）的字符二元组重叠率 ≥60% 剔除。
+// context 为空时跳过 ③。实现于 ngram.cpp（engine_test 直接单测）。
+std::vector<std::wstring> DedupCompletions(const std::vector<std::wstring>& cands,
+                                           const std::wstring& context);
+
 // 上下文感知降级链（实现于 ngram.cpp，engine_test 用假引擎单测路由）：
 //   词中（尾部 ≥2 英文词符）→ 词表补全优先（replaceLen 语义正确）；
 //   纯 ASCII 上下文（整段 < 0x80，B4）→ 词表优先；其余引擎兜底时候选

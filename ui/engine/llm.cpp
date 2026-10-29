@@ -546,6 +546,9 @@ private:
                 }
             }
         }
+        // 三重去重（归一相等/前缀堆叠/上文复读）——实测逐键候选里一半是
+        // 另一半的加标点/加尾巴版，模型还会整段复读上文（--probe-typing 取证）
+        pred.cands = DedupCompletions(pred.cands, tail);
         return pred;
     }
 

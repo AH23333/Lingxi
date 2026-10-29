@@ -189,6 +189,51 @@ static int ProbeChain()
     return 0;
 }
 
+// 续写重复取证：逐字（中文）/逐词（英文）模拟打字走真实装配链，dump 每步候选。
+// 用于诊断「AI 补全词大量重复」三种形态：列表内重复 / 前缀堆叠 / 时间维重复。
+static int ProbeTyping()
+{
+    LX_LOG(L"typing", L"probe: 开始（真实装配链逐字模拟，首次含模型加载）");
+    lingxi::IPredictor* c = lingxi::CreatePredictorChain();
+    auto step = [&](const std::wstring& ctx)
+    {
+        uint64_t t0 = GetTickCount64();
+        lingxi::Prediction r = c->Predict(ctx);
+        std::wstring joined;
+        for (size_t k = 0; k < r.cands.size(); k++)
+        {
+            if (k) joined += L" || ";
+            joined += L"[" + std::to_wstring((int)k) + L"]" + r.cands[k];
+        }
+        LX_LOG(L"typing", L"ctx='%ls' -> %u cands %ls (%llu ms)",
+               ctx.c_str(), (uint32_t)r.cands.size(), joined.c_str(),
+               (unsigned long long)(GetTickCount64() - t0));
+    };
+    // 中文逐字（从第 2 字起——空/单字上下文多为空候选）
+    const wchar_t* zh = L"今天天气真不错，我们一起去公园散步吧";
+    for (size_t i = 2; i <= wcslen(zh); i++)
+        step(std::wstring(zh, i));
+    // 英文逐词
+    const wchar_t* en = L"Hello world, this is a nice day for ";
+    {
+        std::wstring acc;
+        const wchar_t* p = en;
+        while (*p)
+        {
+            const wchar_t* q = wcschr(p, L' ');
+            if (!q) q = p + wcslen(p);
+            acc.append(p, (size_t)(q - p));
+            step(acc);
+            if (!*q) break;
+            acc += L' ';
+            p = q + 1;
+        }
+    }
+    delete c;
+    LX_LOG(L"typing", L"probe: 结束");
+    return 0;
+}
+
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
 {
     lingxi::InitLogging(); // 按 LINGXI_LOG 环境变量开启热路径诊断日志
@@ -219,6 +264,12 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     if (argv && argc >= 2 && wcscmp(argv[1], L"--probe-chain") == 0)
     {
         int rc = ProbeChain();
+        LocalFree(argv);
+        return rc;
+    }
+    if (argv && argc >= 2 && wcscmp(argv[1], L"--probe-typing") == 0)
+    {
+        int rc = ProbeTyping();
         LocalFree(argv);
         return rc;
     }

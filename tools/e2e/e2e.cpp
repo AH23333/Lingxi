@@ -610,9 +610,12 @@ static bool InsertViaTsf(ITfContext* pCtx, const std::wstring& text)
     return SUCCEEDED(hr) && SUCCEEDED(hrSession);
 }
 
-static bool WaitTabEaten(ITfKeystrokeMgr* pKm)
+// maxLoops：默认 30×100ms=3s（英文词表补全，毫秒级出候选）。
+// 中文续写走 LLM（词表占位已退役 2026-10-29）：冷启动模型加载 + 负载下生成
+// 可达数秒，调用方传 120（12s）。
+static bool WaitTabEaten(ITfKeystrokeMgr* pKm, int maxLoops = 30)
 {
-    for (int i = 0; i < 30; i++)
+    for (int i = 0; i < maxLoops; i++)
     {
         PumpMessages();
         BOOL eaten = FALSE;
@@ -899,7 +902,9 @@ static bool RunScenario()
         if (InsertViaTsf(pCtx, L"今天天气不错"))
         {
             size_t sizeBefore = ReadFocusedText(pTm).size();
-            tabEaten = WaitTabEaten(pKm);
+            // LLM 冷启动/负载预算 12s（旧词表占位瞬时出候选时代 3s 够，
+            // 中文续写现在独走 LLM——词表占位退役后不再有瞬时兜底）
+            tabEaten = WaitTabEaten(pKm, 120);
             Report(tabEaten, "Tab eaten (Chinese)");
             if (!tabEaten) break; // fail-fast
             PumpMessages();
