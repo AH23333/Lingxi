@@ -435,7 +435,7 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 
 ## 2026-10-29 10:5x（Loomy 续轮：测试设置沙盒根治——回归互踩事故复盘）
 
-- 现场：HEAD 纯文档提交后 regress 全线红（engine 18 红/latency 11ms/模糊音全灭/deep T15 全红）。git log 现读+二进制时间戳比对排除代码回归，真凶=真实 HKCU 设置被历史测试刷零（PinyinEnabled=0 输入法瘫直通）——测试/用户共享注册表轨道的互踩，PITFALLS #32 立案。
+- 现场：HEAD 纯文档提交后 regress 全线红（engine 18 红/latency 11ms/模糊音全灭/deep T15 全红）。git log 现读+二进制时间戳比对排除代码回归，真凶=真实 HKCU 设置被历史测试刷零（PinyinEnabled=0 输入法瘫直通）——测试/用户共享注册表轨道的互踩，PITFALLS #43 立案（#32 同案并行版）。
 - 根治：settings 支持 `LINGXI_SETTINGS_NS` 基键切换（白名单字符校验，Load/Save 全走 ActiveKey）；engine_test/deep_test/e2e 启动自设沙盒键+清空（缺键=结构默认=断言基线，无需预写）；regress.cmd 注入 NS 双保险。**判据验证：regress 全链跑完，真实 HKCU 前后逐字节一致 ✅**；engine/deep/e2e 同轮全绿（tmp/regress-151329693）。
 - 善后：把被刷零的用户能力位恢复到正确默认（拼音/模糊/中标点/英补全/v 模式/Shift 切换=开），并以新二进制重启 LingxiUI（真实环境）。
 - UI 视觉/体验重做（10-29 任务记录）**开工前置=向用户取证具体差项**，本轮未动窗体代码，遵守该闸。

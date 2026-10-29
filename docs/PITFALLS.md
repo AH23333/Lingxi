@@ -251,7 +251,7 @@
 - **根因**：e2e 退出时 `taskkill /IM LingxiUI.exe /F` 偶发未杀净（输出被吞看不见失败）；后续 e2e 的 UI 二实例经转发器挂到残留上，CTF/TSF 焦点链被搅。
 - **正确做法**：e2e/regress/deep_test 前一律显式 `taskkill /f /im LingxiUI.exe`；判断"是否有残留"用 `Get-Process LingxiUI` 而非看日志；连续失败先做一次干净重启（杀残留）再下结论。
 
-### 32. 测试直写真实 HKCU 设置：一套回归能把用户输入法刷成"全瘫直通" ⭐
+### 43. （同 #32 案，本条给出根治全貌）测试直写真实 HKCU 设置：一套回归能把用户输入法刷成"全瘫直通" ⭐
 - **症状**：深夜全绿 regress，隔天 HEAD 纯文档提交后全线红（engine 18 项挂、latency 0.3→11ms、模糊音全灭、deep settle/T15 全红）——像代码回归，但 git log 现读证明没有代码提交。
 - **根因**：此前测试（半程退出/异常销毁）把真实 HKCU\Software\LingxiIme 能力位整体刷 0（PinyinEnabled=0，用户输入法当场瘫成直通）。词典侧早有 APPDATA 沙盒，设置侧没有等价物——测试进程与用户共享同一条注册表轨道，互踩只是时间问题。
 - **正确做法**：`LINGXI_SETTINGS_NS` 环境变量切换基键到 `Software\LingxiIme_<ns>`（角色白名单校验，Load/Save 同一入口 ActiveKey()）；三个测试程序启动自设 NS 并清空沙盒键——**缺键=结构默认=断言基线**，免预写；regress.cmd 注入双保险。硬判据=**回归前后真实 HKCU 快照逐字节一致**（10-29 实跑坐实：全链 ALL PASS 且注册表零改动）。收任何新设置键时维持"结构默认即基线"不变式；测试永远不写默认键。

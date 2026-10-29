@@ -110,7 +110,7 @@ bin\enginetest\engine_test.exe   :: 全部 PASS 则 exit=0
 
 ### 测试沙盒与双注册表轨道
 
-套件自带**词典 + 设置双沙盒**（APPDATA 隔离 + `LINGXI_SETTINGS_NS=test` 切基键）：测试永不写用户真实设置，用户改设置也不干扰测试基线；「回归前后真实 HKCU 逐字节一致」是硬判据（PITFALLS #32）。
+套件自带**词典 + 设置双沙盒**（APPDATA 隔离 + `LINGXI_SETTINGS_NS=test` 切基键）：测试永不写用户真实设置，用户改设置也不干扰测试基线；「回归前后真实 HKCU 逐字节一致」是硬判据（PITFALLS #43）。
 
 ### 端到端与深度测试（e2e / deep_test）
 
