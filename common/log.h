@@ -65,6 +65,15 @@ inline void AppendToFile(const wchar_t* line)
     LeaveCriticalSection(&GetFileLogState().cs);
 }
 
+// 时间戳前缀（事件间相对时延排查：响应往返、等待窗口覆盖性）
+inline void GetLogTimeStamp(wchar_t* ts, size_t cch)
+{
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    _snwprintf_s(ts, cch, _TRUNCATE, L"%02u:%02u:%02u.%03u",
+                 st.wHour, st.wMinute, st.wSecond, st.wMilliseconds);
+}
+
 // 关键日志：始终 OutputDebugStringW；LINGXI_LOG=1 时额外写文件。
 inline void LogLine(const wchar_t* tag, const wchar_t* fmt, ...)
 {
@@ -74,8 +83,10 @@ inline void LogLine(const wchar_t* tag, const wchar_t* fmt, ...)
     _vsnwprintf_s(buf, _TRUNCATE, fmt, args);
     va_end(args);
 
+    wchar_t ts[16];
+    GetLogTimeStamp(ts, 16);
     wchar_t line[600];
-    _snwprintf_s(line, _TRUNCATE, L"[Lingxi][%s] %s\n", tag, buf);
+    _snwprintf_s(line, _TRUNCATE, L"[%s][Lingxi][%s] %s\n", ts, tag, buf);
     OutputDebugStringW(line);
     AppendToFile(line);
 }
@@ -90,8 +101,10 @@ inline void LogLineV(const wchar_t* tag, const wchar_t* fmt, ...)
     _vsnwprintf_s(buf, _TRUNCATE, fmt, args);
     va_end(args);
 
+    wchar_t ts[16];
+    GetLogTimeStamp(ts, 16);
     wchar_t line[600];
-    _snwprintf_s(line, _TRUNCATE, L"[Lingxi][%s] %s\n", tag, buf);
+    _snwprintf_s(line, _TRUNCATE, L"[%s][Lingxi][%s] %s\n", ts, tag, buf);
     AppendToFile(line);
 }
 

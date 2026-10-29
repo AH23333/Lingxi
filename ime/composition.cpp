@@ -727,6 +727,7 @@ bool CTextService::CommitChinesePunct(WPARAM wParam)
     if (PinyinActive())
     {
         std::wstring hanzi;
+        WaitForLatestCandidates(400); // 与空格/数字键同口径：候选在途时兜底
         bool got = GetCandidate(0, hanzi);
         if (got) NotifyPicked(0); // 标点前的首选汉字也作为选字反馈
         if (!_inlineComp)
@@ -947,7 +948,10 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         // 拼音串已发出、候选可能还在路上（引擎 µs 级 + 管道往返数毫秒）。
         // 快打时字母上屏后极短时间按空格，候选尚未回包 —— 有界等待一次，
         // 避免"该出汉字的空格却把字母原样提交"。超时则维持原回退语义。
-        WaitForLatestCandidates(80);
+        // 预算 80→400ms：实测选字后 Learn 触发的磁盘写盘曾把候选响应拖到
+        // 464ms（现已在引擎侧后台化），重载机器上 Predict 本身可达 150ms+，
+        // 80ms 预算会被击穿 —— 候选就绪时该等待零开销，仅 pending 时兜底。
+        WaitForLatestCandidates(400);
         std::wstring hanzi;
         uint32_t cover = 0;
         if (GetCandidateEx(_pageStart, hanzi, cover)) { NotifyPicked(_pageStart); PinyinCommitHanzi(hanzi, cover); }
@@ -960,7 +964,7 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
             std::wstring hanzi;
             uint32_t cover = 0;
             uint32_t idx = _pageStart + (uint32_t)(wParam - L'1');
-            WaitForLatestCandidates(80);
+            WaitForLatestCandidates(400); // 与空格同口径：候选在途时有界等待
             if (GetCandidateEx(idx, hanzi, cover)) { NotifyPicked(idx); PinyinCommitHanzi(hanzi, cover); }
             else                                   PinyinCommitRaw();
             return;
@@ -971,6 +975,7 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         {
             std::wstring hanzi;
             uint32_t cover = 0;
+            WaitForLatestCandidates(400); // 与空格/数字键同口径：候选在途时兜底
             if (GetCandidateEx(0, hanzi, cover)) { NotifyPicked(0); PinyinCommitHanzi(hanzi, cover); }
             else                                  PinyinCommitRaw();
             // 部分提交后组合仍在（PinyinCommitHanzi 内已发起下一轮预测），

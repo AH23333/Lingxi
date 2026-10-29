@@ -16,11 +16,13 @@
 
 #include <algorithm>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <deque>
 #include <mutex>
 #include <string>
+#include <thread>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -578,6 +580,9 @@ private:
     struct UserInitPick { std::wstring word; int count; std::string fullKey; };
     std::unordered_map<std::string, std::vector<UserInitPick>> _userByInit;
     bool _userDirty = false;
+    // 后台落盘互斥位：磁盘 I/O 移出 _udMtx（持锁写盘+全量重建曾让 Predict
+    // 饥饿数百 ms——实测选字后下一帧候选响应 464ms，提交键超时上屏字母）。
+    std::atomic<bool> _persistBusy{false};
     // R2 自定义短语（GAP §8 R2）：缩写（NormalizeIn 口径小写字母串）→ 短语
     // 列表（同缩写多条按文件顺序全注入）。phrases.txt 与 userdict 同目录同锁
     // （_udMtx）——LoadUserDict 一并重载，UI 保存后经 ReloadUserDict 热生效。
@@ -1197,6 +1202,39 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         }
     }
 
+    // 单键增量更新简拼索引（调用方持 _udMtx）：Learn 热路径专用，替代旧的
+    // 锁内全量重建（全量 = 每键一次 EnumeratePaths，词表大时数百 ms 持锁，
+    // Predict 同锁被饿死）。语义与 BuildUserInitIndex 对该键完全一致。
+    void UpdateUserInitIndexLocked(const std::string& key)
+    {
+        // 擦旧：该全拼键的条目可能落在任意首字母桶（淘汰旧词后也须重写桶
+        // 内容），索引小，全索引扫一遍即可
+        for (auto it = _userByInit.begin(); it != _userByInit.end();)
+        {
+            auto& vec = it->second;
+            vec.erase(std::remove_if(vec.begin(), vec.end(),
+                                     [&key](const UserInitPick& p) { return p.fullKey == key; }),
+                      vec.end());
+            if (vec.empty()) it = _userByInit.erase(it);
+            else ++it;
+        }
+        auto dit = _userDict.find(key);
+        if (dit == _userDict.end() || dit->second.empty()) return;
+        // 与 BuildUserInitIndex 同口径：最优切分（cost 最小）取首字母串
+        std::vector<SegPath> sp = EnumeratePaths(key);
+        if (sp.empty()) return;
+        const SegPath* best = &sp[0];
+        for (const auto& p : sp)
+            if (p.cost < best->cost) best = &p;
+        std::string init;
+        for (const auto& u : best->units)
+            if (!u.text.empty()) init.push_back(u.text[0]);
+        if (init.empty()) return;
+        auto& vec = _userByInit[init];
+        for (const auto& up : dit->second)
+            vec.push_back({ up.word, up.count, key });
+    }
+
     // 原子落盘：先写 .tmp 再 MoveFileEx 替换。引擎（管道线程）与设置界面
     // （UI 线程）是同一文件的两个写者，任何一方都不允许让对方读到半截文件。
     static bool WriteFileAtomicA(const std::string& path, const std::string& content)
@@ -1221,10 +1259,9 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         return true;
     }
 
-    // 落盘（调用方必须已持有 _udMtx）。失败保持 _userDirty，下次学习时重试。
-    bool SaveUserDictLocked()
+    // 序列化用户词典（调用方持 _udMtx），文件格式不变
+    std::string SerializeUserDictLocked() const
     {
-        if (!_userDirty) return true;
         std::string content;
         for (const auto& kv : _userDict)
             for (const auto& up : kv.second)
@@ -1236,7 +1273,14 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 content += std::to_string(up.count);
                 content.push_back('\n');
             }
-        if (!WriteFileAtomicA(UserDictPath(), content)) return false;
+        return content;
+    }
+
+    // 落盘（调用方必须已持有 _udMtx）。失败保持 _userDirty，下次学习时重试。
+    bool SaveUserDictLocked()
+    {
+        if (!_userDirty) return true;
+        if (!WriteFileAtomicA(UserDictPath(), SerializeUserDictLocked())) return false;
         _userDirty = false;
         return true;
     }
@@ -1245,6 +1289,43 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     {
         std::lock_guard<std::mutex> lk(_udMtx);
         SaveUserDictLocked();
+    }
+
+    // 后台落盘：Learn 跑在管道读线程，持 _udMtx 同步写盘会延迟 CTX 帧分发
+    // 并让 Predict 同锁饿数百 ms。快照→清脏→锁外原子写；_persistBusy 保证
+    // 同一时刻只有一个落盘线程（Learn 有管道读线程与 UI 拾取回调两个入口）。
+    void KickPersist()
+    {
+        bool idle = false;
+        if (!_persistBusy.compare_exchange_strong(idle, true))
+            return; // 已有线程在跑：它收尾时会重查脏位
+        std::thread([this]()
+        {
+            for (;;)
+            {
+                std::string content;
+                {
+                    std::lock_guard<std::mutex> lk(_udMtx);
+                    if (!_userDirty) break;
+                    content = SerializeUserDictLocked();
+                    _userDirty = false; // 快照即清脏：写盘期间的新学习会重新置脏
+                }
+                if (!WriteFileAtomicA(UserDictPath(), content))
+                {
+                    std::lock_guard<std::mutex> lk(_udMtx);
+                    _userDirty = true; // 写失败恢复脏位，下次重试（原语义）
+                    break;
+                }
+            }
+            _persistBusy.store(false);
+            // 补漏：置 idle 与新 Learn 的 CAS 失败之间有窗口，重查一次脏位
+            bool dirtyNow = false;
+            {
+                std::lock_guard<std::mutex> lk(_udMtx);
+                dirtyNow = _userDirty;
+            }
+            if (dirtyNow) KickPersist();
+        }).detach();
     }
 
     // 用户选择反馈：该拼音串下，被选词计数 +1，落盘后下次同串置顶。
@@ -1277,9 +1358,9 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 vec.push_back({ word, 1 });
             }
             _userDirty = true;
-            SaveUserDictLocked();
-            BuildUserInitIndex(); // 新词即时可通过简拼调出
+            UpdateUserInitIndexLocked(key); // 单键增量：新词即时可简拼调出
         }
+        KickPersist(); // 磁盘 I/O 后台化：Predict/CTX 分发不再等写盘
         LX_LOG(L"py", L"学习: '%hs' -> '%hs'", key.c_str(), ToUtf8(word).c_str());
     }
 

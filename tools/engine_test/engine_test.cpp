@@ -995,7 +995,27 @@ int wmain()
                 Report(promoted, "learn: after feedback '脏' promoted to top",
                        r1.cands.empty() ? L"<none>" : r1.cands[0].c_str());
 
-                // 持久化：新建引擎实例（重新加载词典）后“脏”仍置顶
+                // 持久化：新建引擎实例（重新加载词典）后“脏”仍置顶。
+                // 落盘已后台化（Learn 即返回、detached 线程写盘）——轮询
+                // userdict 文件等异步写完成（测试数据只有"脏\tzang\t2"，
+                // 查 ASCII "zang" 即可），超时 2s 后照常创建实例让断言自己说话。
+                for (int wait = 0; wait < 200; ++wait)
+                {
+                    HANDLE hf = CreateFileW(upath.c_str(), GENERIC_READ,
+                                            FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                    if (hf != INVALID_HANDLE_VALUE)
+                    {
+                        DWORD sz = GetFileSize(hf, NULL);
+                        std::vector<uint8_t> buf(sz ? sz : 1);
+                        DWORD rd = 0;
+                        ReadFile(hf, buf.data(), sz, &rd, NULL);
+                        CloseHandle(hf);
+                        std::string txt(reinterpret_cast<char*>(buf.data()), rd);
+                        if (txt.find("\tzang\t") != std::string::npos) break;
+                    }
+                    Sleep(10);
+                }
                 {
                     lingxi::IPredictor* py2 = lingxi::CreatePinyinPredictor();
                     lingxi::Prediction r2 = py2->Predict(L"zang");
@@ -1022,7 +1042,25 @@ int wmain()
                 Report(abbreviated, "learn: abbreviated 'mm' -> '喵喵'",
                        r4.cands.empty() ? L"<none>" : r4.cands[0].c_str());
 
-                // 恢复原有词典（无则删除测试文件）
+                // 恢复原有词典（无则删除测试文件）。喵喵学习的后台落盘必须先
+                // 落地，否则恢复备份后会被迟到的异步写覆盖成测试数据。
+                for (int wait = 0; wait < 200; ++wait)
+                {
+                    HANDLE hf = CreateFileW(upath.c_str(), GENERIC_READ,
+                                            FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                    if (hf != INVALID_HANDLE_VALUE)
+                    {
+                        DWORD sz = GetFileSize(hf, NULL);
+                        std::vector<uint8_t> buf(sz ? sz : 1);
+                        DWORD rd = 0;
+                        ReadFile(hf, buf.data(), sz, &rd, NULL);
+                        CloseHandle(hf);
+                        std::string txt(reinterpret_cast<char*>(buf.data()), rd);
+                        if (txt.find("\tmiaomiao\t") != std::string::npos) break;
+                    }
+                    Sleep(10);
+                }
                 if (existed)
                 {
                     HANDLE hw = CreateFileW(upath.c_str(), GENERIC_WRITE, 0, NULL,
