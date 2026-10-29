@@ -1076,7 +1076,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_sectionHwnds.clear();
     g_accentBtns.clear();
 
-    g_hSettings = CreateWindowExW(0, kSettingsWndClass, L"灵犀输入法设置",
+    g_hSettings = CreateWindowExW(WS_EX_COMPOSITED, kSettingsWndClass, L"灵犀输入法设置",
                                    WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
                                    WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME,
                                    CW_USEDEFAULT, CW_USEDEFAULT,
