@@ -38,6 +38,10 @@ tools\register.cmd Debug   :: 注册（需管理员：TSF TIP 注册写 HKLM）
 tools\unregister.cmd Debug :: 注销（需管理员）
 tools\imecheck.ps1         :: 注册状态自检
 
+:: 词库数据管线（幂等，随时可重放；fix_readings --check 已挂进 regress 闸门）
+python tools\build_pinyin.py --modern-only   :: 现代词层 + 多音读音补全重放到 zh_pinyin.txt
+python tools\fix_readings.py --dry           :: 只出多音缺口审计报告（tmp/readings_audit.txt），不改数据
+
 :: 词库数据管线（幂等，随时可跑；fix_readings --check 已挂 regress 闸）
 python tools\build_pinyin.py --modern-only  :: 现代词层+多音补全重放到 zh_pinyin.txt
 python tools\fix_readings.py --dry          :: 只出多音缺口审计报告，不改数据
