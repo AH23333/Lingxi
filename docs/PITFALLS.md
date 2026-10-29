@@ -265,3 +265,24 @@
 - **症状**：设置窗转发排查中，Get-Process 明明看到 LingxiUI 活着，但 OpenEvent("Local\LingxiUI_ShowSettings") 返回 0、日志文件不存在——一度误判"新构建启动即崩"。
 - **根因**：该实例是**用户桌面会话**里宿主进程（TSF DLL EnsureUIRunning）自动拉起的；agent 的 PowerShell 在另一会话。`Local\` 前缀命名对象（事件/互斥体）**按会话隔离**，跨会话不可见；`\\.\pipe\` 命名管道则跨会话可用。日志"不存在"同理——用户会话实例的 LINGXI_LOG 环境本来就没开。
 - **正确做法**：诊断常驻程序前先问"这个实例是谁拉起的、在哪个会话"——同会话自己 Start-Process 的实例才有观测通道（事件/日志/窗口枚举都可靠）；跨会话只剩进程表与全局对象可用。转发/单实例类问题**优先在同会话复现**（本会话早期同会话转发成功有截图为证），别在跨会话残影里追鬼。
+
+### 46. TSF 真机按键门控：OnKeyDown/OnKeyUp 只在 Test 声明 eaten 后被真实应用调用，deep_test 直调绕过——测试绿真机死码 ⭐
+- **症状**：Shift/CapsLock 中英切换逻辑齐全（簿记+翻转+toast），deep_test T16 直调 pKm->KeyDown/KeyUp 全绿；真机（WT/记事本）按键毫无反应。
+- **根因**：真机 TSF 分发（CUAS/TSF-aware 宿主）先问 OnTestKeyDown，**只把声明 eaten 的键交给 OnKeyDown**；OnTestKeyUp 同理。Shift/Ctrl 在 PinyinKeyEaten 永不声明、OnTestKeyUp 恒返回 FALSE → 真机 OnKeyDown/OnKeyUp 全程不被调用，切换逻辑是死码。deep_test 直调 pKm->KeyDown 绕过了这道门控，合成测试无法暴露。放大器：穿透键（大写字母、Ctrl+Shift+K 的 K）真机也永远到不了 OnKeyDown，`_shiftUsed` 和弦检测同样失效。
+- **正确做法**（e6c3d89）：切换键在 Test 阶段 ToggleKeyClaim 主动认领（Shift=mode1/2、Ctrl=mode2/4、Caps=mode3）；按住期间任何其他键**在 Test 阶段**标记 used；OnKeyDown 对认领键统一 eaten=TRUE 返回（Test 吞/KeyDown 放不一致会让宿主只见半程消息）；OnTestKeyUp 与 KeyDown **对称认领**（宿主按消息跟踪 Shift 才不滞留下压态；GetKeyState 类检测不受消息过滤影响，认领安全）。OnSetFocus 复位簿记自愈丢 KeyUp。**规约：任何"按键行为"功能都必须过 Test 门控设计，deep_test 直调只验证逻辑不验证分发。**
+
+### 47. 词典窗索引漂移：引擎学习并发重写 userdict.txt，按列表索引删/调会落空或删错
+- **症状**：用户词典"能加不能删"——添加有效，删除选中毫无反应（sel<0 或索引与文件错位时静默）。
+- **根因**：引擎每次选词学习即落盘重写 userdict.txt（学习即持久化），词典窗列表展示与删除之间文件随时被并发重写；LB_GETCURSEL 的索引在删除瞬间对应了另一个条目或越界。删除失败还无任何提示（sel<0 直接 return）。
+- **正确做法**（c93121e）：删除/提升/降低改按**内容匹配**（列表行解析 word+key，count 可变不参与匹配），失败回退索引路径；sel<0 明示"请先选择词条"；删除后重选相邻行并明示结果。**规约：UI 列表操作一个会被后台并发重写的文件时，索引只是渲染产物，操作必须锚定内容。**
+
+### 48. C/C++ 注释行尾反斜杠的行拼接把下一行吞进注释——C2065 假报"标识符未声明"
+- **症状**：`slash[1] = 0; // ...\bin\Debug\` 下一行 `wchar_t script[...]` 声明，编译报 C2065 "script 未声明"。
+- **根因**：行尾 `\` + 换行 = 行拼接（line splicing），物理下一行成为注释延续，声明整行被吞。注释里的 Windows 路径习惯性以 `\` 结尾最易踩。
+- **正确做法**：注释里的路径永远不以反斜杠结尾（用 `/` 或省略尾分隔符）；遇到"声明明明在却报未定义"优先查上一行行尾。
+
+### 49. e2e 与真机用户抢 ctfmon 前台：用户实时切换 IME 会把 e2e 激活的配置拉走，typing pass-through 三连红
+- **症状**：大修验证轮 e2e 三 attempt 全红在 typing pass-through；细节 attempts 2/3 显示 `foreground = other TIP`，而 ActivateLanguageProfile 本身 PASS。
+- **根因**：SetActiveProfile 是桌面级全局状态；用户正在真机测试新构建（活跃切换 IME），在 e2e 激活与打字断言之间把前台配置切走。同 binary 等待复跑即全绿（attempt2 24 PASS/0 FAIL）。
+- **正确做法**：跑 e2e/deep_test 避开用户活跃窗口（此前 #19 只记录了 ctfmon 竞争负载维度，本条是前台配置被主动切换维度）；连续多 attempt 同点红且伴随 foreground 漂移时，先怀疑环境再怀疑代码。
+

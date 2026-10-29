@@ -475,3 +475,16 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 - **regress 二跑 ALL PASS**（engine_test 186 断言含 E8 去重矩阵 9 例、deep_test 扫描式 T14、e2e attempt 1 过）。latency 首跑 15-19ms 红=Qoder 后台负载噪音（同 binary 空闲复跑 8.9ms 过）。
 - **下一优先级**：候选词优化（排序/视觉/操作/污染）与设置页重做（视觉/组织/交互/尺寸）——用户三问全选"全都要"，开工前需再取证具体样式期望。
 
+## 2026-10-29 晚 · 用户报障大修轮（真机切换死码根治 + 一键卸载器）
+
+用户实测反馈四项：Shift/中英切换不生效、设置页开关体感无效、词典能加不能删、设置界面锯齿；定性要求"大修"+完整应用（卸载不留幽灵输入法）。
+
+- **真机中英切换死码根治 `e6c3d89`**：根因=TSF 真机门控——真实应用只把 OnTestKeyDown 声明 eaten 的键交给 OnKeyDown/OnKeyUp，deep_test 直调 pKm->KeyDown 绕过门控 → 切换逻辑测试全绿而真机全程死码（Shift/Ctrl 在 PinyinKeyEaten 永不声明、OnTestKeyUp 恒 FALSE，簿记与翻转都不执行）。修复四件套：ToggleKeyClaim 按 toggleMode 在 Test 阶段认领 Shift(1/2)/Ctrl(2/4)/CapsLock(3)；切换键按住期间任何其他键（含穿透键）在 Test 阶段标记 used（穿透键真机永远到不了 OnKeyDown，原和弦检测漏挡 Ctrl+Shift+K/大写字母）；OnKeyDown 对认领键统一吞下返回（不落 HandlePinyinKey——其对 VK_SHIFT 显式放行，Test 吞/KeyDown 放不一致）；OnTestKeyUp 与 KeyDown 对称认领（原恒 FALSE，宿主按消息跟踪 Shift 会滞留下压态）。OnSetFocus 复位簿记自愈丢 KeyUp。deep_test T16 断言 expectEaten false→true（4 处）。
+- **词典"能加不能删"根治 `c93121e`**：引擎自学习每次选词落盘重写 userdict.txt，词典窗按列表索引删/调——用户浏览期间文件被并发重写，索引漂移后删除落空或删错；sel<0 还静默无反馈。UdDeleteSelected/UdNudgeSelected 改按 word+key 内容匹配（列表行"word    key    count"解析），失败回退索引，删除后保持选中位并明示结果（基础词典常见词仍在候选）。
+- **设置界面锯齿根治（同提交）**：GDI RoundRect/Ellipse 无抗锯齿。引入 GDI+（pragma 链接 gdiplus.lib，惰性 GdiplusStartup），GdipRoundRect（GraphicsPath+SmoothingModeAntiAlias，描边 PenAlignmentInset）/GdipFillEllipse 助手替换 5 处：导航药丸、白卡（1px 描边）、开关药丸（开/关+灰边）、滑钮圆、强调色按钮。
+- **一键零残留卸载器 `019fc4b`**：tools/uninstall.ps1（提权主体：语言列表摘灵犀 tips 空语言回退默认键盘 → regsvr32 /u 双位 → 皮带+背带 reg delete（CLSID x64/x86、CTF TIP HKLM/HKCU、设置键）→ SortOrder AssemblyItem 按 CLSID 枚举删（保其他输入法）→ 重启 ctfmon → 删 APPDATA 数据 → 8 项零残留自检 exit 残留数）+ uninstall.cmd（net session 检测+UAC 自重启包装）+ 托盘"卸载灵犀输入法..."入口（确认框列明动作→runas）。残留清单按 2026-10-29 实扫：HKCU CTF TIP 使能键、SortOrder 两叶子（0x0409/0x08004 的 00000001）、HKLM CTF TIP 类别树（含 CCF05DD7 历史残留）。
+- **"设置无效果"排查结论**：全部设置字段消费点在册（IME 侧 pinyinEnabled/shuangpin/cnPunct/vMode/toggleMode；UI/引擎侧 paused/enCompletion/candidateCount/darkMode/llmRerank/llmMultiPath/fuzzyPinyin/traditionalOutput/symbolHotkey/skinIndex/candidateFontSize），无断链。体感主因=运行中进程载旧二进制（.prev 热替换后需重启应用/重激活 IME 生效）+切换死码放大（切换不生效→"开关没用"）。用户重启应用复测后此条待销。
+- **验证**：deep_test attempt1 29/29（T16 四段切换全过）；e2e attempt2 全绿（24 PASS/0 FAIL，pass-through 'mor'/候选窗 rect/Tab 补全/中文续写/拼音 settle）。e2e 首轮三连红=用户实时测试切换 IME 抢 ctfmon 前台（foreground=other TIP），等待复跑即绿——大修期间跑 e2e 需避开用户活跃窗口。
+- **坑位沉淀**（PITFALLS 大修轮）：TSF 真机 Test 门控与 deep_test 直调的偏差是"测试绿真机废"的系统性风险源；注释行尾反斜杠行拼接吞下一行声明（C2065 假报未声明）。
+
+
