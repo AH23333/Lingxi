@@ -432,3 +432,10 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 **验证**：build.cmd 全链绿（exit=0 无 error）；deep_test **attempt 1 即 29/29 PASS AV=0**（T17 三条全过，撇号 e2e 实证）。全量 regress 复跑：deep_test PASS + e2e attempt 1 PASS + fix_readings PASS；engine_test 174 功能断言全绿（separator 6/6、B3、cover），**唯一红 = latency 20.6ms 超阈值**——归因：笔记本**电池供电**（PowerLine Offline，平衡方案降频，纯 CPU 的词典解析 6.9s→15s 同步变慢 2.2 倍佐证），期间还排查了一段并行 StarMark `dotnet test` 干扰（~130% 单核，等其退出后复测依旧，排除）。插电基线 7.2ms vs 电池 20.6ms，用户裁定**接受电池模式结果**（功能全绿，延迟记环境值）。真实 UI 已重启（PID 7656 晚于构建，新 DLL 生效）。
 
 **边界与债**：电池模式延迟 20ms 为环境值（插电恢复 ~7ms 口径不变，阈值不动）；组合光标编辑（M5 尾巴，Left/Right 已预留吞下）；UI 视觉人工确认（晚·十二遗留）；R3 压测收尾。
+
+## 2026-10-29 10:5x（Loomy 续轮：测试设置沙盒根治——回归互踩事故复盘）
+
+- 现场：HEAD 纯文档提交后 regress 全线红（engine 18 红/latency 11ms/模糊音全灭/deep T15 全红）。git log 现读+二进制时间戳比对排除代码回归，真凶=真实 HKCU 设置被历史测试刷零（PinyinEnabled=0 输入法瘫直通）——测试/用户共享注册表轨道的互踩，PITFALLS #32 立案。
+- 根治：settings 支持 `LINGXI_SETTINGS_NS` 基键切换（白名单字符校验，Load/Save 全走 ActiveKey）；engine_test/deep_test/e2e 启动自设沙盒键+清空（缺键=结构默认=断言基线，无需预写）；regress.cmd 注入 NS 双保险。**判据验证：regress 全链跑完，真实 HKCU 前后逐字节一致 ✅**；engine/deep/e2e 同轮全绿（tmp/regress-151329693）。
+- 善后：把被刷零的用户能力位恢复到正确默认（拼音/模糊/中标点/英补全/v 模式/Shift 切换=开），并以新二进制重启 LingxiUI（真实环境）。
+- UI 视觉/体验重做（10-29 任务记录）**开工前置=向用户取证具体差项**，本轮未动窗体代码，遵守该闸。

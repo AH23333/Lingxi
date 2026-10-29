@@ -961,6 +961,20 @@ static bool RunScenario()
 
 int wmain()
 {
+    // 设置沙盒（2026-10-29 实证事故：测试直写真实 HKCU，一次半程退出把用户
+    // 全部能力位刷 0——输入法直接瘫成直通）。注册表与词典同权隔离：无 NS 则自设
+    // "test"，并清沙盒键回到结构默认（=各用例断言基线）。真实 HKCU 从此不共轨。
+    {
+        wchar_t nsv[8] = L"";
+        DWORD nl = GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", nsv, 6);
+        if (nl == 0 || nl >= 6) { 
+            nsv[0] = L't'; nsv[1] = L'e'; nsv[2] = L's'; nsv[3] = L't'; nsv[4] = 0;
+            SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", nsv);
+        }
+        std::wstring sandk = L"Software\\LingxiIme_";
+        sandk += nsv;
+        RegDeleteTreeW(HKEY_CURRENT_USER, sandk.c_str());
+    }
     AddVectoredExceptionHandler(1, E2ECrashHandler);
 
     // 环境噪声重试壳：这台机器正被用户实时使用，ctfmon 会与程序化激活抢键盘

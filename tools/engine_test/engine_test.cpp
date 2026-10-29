@@ -139,6 +139,21 @@ static bool AllAscii(const std::vector<std::wstring>& cands)
 int wmain()
 {
     lingxi::InitLogging();
+
+    // 设置沙盒（2026-10-29 实证事故：测试直写真实 HKCU，一次半程退出把用户
+    // 全部能力位刷 0——输入法直接瘫成直通）。注册表与词典同权隔离：无 NS 则自设
+    // "test"，并清沙盒键回到结构默认（=各用例断言基线）。真实 HKCU 从此不共轨。
+    {
+        wchar_t nsv[8] = L"";
+        DWORD nl = GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", nsv, 6);
+        if (nl == 0 || nl >= 6) { 
+            nsv[0] = L't'; nsv[1] = L'e'; nsv[2] = L's'; nsv[3] = L't'; nsv[4] = 0;
+            SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", nsv);
+        }
+        std::wstring sandk = L"Software\\LingxiIme_";
+        sandk += nsv;
+        RegDeleteTreeW(HKEY_CURRENT_USER, sandk.c_str());
+    }
     // —— 用户词典沙盒：Learn 用例会把"脏/喵喵"等测试词写进 %APPDATA%\LingxiIme\
     // userdict.txt（真实用户的学习数据）；反过来说，上一次运行的残留又会污染本次
     // 断言（如 nihao 被测试词置顶 → P4b 口语首选翻车）。把 APPDATA 重定向到

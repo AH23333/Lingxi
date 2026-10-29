@@ -15,8 +15,10 @@ mkdir "%OUT%" 2>nul
 
 rem Environment noise guards (LINGXI_LOG=1 destroys latency + spams file IO)
 set LINGXI_LOG=
+set LINGXI_SETTINGS_NS=test
 set LINGXI_PINYIN=
 
+reg delete "HKCU\Software\LingxiIme_test" /f >nul 2>nul
 rem sandboxed user dict for the whole regress run
 set "APPDATA=%OUT%\userdata"
 mkdir "%APPDATA%" 2>nul

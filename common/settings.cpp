@@ -1,12 +1,39 @@
 #include "settings.h"
 
 #include <windows.h>
+#include <cwchar>
 
 namespace lingxi {
 
 namespace {
 
-constexpr wchar_t kKey[] = L"Software\\LingxiIme";
+// 真实设置基键（用户环境）
+constexpr wchar_t kKeyReal[] = L"Software\\LingxiIme";
+
+// 测试隔离：LINGXI_SETTINGS_NS 非空（仅 [A-Za-z0-9_-]{1,16} 生效）→ 读写
+// Software\LingxiIme_<ns> 沙盒基键。
+// 背景（2026-10-29 晚实证）：全套测试此前直写真实 HKCU——设置保存是
+// "读当前值改单键全量回写"链路的任何一环在测试进程里崩溃/半程退出都会把
+// 用户实时设置刷成残值（本轮就发生过一次：全部能力位被刷 0，用户输入法
+// 直接被关掉拼音）。词典有 APPDATA 沙盒、注册表此前没有等价物，现在补上。
+const wchar_t* ActiveKey()
+{
+    wchar_t ns[64] = L"";
+    DWORD n = GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", ns, 48);
+    if (n == 0 || n >= 48) return kKeyReal;
+    size_t len = 0;
+    while (ns[len]) {
+        wchar_t c = ns[len];
+        bool okSym = (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z') ||
+                     (c >= L'0' && c <= L'9') || c == L'_' || c == L'-';
+        if (!okSym) return kKeyReal; // 非法字符：宁可不隔离也不写到奇怪的键
+        len++;
+    }
+    if (len == 0) return kKeyReal;
+    static wchar_t buf[128];
+    _snwprintf_s(buf, _TRUNCATE, L"Software\\LingxiIme_%s", ns);
+    return buf;
+}
 
 bool GetDword(HKEY hKey, const wchar_t* name, DWORD& out)
 {
@@ -31,7 +58,7 @@ Settings LoadSettings()
 {
     Settings s;
     HKEY hKey = nullptr;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, kKey, 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, ActiveKey(), 0, KEY_READ, &hKey) != ERROR_SUCCESS)
         return s; // 缺键 = 全默认
 
     DWORD v = 0;
@@ -65,7 +92,7 @@ Settings LoadSettings()
 void SaveSettings(const Settings& s)
 {
     HKEY hKey = nullptr;
-    if (RegCreateKeyExW(HKEY_CURRENT_USER, kKey, 0, NULL, REG_OPTION_NON_VOLATILE,
+    if (RegCreateKeyExW(HKEY_CURRENT_USER, ActiveKey(), 0, NULL, REG_OPTION_NON_VOLATILE,
                         KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
         return;
 
