@@ -275,6 +275,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     }
     if (argv) LocalFree(argv);
 
+    // 生产实例拒绝设置沙箱：LINGXI_SETTINGS_NS 是 deep_test/e2e/engine_test 的
+    // 进程级隔离变量，但测试宿主进程内的 DLL 会按需 spawn LingxiUI，使其继承
+    // 测试环境——生产 UI 带着该变量会把设置页保存静默写进 LingxiIme_<ns>
+    // 沙箱键，用户表现为"改了不生效"（2026-10-29 晚实测事故：19:40 的全部
+    // 修改落进 _test 键）。probe 子命令保留沙箱（e2e 断言依赖），生产路径
+    // 在此强制清除，确保设置 UI 永远读写真实 HKCU。
+    SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", NULL);
+
     // 早期单实例：任何窗口/引擎/LLM 加载前先占命名 Mutex，重复实例立即退出。
     // 旧方案靠 pipe 的 FILE_FLAG_FIRST_PIPE_INSTANCE 检测，时机太晚——重复实例
     // 已完整加载 LLM、创建托盘后才退出，造成资源浪费与多实例竞争。

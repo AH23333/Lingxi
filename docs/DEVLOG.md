@@ -487,4 +487,14 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 - **验证**：deep_test attempt1 29/29（T16 四段切换全过）；e2e attempt2 全绿（24 PASS/0 FAIL，pass-through 'mor'/候选窗 rect/Tab 补全/中文续写/拼音 settle）。e2e 首轮三连红=用户实时测试切换 IME 抢 ctfmon 前台（foreground=other TIP），等待复跑即绿——大修期间跑 e2e 需避开用户活跃窗口。
 - **坑位沉淀**（PITFALLS 大修轮）：TSF 真机 Test 门控与 deep_test 直调的偏差是"测试绿真机废"的系统性风险源；注释行尾反斜杠行拼接吞下一行声明（C2065 假报未声明）。
 
+## 2026-10-29 深夜 · "设置不生效"真根因：沙箱变量逃逸反噬生产 + 主动补课轮
+
+用户实机跑卸载器 8/8 零残留（完整应用闭环达成）后报"设置的大多数功能都不生效，修改无效"。
+
+- **主动补课轮 `339184d`**：register.cmd 注册时写 HKCU Run 自启（LingxiIme→LingxiUI.exe，登录即有托盘/热键/引擎；单实例互斥锁防双开）；uninstall.ps1 对应删 Run 项+第 9 项零残留自检；设置页"中英切换键"描述明示 CapsLock 模式硬件大小写灯仍翻转；重装全周期验证（双位注册+imecheck PASSED+deep_test 29/29）。SendModeToast 链路核验：DLL→管道→候选窗光标处顶置"中/英"大字 1 秒（service.cpp:527→window.cpp:253）。
+- **"设置不生效"真根因（PITFALLS #50）**：`LINGXI_SETTINGS_NS` 沙箱（#43）的逃逸方向是反的——deep_test/e2e 进程内的 TSF DLL 按需 spawn 生产 LingxiUI 时继承测试环境，**生产设置 UI 带着沙箱变量启动**，用户 19:40 的全部 17 项修改写进 `LingxiIme_test` 沙箱键；引擎（真实应用进程）读真实键永远读不到。取证三板斧：注册表键 LastWriteTime 对齐事件时间线（真实键 19:31:22=deep_test pin、沙箱键 19:40:31=用户保存、userdict 19:40:39=用户在打字）+ 读活进程环境块（NtQueryInformationProcess→PEB）确认幸存实例干净 + 真实键仅剩 pin/restore 孤儿值（ToggleMode/ShiftToggle）反证保存侧断链。
+- **修复**：① ui/main.cpp 生产守卫——probe 分发后、单例前强制 `SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", NULL)`（probe 子命令保留沙箱，e2e 断言依赖；生产 UI 永远读写真实 HKCU）；② deep_test PinToggleMode/RestoreToggleMode 改走 ActiveKey 同口径沙箱键（旧实现直写真实键，违反 #43 自己宣称的"真实 HKCU 从此不共轨"）；③ 用户 19:40 的 17 项设置从沙箱键迁移回真实键（ToggleMode=4=用户最后选择的"仅 Ctrl"）。
+- **验证**：deep_test 29/29 且真实键 LastWrite 全程零变化（pin/restore 落沙箱键 20:03:32）；真实键 ToggleMode=4 幸存；LingxiUI 重启后进程环境块无 LINGXI 变量。
+- **用户侧说明**：设置即时生效（引擎每按键实时读注册表）；explorer/WT/Qoder/webview2/MSPCManager 等 09:56-10:22 启动的应用载着晨间旧 DLL——设置项对它们同样生效（注册表共用），但本轮切换/删词新功能需重启应用加载新二进制。
+
 

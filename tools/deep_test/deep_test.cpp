@@ -27,10 +27,19 @@
 // 设置页烟测改为 3(CapsLock)/4(Ctrl)，Shift 切换语义不再成立→T16 必挂。
 // 测试前 pin=1（默认 Shift），结束还原原值；旧键 ShiftToggle 同步（口径同
 // common/settings.cpp 双键兼容）。崩溃残留值=1=默认，无污染风险。
+// pin/restore 必须落在 DLL 实际读取的那把键上：NS 沙箱生效时写
+// LingxiIme_<ns>，与 settings.cpp ActiveKey() 同口径——真实 HKCU 彻底
+// 不共轨（旧实现直写 Software\LingxiIme，属沙箱机制引入前的遗留，会把
+// 默认值刷进用户真实键，污染"最后修改时间"取证）。
 
 static bool OpenLingxiReg(HKEY* phk)
 {
-    return RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\LingxiIme", 0, NULL,
+    wchar_t key[80] = L"Software\\LingxiIme";
+    wchar_t ns[8] = L"";
+    DWORD nl = GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", ns, 6);
+    if (nl > 0 && nl < 6)
+        _snwprintf_s(key, _TRUNCATE, L"Software\\LingxiIme_%s", ns);
+    return RegCreateKeyExW(HKEY_CURRENT_USER, key, 0, NULL,
                            REG_OPTION_NON_VOLATILE, KEY_READ | KEY_WRITE, NULL, phk, NULL) == ERROR_SUCCESS;
 }
 

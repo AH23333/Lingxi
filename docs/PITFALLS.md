@@ -286,3 +286,9 @@
 - **根因**：SetActiveProfile 是桌面级全局状态；用户正在真机测试新构建（活跃切换 IME），在 e2e 激活与打字断言之间把前台配置切走。同 binary 等待复跑即全绿（attempt2 24 PASS/0 FAIL）。
 - **正确做法**：跑 e2e/deep_test 避开用户活跃窗口（此前 #19 只记录了 ctfmon 竞争负载维度，本条是前台配置被主动切换维度）；连续多 attempt 同点红且伴随 foreground 漂移时，先怀疑环境再怀疑代码。
 
+### 50. 沙箱变量的逃逸方向是反的：测试宿主内 DLL 按需 spawn 的生产 LingxiUI 继承 `LINGXI_SETTINGS_NS`，把用户设置静默写进沙箱键 ⭐⭐
+- **症状**：用户报"设置的大多功能都不生效，修改无效"；真实键 `HKCU\Software\LingxiIme` 只有 deep_test pin/restore 留下的 2 个孤儿值（ToggleMode/ShiftToggle），用户 19:40 的全部 17 项修改落在 `LingxiIme_test` 沙箱键里。
+- **根因**：`LINGXI_SETTINGS_NS` 是进程级沙箱（#43），本意隔离"测试写真实键"；但 deep_test/e2e 进程内的 TSF DLL 会按需 CreateProcess 拉起 LingxiUI（候选窗服务），子进程继承测试环境 → **生产设置 UI 带着沙箱变量启动**，SaveFromControls 全部写进 `LingxiIme_<ns>`，引擎（真实应用进程，无该变量）读真实键 → 永远读不到用户的修改。沙箱机制防住了"测试污染生产"，却制造了"生产被测试环境吞掉"。放大器：单实例互斥锁让沙箱实例可能长期占位（孤儿存活到下一次 taskkill）。
+- **取证手法**：①注册表键 LastWriteTime（P/Invoke RegQueryInfoKeyW）对齐事件时间线——真实键 19:31:22=deep_test pin、沙箱键 19:40:31=用户保存、用户词典 19:40:39=用户真在打字；②读活进程环境块（NtQueryInformationProcess→PEB→ProcessParameters→Environment）确认幸存实例干净、写入者另有其"进程"。
+- **正确做法**：生产入口强制清除沙箱变量（main.cpp 在 probe 分发后、单例前 `SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", NULL)`——probe 子命令保留沙箱因 e2e 断言依赖）；deep_test 的 PinToggleMode/RestoreToggleMode 同步改走 ActiveKey 同口径沙箱键（旧实现直写真实键，违反自己 #43 宣称的"真实 HKCU 从此不共轨"）。**规约：进程级沙箱变量防不住"子进程继承"这条路——生产可执行文件必须在入口自证清白；涉及沙箱的测试工具连带检查"它 spawn 的一切"。**
+
