@@ -15,6 +15,11 @@
 #include <vector>
 #include <functional>
 #include <unordered_map>
+// GDI+：抗锯齿圆角/圆绘制（GDI RoundRect/Ellipse 无 AA，药丸/卡片边缘锯齿）
+#define NOMINMAX
+#include <gdiplus.h>
+#include <algorithm>
+#pragma comment(lib, "gdiplus.lib")
 
 #include "../common/log.h"
 #include "../common/settings.h"
@@ -32,6 +37,60 @@ constexpr UINT WM_APP_TRAY = WM_APP + 10; // 托盘回调消息
 std::function<void()> g_reloadUserDict; // 用户词典变更后重新加载引擎
 std::function<void()> g_showSymbols;   // 托盘菜单：打开符号面板
 std::function<void()> g_settingsChanged; // 设置保存后（同步热键等）
+
+// ---------------- GDI+ 抗锯齿绘制助手 ----------------
+// GDI RoundRect/Ellipse 无抗锯齿，真机肉眼可见锯齿；GDI+ GraphicsPath+
+// SmoothingModeAntiAlias 根治。令牌进程生命周期持有（UI 进程退出由系统回收）。
+
+ULONG_PTR g_gdipToken = 0;
+
+void EnsureGdip()
+{
+    if (g_gdipToken) return;
+    Gdiplus::GdiplusStartupInput in;
+    Gdiplus::GdiplusStartup(&g_gdipToken, &in, NULL);
+}
+
+Gdiplus::Color GdipColor(COLORREF c)
+{
+    return Gdiplus::Color(255, GetRValue(c), GetGValue(c), GetBValue(c));
+}
+
+// 填充圆角矩形（可选描边）。radius=高度一半即药丸形。
+void GdipRoundRect(HDC hdc, RECT rc, COLORREF fill, int radius,
+                   COLORREF border = 0, int borderW = 0)
+{
+    EnsureGdip();
+    Gdiplus::Graphics g(hdc);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    Gdiplus::GraphicsPath path;
+    int d = radius * 2;
+    int w = rc.right - rc.left, h = rc.bottom - rc.top;
+    d = (std::min)(d, (std::min)(w, h));
+    Gdiplus::Rect r(rc.left, rc.top, w, h);
+    path.AddArc(r.X, r.Y, d, d, 180.0f, 90.0f);
+    path.AddArc(r.X + w - d, r.Y, d, d, 270.0f, 90.0f);
+    path.AddArc(r.X + w - d, r.Y + h - d, d, d, 0.0f, 90.0f);
+    path.AddArc(r.X, r.Y + h - d, d, d, 90.0f, 90.0f);
+    path.CloseFigure();
+    Gdiplus::SolidBrush br(GdipColor(fill));
+    g.FillPath(&br, &path);
+    if (borderW > 0)
+    {
+        Gdiplus::Pen pen(GdipColor(border), (Gdiplus::REAL)borderW);
+        pen.SetAlignment(Gdiplus::PenAlignmentInset); // 描边不溢出控件矩形
+        g.DrawPath(&pen, &path);
+    }
+}
+
+void GdipFillEllipse(HDC hdc, RECT rc, COLORREF fill)
+{
+    EnsureGdip();
+    Gdiplus::Graphics g(hdc);
+    g.SetSmoothingMode(Gdiplus::SmoothingModeAntiAlias);
+    Gdiplus::SolidBrush br(GdipColor(fill));
+    g.FillEllipse(&br, rc.left, rc.top, rc.right - rc.left, rc.bottom - rc.top);
+}
 
 // ---------------- 用户词典文件工具（UTF-8：词\t拼音\t次数）----------------
 
@@ -396,13 +455,65 @@ void PersistUdEntries(const std::vector<UdEntry>& entries)
 void UdDeleteSelected()
 {
     int sel = (int)SendMessageW(g_hUdList, LB_GETCURSEL, 0, 0);
-    if (sel < 0) return;
+    if (sel < 0)
+    {
+        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"请先在列表中选择词条");
+        return;
+    }
+    // 按内容匹配删除：引擎自学习会随时重写词典文件（学习即落盘），用户浏览
+    // 期间列表索引可能已与文件漂移——按索引删会删错条目或静默落空（此前
+    // "能加不能删"的实感根因）。列表行格式 "word    key    count"（4 空格分隔）。
+    wchar_t line[256] = L"";
+    SendMessageW(g_hUdList, LB_GETTEXT, sel, (LPARAM)line);
+    std::wstring word, key;
+    {
+        const wchar_t* sep1 = wcsstr(line, L"    ");
+        if (sep1)
+        {
+            word.assign(line, sep1 - line);
+            const wchar_t* rest = sep1 + 4;
+            const wchar_t* sep2 = wcsstr(rest, L"    ");
+            if (sep2)
+                key.assign(rest, sep2 - rest);
+        }
+    }
     std::string raw;
     std::vector<UdEntry> entries;
     if (ReadFileBytes(UserDictPathW(), raw)) entries = ParseUserDict(raw);
-    if (sel < (int)entries.size()) entries.erase(entries.begin() + sel);
+    bool removed = false;
+    if (!word.empty() && !key.empty())
+    {
+        for (size_t i = 0; i < entries.size(); i++)
+        {
+            if (entries[i].word == word && entries[i].key == key)
+            {
+                entries.erase(entries.begin() + i);
+                removed = true;
+                break;
+            }
+        }
+    }
+    if (!removed)
+    {
+        // 内容匹配失败（旧格式行/并发已删）：回退索引路径
+        if (sel < (int)entries.size()) { entries.erase(entries.begin() + sel); removed = true; }
+    }
+    if (!removed)
+    {
+        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"该词条已不存在（可能刚被学习进程更新），列表已刷新");
+        RefreshUdList();
+        return;
+    }
     PersistUdEntries(entries);
     RefreshUdList();
+    if (removed)
+    {
+        int n = (int)SendMessageW(g_hUdList, LB_GETCOUNT, 0, 0);
+        if (n > 0) SendMessageW(g_hUdList, LB_SETCURSEL, sel < n ? sel : n - 1, 0);
+        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC,
+            L"已删除并重新加载（基础词典里的常见词仍会出现在候选中）");
+    }
+    LX_LOG(L"ui", L"用户词典删除: %ls (key=%ls)", word.c_str(), key.c_str());
 }
 
 void UdClearAll()
@@ -515,12 +626,44 @@ void UdNudgeSelected(int delta)
         SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"请先在列表中选择词条");
         return;
     }
+    // 同 UdDeleteSelected：按内容匹配（引擎并发重写词典文件，索引会漂移）
+    wchar_t line[256] = L"";
+    SendMessageW(g_hUdList, LB_GETTEXT, sel, (LPARAM)line);
+    std::wstring word, key;
+    {
+        const wchar_t* sep1 = wcsstr(line, L"    ");
+        if (sep1)
+        {
+            word.assign(line, sep1 - line);
+            const wchar_t* rest = sep1 + 4;
+            const wchar_t* sep2 = wcsstr(rest, L"    ");
+            if (sep2)
+                key.assign(rest, sep2 - rest);
+        }
+    }
     std::string raw;
     std::vector<UdEntry> entries;
     if (ReadFileBytes(UserDictPathW(), raw)) entries = ParseUserDict(raw);
-    if (sel >= (int)entries.size()) return;
-    entries[sel].count += delta;
-    if (entries[sel].count < 1) entries[sel].count = 1;
+    bool found = false;
+    if (!word.empty() && !key.empty())
+    {
+        for (size_t i = 0; i < entries.size(); i++)
+        {
+            if (entries[i].word == word && entries[i].key == key)
+            {
+                entries[i].count += delta;
+                if (entries[i].count < 1) entries[i].count = 1;
+                found = true;
+                break;
+            }
+        }
+    }
+    if (!found)
+    {
+        if (sel >= (int)entries.size()) return;
+        entries[sel].count += delta;
+        if (entries[sel].count < 1) entries[sel].count = 1;
+    }
     if (!WriteFileBytes(UserDictPathW(), SerializeUserDict(entries)))
     {
         MessageBoxW(g_hUserDict, L"用户词典写入失败（文件被占用或无权限），修改未保存。",
@@ -529,7 +672,17 @@ void UdNudgeSelected(int delta)
     }
     if (g_reloadUserDict) g_reloadUserDict();
     RefreshUdList();
-    SendMessageW(g_hUdList, LB_SETCURSEL, sel, 0);
+    // 按内容重选（索引可能因 count 排序变化而移动）
+    for (int i = 0; i < (int)SendMessageW(g_hUdList, LB_GETCOUNT, 0, 0); i++)
+    {
+        wchar_t l2[256] = L"";
+        SendMessageW(g_hUdList, LB_GETTEXT, i, (LPARAM)l2);
+        if (wcsstr(l2, word.c_str()) == l2)
+        {
+            SendMessageW(g_hUdList, LB_SETCURSEL, i, 0);
+            break;
+        }
+    }
     SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC,
         delta > 0 ? L"已提升排序（+1000）" : L"已降低排序（-1000，下限 1）");
 }
@@ -827,13 +980,7 @@ void PaintSettings(HWND hwnd)
         bool sel = i == g_curPage;
         if (sel || i == g_navHover)
         {
-            HBRUSH pill = CreateSolidBrush(sel ? RGB(229, 229, 229) : RGB(238, 238, 238));
-            HGDIOBJ op = SelectObject(hdc, GetStockObject(NULL_PEN));
-            HGDIOBJ ob = SelectObject(hdc, pill);
-            RoundRect(hdc, item.left, item.top, item.right + 1, item.bottom + 1, 8, 8);
-            SelectObject(hdc, ob);
-            SelectObject(hdc, op);
-            DeleteObject(pill);
+            GdipRoundRect(hdc, item, sel ? RGB(229, 229, 229) : RGB(238, 238, 238), 8);
         }
         if (sel)
         {
@@ -854,16 +1001,10 @@ void PaintSettings(HWND hwnd)
     RECT ptr{ x0, g_titleY, cw - Scaled(8), g_titleY + Scaled(38) };
     DrawTextW(hdc, g_pages[g_curPage].nav, -1, &ptr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
-    // 白卡（8px 圆角 + 1px 浅描边）
-    HPEN pen = CreatePen(PS_SOLID, 1, kUiCardBorder);
-    HGDIOBJ op = SelectObject(hdc, pen);
-    HGDIOBJ ob = SelectObject(hdc, GetStockObject(WHITE_BRUSH));
+    // 白卡（8px 圆角 + 1px 浅描边，GDI+ 抗锯齿）
     int rr = Scaled(16);
     for (auto& card : g_pages[g_curPage].cards)
-        RoundRect(hdc, card.rc.left, card.rc.top, card.rc.right + 1, card.rc.bottom + 1, rr, rr);
-    SelectObject(hdc, ob);
-    SelectObject(hdc, op);
-    DeleteObject(pen);
+        GdipRoundRect(hdc, card.rc, kUiCard, rr, kUiCardBorder, 1);
 
     // 卡片标题 + 行分隔线
     HPEN lpen = CreatePen(PS_SOLID, 1, RGB(238, 238, 238));
@@ -962,33 +1103,19 @@ void DrawToggle(const DRAWITEMSTRUCT* dis)
     bool on = ToggleOn(dis->hwndItem); // 外置状态（BS_OWNERDRAW 无勾选态）
     COLORREF accent = UiSkin(LoadSettings().skinIndex).accent;
 
-    HGDIOBJ oldPen = SelectObject(hdc, GetStockObject(NULL_PEN));
-    HBRUSH hFill = CreateSolidBrush(on ? accent : RGB(234, 234, 234));
-    HGDIOBJ oldBrush = SelectObject(hdc, hFill);
-    RoundRect(hdc, pr.left, pr.top, pr.right + 1, pr.bottom + 1, pillH, pillH);
-    if (!on) // 关：1px 灰描边（浅灰底在白卡上要有可见边界）
-    {
-        HPEN pen = CreatePen(PS_SOLID, 1, kUiControlEdge);
-        SelectObject(hdc, pen);
-        SelectObject(hdc, GetStockObject(NULL_BRUSH));
-        RoundRect(hdc, pr.left, pr.top, pr.right + 1, pr.bottom + 1, pillH, pillH);
-        SelectObject(hdc, oldPen);
-        DeleteObject(pen);
-    }
-    SelectObject(hdc, oldBrush);
-    DeleteObject(hFill);
-    SelectObject(hdc, oldPen);
+    // GDI+ 抗锯齿药丸（GDI RoundRect 无 AA，真机边缘锯齿）
+    if (on)
+        GdipRoundRect(hdc, pr, accent, pillH / 2);
+    else // 关：1px 灰描边（浅灰底在白卡上要有可见边界）
+        GdipRoundRect(hdc, pr, RGB(234, 234, 234), pillH / 2, kUiControlEdge, 1);
 
-    // 滑钮：12px 圆（开=白居右；关=深灰居左）
+    // 滑钮：12px 圆（开=白居右；关=深灰居左），GDI+ 抗锯齿
     int knob = MulDiv(12, g_setDpi, 96);
     int kx = on ? pr.right - knob - MulDiv(4, g_setDpi, 96)
                 : pr.left + MulDiv(4, g_setDpi, 96);
     int ky = pr.top + (pillH - knob) / 2;
-    HBRUSH hKnob = CreateSolidBrush(on ? RGB(255, 255, 255) : RGB(90, 90, 90));
-    HGDIOBJ ob = SelectObject(hdc, hKnob);
-    Ellipse(hdc, kx, ky, kx + knob + 1, ky + knob + 1);
-    SelectObject(hdc, ob);
-    DeleteObject(hKnob);
+    GdipFillEllipse(hdc, RECT{ kx, ky, kx + knob, ky + knob },
+                    on ? RGB(255, 255, 255) : RGB(90, 90, 90));
 }
 
 // 强调色按钮：皮肤色圆角底 + 白字（按下加深 25%）
@@ -1001,13 +1128,7 @@ void DrawAccentBtn(const DRAWITEMSTRUCT* dis)
     if (pressed)
         accent = RGB(GetRValue(accent) * 3 / 4, GetGValue(accent) * 3 / 4,
                      GetBValue(accent) * 3 / 4);
-    HBRUSH fill = CreateSolidBrush(accent);
-    HGDIOBJ oldBrush = SelectObject(hdc, fill);
-    HGDIOBJ oldPen = SelectObject(hdc, GetStockObject(NULL_PEN));
-    RoundRect(hdc, rc.left, rc.top, rc.right + 1, rc.bottom + 1, 4, 4);
-    SelectObject(hdc, oldPen);
-    SelectObject(hdc, oldBrush);
-    DeleteObject(fill);
+    GdipRoundRect(hdc, rc, accent, 4);
 
     wchar_t txt[128] = {};
     GetWindowTextW(dis->hwndItem, txt, 128);
