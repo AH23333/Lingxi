@@ -920,56 +920,56 @@ private:
         return order;
     }
 
-    // 续写切分为 ≤5 个递增候选：候选 i = 前缀 + 前 i+1 段
-    // 英文按词边界切，中文按 2 字切
+// 续写候选切分（用户实测重做）：旧版把同一段输出按 2 字/词累积切成最多 5 个
+// **递增前缀**做候选——观感"全是对同一句话的部分重复、越列越长"。现在最多两条：
+//   ① 首个自然短句（≤16 字，遇标点截断）；② 完整句（≤32 字，超长回缩词边界）。
+// 不再堆叠同源前缀；两候选重复时去重。
     static std::vector<std::wstring> SplitContinuation(const std::wstring& cont)
     {
-        std::vector<std::wstring> segments;
-        size_t i = 0;
-        while (i < cont.size() && (cont[i] == L' ' || cont[i] == L'\n' || cont[i] == L'\r' ||
-                                   cont[i] == L'\t' || cont[i] == L'"' || cont[i] == L'“' || cont[i] == L'“'))
-            i++;
-        std::wstring body = cont.substr(i);
-        // 截掉成对引号收尾等修饰
-        while (!body.empty() && (body.back() == L'\n' || body.back() == L'\r'))
+        std::vector<std::wstring> cands;
+        size_t lead = 0;
+        while (lead < cont.size() && (cont[lead] == L' ' || cont[lead] == L'\n' ||
+               cont[lead] == L'\r' || cont[lead] == L'\t' || cont[lead] == L'"' ||
+               cont[lead] == L'\u201c' || cont[lead] == 0x201D))
+            lead++;
+        std::wstring body = cont.substr(lead);
+        while (!body.empty() && (body.back() == L'\n' || body.back() == L'\r' || body.back() == L' '))
             body.pop_back();
-        if (body.empty()) return {};
+        if (body.empty()) return cands;
 
-        bool hasCJK = false;
-        for (wchar_t ch : body)
-            if (ch >= 0x4E00 && ch <= 0x9FFF) { hasCJK = true; break; }
-
-        if (hasCJK)
+        const size_t kShortMax = 16, kFullMax = 32;
+        auto addCand = [&](const std::wstring& s)
         {
-            for (size_t p = 0; p < body.size() && segments.size() < kMaxCands; p += 2)
-            {
-                size_t len = std::min<size_t>(2, body.size() - p);
-                segments.push_back(body.substr(0, p + len));
-            }
-        }
+            if (s.empty()) return;
+            for (const auto& c : cands)
+                if (c == s) return;
+            cands.push_back(s);
+        };
+        // 首个句读边界（中英标点统一；<2 字符的碎屑不算分句）
+        const wchar_t* kStops = L"\u3002\uff0c\uff01\uff1f\u3001\uff1b\uff1a,.!?;:"; // 中英句读集合
+        size_t cut = std::wstring::npos;
+        for (size_t k = 0; k < body.size(); k++)
+            if (k >= 2 && wcschr(kStops, body[k])) { cut = k; break; }
+        auto clip = [&](size_t len) -> std::wstring
+        {
+            std::wstring s = body.substr(0, (std::min)(len, body.size()));
+            while (!s.empty() && (s.back() == L' ' || wcschr(kStops, s.back())))
+                s.pop_back();
+            return s;
+        };
+        if (cut != std::wstring::npos && cut <= kShortMax)
+            addCand(clip(cut));
+        if (body.size() <= kFullMax)
+            addCand(body);
         else
         {
-            // 英文：词边界切
-            size_t start = 0;
-            while (start < body.size() && segments.size() < kMaxCands)
-            {
-                size_t end = body.find(L' ', start);
-                if (end == std::wstring::npos) end = body.size();
-                if (end > start)
-                    segments.push_back(body.substr(0, end));
-                start = end + 1;
-                if (end >= body.size()) break;
-            }
-            if (segments.empty()) segments.push_back(body);
+            size_t len = kFullMax;
+            size_t sp = body.rfind(L' ', len);
+            if (sp != std::wstring::npos && sp >= 12) len = sp; // 英文别切半词
+            addCand(clip(len));
         }
-
-        std::vector<std::wstring> cands;
-        cands.reserve(segments.size());
-        for (auto& s : segments)
-        {
-            if (s.size() > 64) s.resize(64);
-            cands.push_back(s);
-        }
+        if (cands.empty())
+            addCand(clip((std::min)(kShortMax, body.size())));
         return cands;
     }
 

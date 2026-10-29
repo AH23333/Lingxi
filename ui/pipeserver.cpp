@@ -443,7 +443,20 @@ void PipeServer::PredictProc()
         uint64_t tPred = GetTickCount64();
         Prediction pred;
         {
-            IPredictor* eng = (e.pinyin && _pinyinEngine) ? _pinyinEngine : _engine;
+                    // 输入框"什么都没有"（纯空白上下文）不做续写/补全预测——用户报告空文本框
+        // 弹预测面板遮挡屏幕；这类文本只配隐藏窗口。
+        if (!e.pinyin)
+        {
+            bool blank = true;
+            for (wchar_t ch : e.text)
+                if (ch != L' ' && ch != L'\t' && ch != L'\r' && ch != L'\n') { blank = false; break; }
+            if (blank)
+            {
+                _wnd->Hide();
+                continue;
+            }
+        }
+        IPredictor* eng = (e.pinyin && _pinyinEngine) ? _pinyinEngine : _engine;
             PredictArgs pa{ eng, &e.text, &pred };
             if (!PredictSeh(&pa))
             {

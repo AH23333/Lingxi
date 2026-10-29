@@ -272,6 +272,7 @@ public:
                 ups = uit->second;
             // 简拼/缩写：当前输入串作为首字母串（如 mm）匹配用户词
             // （键规范化与 _userDict 同口径，撇号/空格不参与查找）
+            if (key.size() >= 2) // 单字符缩写召回=用户历史长句霸屏（"过拟合"投诉），禁止
             if (auto iit = _userByInit.find(NormKey(raw)); iit != _userByInit.end())
             {
                 for (const auto& ip : iit->second)
