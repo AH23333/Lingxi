@@ -49,6 +49,9 @@
       <SubSystem>Windows</SubSystem>
       <AdditionalDependencies>user32.lib;gdi32.lib;advapi32.lib;ole32.lib;uuid.lib;shell32.lib;kernel32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
+    <Manifest>
+      <AdditionalManifestFiles>app.manifest</AdditionalManifestFiles>
+    </Manifest>
     <PostBuildEvent>
       <Command>xcopy /Y /I "$(ProjectDir)engine\data\*.txt" "$(OutDir)data\"</Command>
       <Message>Copy engine data files</Message>
