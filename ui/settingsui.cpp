@@ -1047,7 +1047,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
 void CreateSettingsWindow(HINSTANCE hInst)
 {
-    if (g_hSettings) { ShowWindow(g_hSettings, SW_SHOW); SetForegroundWindow(g_hSettings); return; }
+    if (g_hSettings) { LX_LOG(L"ui", L"设置窗复用 isIcon=%d", IsWindow(g_hSettings)); ShowWindow(g_hSettings, SW_SHOW); SetForegroundWindow(g_hSettings); return; } // FORWARD-DIAG
 
     WNDCLASSEXW wc = { sizeof(wc) };
     wc.lpfnWndProc = SettingsWndProc;

@@ -34,7 +34,7 @@ std::function<void(const std::wstring&)> g_insertText; // 热键触发 → SendI
 LRESULT CALLBACK NotifyWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (msg == WM_NOTIFY_SYMBOLS) { if (g_reqSymbols) g_reqSymbols(); return 0; }
-    if (msg == WM_NOTIFY_SETTINGS) { if (g_reqSettings) g_reqSettings(); return 0; }
+    if (msg == WM_NOTIFY_SETTINGS) { LX_LOG(L"ui", L"WM_NOTIFY_SETTINGS 到达 req=%d", (int)!!g_reqSettings); if (g_reqSettings) g_reqSettings(); return 0; }
     if (msg == WM_HOTKEY)
     {
         int id = (int)wp;
@@ -61,7 +61,10 @@ DWORD WINAPI NotifyThreadProc(LPVOID p)
     for (;;)
     {
         if (WaitForSingleObject(tp->evt, INFINITE) == WAIT_OBJECT_0)
-            PostMessageW(tp->target, tp->msg, 0, 0);
+        {
+            const BOOL okPost = PostMessageW(tp->target, tp->msg, 0, 0); // FORWARD-DIAG
+            LX_LOG(L"ui", L"转发事件命中→Post msg=%u ok=%d gle=%u", tp->msg, okPost, GetLastError());
+        }
     }
     return 0;
 }
