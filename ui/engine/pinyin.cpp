@@ -255,6 +255,28 @@ void InjectExplicitTop(Prediction& p, std::vector<uint32_t>& covers,
     covers = std::move(ncv);
 }
 
+// R5 emoji 候选融合表（静态映射，词→emoji）：候选命中词条时 emoji 紧随其后
+// （同 cover——提交时替换等长拼音；只跟随不夺位，触发词必须在候选里）。
+// 选词原则：多字稳定词优先，避开"对/错/好"类高频单字霸屏候选窗。
+const std::unordered_map<std::wstring, std::wstring>& EmojiFusionMap()
+{
+    static const std::unordered_map<std::wstring, std::wstring> m = {
+        { L"哈哈", L"😄" },   { L"嘿嘿", L"😏" },   { L"微笑", L"🙂" },
+        { L"笑哭", L"😂" },   { L"大笑", L"😆" },   { L"大哭", L"😭" },
+        { L"眼泪", L"😢" },   { L"爱心", L"❤️" },   { L"心碎", L"💔" },
+        { L"玫瑰", L"🌹" },   { L"太阳", L"☀️" },   { L"月亮", L"🌙" },
+        { L"星星", L"⭐" },   { L"下雨", L"🌧️" },   { L"下雪", L"❄️" },
+        { L"鼓掌", L"👏" },   { L"握手", L"🤝" },   { L"加油", L"💪" },
+        { L"点赞", L"👍" },   { L"蛋糕", L"🎂" },   { L"咖啡", L"☕" },
+        { L"啤酒", L"🍺" },   { L"火箭", L"🚀" },   { L"恭喜", L"🎉" },
+        { L"谢谢", L"🙏" },   { L"生日快乐", L"🎂" }, { L"惊讶", L"😲" },
+        { L"生气", L"😡" },   { L"礼物", L"🎁" },   { L"电话", L"📞" },
+        { L"邮件", L"📧" },   { L"警告", L"⚠️" },   { L"问号", L"❓" },
+        { L"感叹号", L"❗" }, { L"小猫", L"🐱" },   { L"小狗", L"🐶" },
+    };
+    return m;
+}
+
 // ---------------------------------------------------------------------------
 // 音节单元与切分路径
 // ---------------------------------------------------------------------------
@@ -385,6 +407,38 @@ public:
             p.cands.push_back(c.word);
             covers.push_back(cv);
             if (p.cands.size() >= kPredictMaxCandidates) break;
+        }
+
+        // R5 emoji 候选融合：命中映射表的词后紧跟 emoji（同 cover——提交时
+        // 替换等长拼音）。只追加跟随不夺位：触发词必须在候选中且永排第一，
+        // emoji 永远第二；同 emoji 多触发词只融合一次（seen 去重）。
+        {
+            const auto& em = EmojiFusionMap();
+            std::vector<std::wstring> fused;
+            std::vector<uint32_t> fusedCovers;
+            bool fusedAny = false;
+            for (size_t k = 0; k < p.cands.size(); k++)
+            {
+                fused.push_back(p.cands[k]);
+                fusedCovers.push_back(covers[k]);
+                auto eit = em.find(p.cands[k]);
+                if (eit != em.end() && seen.insert(eit->second).second)
+                {
+                    fused.push_back(eit->second);
+                    fusedCovers.push_back(covers[k]);
+                    fusedAny = true;
+                }
+            }
+            if (fusedAny)
+            {
+                if (fused.size() > kPredictMaxCandidates)
+                {
+                    fused.resize(kPredictMaxCandidates);
+                    fusedCovers.resize(kPredictMaxCandidates);
+                }
+                p.cands = std::move(fused);
+                covers = std::move(fusedCovers);
+            }
         }
 
         // 自学习置顶：用户在该拼音串下选过的词，按选择次数降序提到最前

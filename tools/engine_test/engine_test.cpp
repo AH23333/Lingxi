@@ -1209,6 +1209,40 @@ int wmain()
                 }
             }
 
+            // P13. R5 emoji 融合：命中词后紧跟 emoji（不夺位）
+            {
+                // 谢谢 → 🙏 紧随其后，谢谢仍第一
+                lingxi::Prediction r = py->Predict(L"xiexie");
+                {
+                    bool ok = r.cands.size() >= 2 && r.cands[0] == L"谢谢" &&
+                              r.cands[1] == L"🙏";
+                    wchar_t detail[192];
+                    _snwprintf_s(detail, _TRUNCATE, L"first='%ls' second='%ls'",
+                                 r.cands.empty() ? L"<none>" : r.cands[0].c_str(),
+                                 r.cands.size() > 1 ? r.cands[1].c_str() : L"<none>");
+                    Report(ok, "R5 emoji follows word", detail);
+                }
+                // 无映射词不注入 emoji（nihao 页面干净）
+                {
+                    lingxi::Prediction n = py->Predict(L"nihao");
+                    bool clean = true;
+                    for (const auto& w : n.cands)
+                        if (w == L"🙏" || w == L"😄") { clean = false; break; }
+                    Report(clean, "R5 no emoji on unmapped input",
+                           n.cands.empty() ? L"<none>" : n.cands[0].c_str());
+                }
+                // 哈哈 → 😄
+                {
+                    lingxi::Prediction h = py->Predict(L"haha");
+                    bool found = false;
+                    for (size_t k = 0; k + 1 < h.cands.size(); k++)
+                        if (h.cands[k] == L"哈哈" && h.cands[k + 1] == L"😄")
+                        { found = true; break; }
+                    Report(found, "R5 emoji haha",
+                           h.cands.empty() ? L"<none>" : h.cands[0].c_str());
+                }
+            }
+
             delete py;
         }
     }
