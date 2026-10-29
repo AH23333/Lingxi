@@ -515,7 +515,8 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 - **全套回归**（tmp/regress-2922522603）：engine_test 186 断言绿、仅时延红（median 16.1ms>10ms 预算，#41 后台负载——deveco 4967s CPU+LingxiUI LLM 活跃，空载基线 8.9ms）；fix_readings PASS；**e2e attempt 1 绿**；deep_test 干扰期红。**#43/#50 硬判据**：回归前后真实 `HKCU\Software\LingxiIme` reg export 逐字节一致（零污染），沙箱键仅 ToggleMode/ShiftToggle 残留。
 - **LINGXI_LOG=1 取证锁定真 bug（PITFALLS #52）**：DetectPinyinMode "放弃"分支只打日志不 KillTimer——SetTimer 是周期定时器，预算耗尽后仍以 250ms 节拍永久空转（干扰期 97 秒刷 390 行风暴），宿主进程每秒 4 次 TSF 查询泄漏；同时干扰期 attempt 日志 **0 条 [key] 行**=探键根本没到本 DLL（前台被其他 TIP 持有，#49 同源环境干扰）。
 - **修复**（service.h:220 `_modeSlowRetry` 标志 + composition.cpp:220-248 DetectPinyinMode 耗尽分支）：放弃→**降级 1s 慢速自愈轮询**（SetTimer 1000ms、降级日志 log-once、premature 每拍仅进程内 GetForeground µs 级查询），前台回归后 ≤1s 自愈进位；正常路径 KillTimer 完全静止。选降级而非 KillTimer 硬停：负载机 ctfmon 过渡可超 2s 快速预算，硬停会把 settle 假红引进来。
-- **验证**：x64+Win32 双构建绿；修复后带日志 deep_test 日志仅 28 行（降级日志恰 1 条、旧"放弃"0 条、无风暴）；**deep_test attempt 2 = 29/29 全绿 exit=0**（attempt 1 用户活跃 fgIsLingxi=0，内部重试壳按设计工作）。e2e 9 连红 typing pass-through（foreground 实时翻转+读回空，#49 干扰签名）=用户活跃抢 profile，待安静窗口终验——deep_test 29/29 已覆盖新 DLL 全键路径（T7 直通/T16 切换在内）。
+- **验证**：x64+Win32 双构建绿；修复后带日志 deep_test 日志仅 28 行（降级日志恰 1 条、旧"放弃"0 条、无风暴）；**deep_test attempt 2 = 29/29 全绿 exit=0**（attempt 1 用户活跃 fgIsLingxi=0，内部重试壳按设计工作）。**终验（用户配合安静窗口）**：e2e exit=0（attempt 1 typing 已过仅 1 项冷启动时序红，attempt 2 全绿）；engine_test exit=0 全绿（拼音时延 median 9.727ms<10ms 预算，证实白昼 16.1ms 红=后台负载 #41）。四套（engine/fix_readings/deep/e2e）全绿收口。
+- **工具坑（本条随记）**：`cmd /c '"含空格路径.exe"'` 的引号转写在 PS 5.1 下偶发剥引号（报 `'D:\Visual' is not recognized`，且会掩盖"文件根本不存在"的真相）——原生 exe 直接用 PS 调用操作符 `& '完整路径'`，或先 Test-Path。engine_test 实际产物在 `bin\enginetest\`（非 tools 下 bin\Debug）。
 
 
 
