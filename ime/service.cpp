@@ -638,6 +638,25 @@ static bool IsSelectionKey(WPARAM wParam)
            wParam == VK_ESCAPE;
 }
 
+// 切换键是否在 Test 阶段认领（吞下）：真机应用的 TSF 分发只把 Test 时声明
+// eaten 的键交给 OnKeyDown/OnKeyUp（deep_test 直调 KeyDown 绕过此门控，故
+// 此前测试全绿而真机切换死码）。切换键必须主动认领才有簿记与切换机会；
+// 认领了 KeyDown 后 OnTestKeyUp 同步认领 KeyUp，宿主按消息跟踪 Shift
+// 状态才不会永久滞留下压态（GetKeyState 类检测不受影响）。
+// 放行未认领的键（大写字母、Ctrl+Shift 和弦等）永远到不了 OnKeyDown，
+// 因此和弦检测（_shiftUsed/_capsUsed 标记）也必须在 OnTestKeyDown 里做。
+static bool ToggleKeyClaim(WPARAM wParam, uint32_t toggleMode, bool pinyinMode)
+{
+    if (!pinyinMode) return false;
+    switch (wParam)
+    {
+    case VK_SHIFT:   return toggleMode == 1 || toggleMode == 2;
+    case VK_CONTROL: return toggleMode == 2 || toggleMode == 4;
+    case VK_CAPITAL: return toggleMode == 3;
+    }
+    return false;
+}
+
 STDMETHODIMP CTextService::OnSetFocus(BOOL fForeground)
 {
     _fForeground = fForeground;
@@ -648,6 +667,12 @@ STDMETHODIMP CTextService::OnSetFocus(BOOL fForeground)
         ClearCandidates();
         SendHide();
     }
+    // 焦点切换重置切换键簿记：按住 Shift/Ctrl 期间焦点漂移会丢 KeyUp，
+    // 残留 _shiftDown 会把后续所有键标记成和弦，切换长期失灵（自愈复位）
+    _shiftDown = false;
+    _shiftUsed = false;
+    _capsDown = false;
+    _capsUsed = false;
     // TIP 前台切换（含同语言内切换到其他输入法）：重判拼音/直通模式
     RequestModeDetect();
     LX_LOG(L"ime", L"KeySink OnSetFocus foreground=%d", fForeground);
@@ -662,14 +687,24 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LP
     // 语言变化（若发生）→ 投递延迟检测；检测本身绝不在按键分发内执行（PITFALLS #18）
     MaybeRedetectPinyinMode();
 
+    // 和弦标记：切换键按住期间任何其他键（含放行键）都算组合使用。
+    // 真机门控下放行键（大写字母、Ctrl+Shift+K 的 K 等）不会进 OnKeyDown，
+    // 原先只在 OnKeyDown 里标记 _shiftUsed 挡不住这些和弦
+    if (wParam != VK_SHIFT && wParam != VK_CONTROL && wParam != VK_CAPITAL)
+    {
+        if (_shiftDown) _shiftUsed = true;
+        if (_capsDown) _capsUsed = true;
+    }
+
     // 拼音模式优先（字母进组合、组合态拦截编辑键）
     if (PinyinKeyEaten(wParam))
     {
         *pfEaten = TRUE;
         return S_OK;
     }
-    // CapsLock=切换键（mode 3）：KeyDown 即吞——不翻转大小写状态，专职语言切换
-    if (wParam == VK_CAPITAL && LoadSettings().toggleMode == 3 && _pinyinMode)
+    // 中英切换键认领（Shift/Ctrl/CapsLock 按 toggleMode）：不认领则真机
+    // OnKeyDown/OnKeyUp 全程不被调用，切换死码（原 CapsLock mode3 特判并入）
+    if (ToggleKeyClaim(wParam, LoadSettings().toggleMode, _pinyinMode))
     {
         *pfEaten = TRUE;
         return S_OK;
@@ -723,8 +758,11 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM
             _capsUsed = true;
     }
 
-    // CapsLock=切换键（mode 3）：已由 OnTestKeyDown 吞下（大小写不翻转），此处仅记账
-    if (wParam == VK_CAPITAL && LoadSettings().toggleMode == 3 && _pinyinMode)
+    // 认领的切换键统一在此吞下返回：KeyDown 阶段保持 eaten=TRUE（与 Test
+    // 一致），不落拼音处理——HandlePinyinKey 对 VK_SHIFT 显式放行
+    // （*pfEaten=FALSE），Test 吞/KeyDown 放的不一致会让 TypeKey 断言失败，
+    // 宿主也只见 Shift 半程消息（下压滞留）。原 CapsLock mode3 特判并入。
+    if (ToggleKeyClaim(wParam, LoadSettings().toggleMode, _pinyinMode))
     {
         *pfEaten = TRUE;
         return S_OK;
@@ -767,9 +805,17 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM
     return S_OK;
 }
 
-STDMETHODIMP CTextService::OnTestKeyUp(ITfContext*, WPARAM, LPARAM, BOOL* pfEaten)
+STDMETHODIMP CTextService::OnTestKeyUp(ITfContext*, WPARAM wParam, LPARAM, BOOL* pfEaten)
 {
-    *pfEaten = FALSE;
+    // 与 KeyDown 对称认领：已记录在按（_shiftDown/_capsDown，即 KeyDown 已被
+    // 认领吞下）的切换键，KeyUp 也认领，OnKeyUp 才有机会执行切换检测；
+    // 宿主按消息跟踪 Shift 的也不会只收到一半（滞留下压态）
+    bool claim = false;
+    if (wParam == VK_SHIFT || wParam == VK_CONTROL)
+        claim = _shiftDown && ToggleKeyClaim(wParam, LoadSettings().toggleMode, _pinyinMode);
+    else if (wParam == VK_CAPITAL)
+        claim = _capsDown && ToggleKeyClaim(wParam, LoadSettings().toggleMode, _pinyinMode);
+    *pfEaten = claim ? TRUE : FALSE;
     return S_OK;
 }
 

@@ -1303,7 +1303,9 @@ int wmain()
                 ClearFocusedText(pTm);
 
                 // 空组合单击 Shift → 切临时英文：字母直通（TestKeyDown/KeyDown 均 eaten=FALSE）
-                bool tap1 = TapKey(pKm, VK_SHIFT, false);
+                // （toggleMode=1 时 Shift 在 Test 阶段被认领 eaten=TRUE——真机门控需要，
+                //  OnKeyDown/OnKeyUp 才会被真实应用调用）
+                bool tap1 = TapKey(pKm, VK_SHIFT, true);
                 PumpMessages(); Sleep(150);
                 bool aPass = TypeKey(pKm, (WPARAM)L'a', false);
                 PumpMessages(); Sleep(150);
@@ -1314,7 +1316,7 @@ int wmain()
                 Report(tap1 && aPass && t.empty(), L"T16 单击Shift切临时英文(字母直通)", d16a);
 
                 // 再单击切回中文：字母进组合（eaten=TRUE），Esc 可清
-                bool tap2 = TapKey(pKm, VK_SHIFT, false);
+                bool tap2 = TapKey(pKm, VK_SHIFT, true);
                 PumpMessages(); Sleep(150);
                 bool bPass = TypeKey(pKm, (WPARAM)L'a', true);
                 PumpMessages(); Sleep(150);
@@ -1328,7 +1330,7 @@ int wmain()
                 // Shift 按住期间打字（组合使用）→ KeyUp 不翻转：后续字母仍进组合
                 // （模拟限制：GetKeyState(VK_SHIFT) 不随 pKm 模拟改变，'a' 走组合
                 //  路径而非真实 Shift+字母直通；断言对象是 DLL 内部 _shiftUsed 判定）
-                bool shDown = TypeKey(pKm, VK_SHIFT, false);  // Shift down（_shiftDown=true）
+                bool shDown = TypeKey(pKm, VK_SHIFT, true);  // Shift down（被认领，_shiftDown=true）
                 bool mid = TypeKey(pKm, (WPARAM)L'a', true);  // _shiftUsed=true；进组合
                 bool shUp = RawKeyUp(pKm, VK_SHIFT);          // _shiftUsed → 不翻转
                 PumpMessages(); Sleep(150);
@@ -1344,7 +1346,7 @@ int wmain()
                 // 组合中单击 Shift：组合不丢、当前首选不被误提交（VK_SHIFT 放行修复的回归）
                 bool nOk = TypeKey(pKm, (WPARAM)L'n', true); // 进组合 n
                 PumpMessages(); Sleep(150);
-                bool tap3 = TapKey(pKm, VK_SHIFT, false);    // 组合中 tap：不提交不翻转
+                bool tap3 = TapKey(pKm, VK_SHIFT, true);    // 组合中 tap：认领吞下但不提交不翻转
                 PumpMessages(); Sleep(150);
                 std::wstring t2 = ReadFocusedText(pTm);
                 bool iOk = TypeKey(pKm, (WPARAM)L'i', true); // 组合继续（ni）
