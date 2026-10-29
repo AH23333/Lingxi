@@ -529,6 +529,17 @@ e2e 最终回归 exit=0（20 PASS，重试壳实测生效）。收尾时设备�
 - **时延踩线红的 A/B 判据**：P12 轮 engine_test 拼音时延两连红（11.9/13.5ms>10ms）——worktree checkout HEAD 基线（R3 提交时 9.6ms 绿）同负载复测 **18.9ms**：基线比工作区更差，确证环境负载（atrustagent 84%+双 deveco 实例 39/37%，#41）非代码回归。此后时延红先 worktree A/B 再下结论，不盲改热路径。
 - **验证**：engine_test 全绿（P10/P11/P12 全 PASS，唯一时延红 A/B 判环境）；deep_test attempt 3 **29/29** exit=0（attempt 1/2 T12 翻页抖动，内部重试壳按设计工作）；docs/GAP-VS-MSFT.md 路线图 R2/R3/R4 标已完成。
 
+## 2026-10-30 · 路线图收尾两连发：R5 emoji 候选融合 + R6 屏蔽词（40 分钟快轮）
+
+R2-R4 收口后用户要求继续低难度功能、40 分钟内收口——选 R5+R6（都复用既有注入/热载基建）。
+
+- **R5 emoji 候选融合 `fd7bfa2`**：文件级 `EmojiFusionMap`（静态 35 词条：哈哈→😄/谢谢→🙏/恭喜→🎉…选词原则=多字稳定词优先，避开"对/错"类高频单字霸屏）；Predict 去重循环后融合——emoji 紧随触发词（同 cover，提交替换等长拼音），只跟随不夺位、同 emoji 多触发词 seen 去重一次、截断 kPredictMaxCandidates。静态表零配置零文件零热路径负担（一次哈希查找/候选）。P13：谢谢→🙏 紧随/nihao 无映射页干净/哈哈→😄 全 PASS。
+- **R6 屏蔽词 `7a5077b`**：`%APPDATA%\LingxiIme\blocked.txt`（UTF-8 BOM 容忍，每行一词≤50 字符，上限 500 条），LoadUserDict 通道同锁热载（LoadBlockedLocked）；Predict 锁内一次拷出（通常空集），**去重循环与 ups 自学习注入两处同口径过滤**；显式意图（dt/短语/emoji）不受影响——用户显式配置优先。文件驱动 MVP（改文件+重启/ReloadUserDict 生效），管理界面留待后续。P14：屏蔽"谢谢"后 Generate+emoji 融合同灭/删文件热卸载回归首选+emoji 恢复全 PASS。
+- **测试细节**：P14 屏蔽词用 UTF-8 字节直写（`\xEF\xBB\xBF\xE8\xB0\xA2…`）避开 P12 作用域内 wToUtf8 lambda 复用；P13 首版"无映射检查"误用 xiexie 结果（mapped 输入）而非 nihao 独立预测，编写时自查抓获。
+- **验证**：engine_test P13/P14 全 PASS（时延红 17ms 同 #41 环境负载——atrustagent/deveco 持续占用，R5/R6 热路径增量=一次空集锁拷+一次哈希查找/候选，µs 级）；deep_test **attempt 1 = 29/29** AV=0（优于上轮 attempt 3）；e2e 未跑（引擎候选追加/过滤，不触 TSF/协议层，deep_test+engine_test 已覆盖）。
+- **工具坑复发确认**：Start-Process 重定向 stdout 时子进程（LingxiUI/deep_test 派生）继承管道写端致 -Wait 挂起，输出已完整写出后才被超时杀壳——判读以输出文件内容为准，勿误判测试挂死。
+
+
 
 
 
