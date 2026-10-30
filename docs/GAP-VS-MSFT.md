@@ -23,7 +23,7 @@
 | 全拼 | ✅ DP 整句引擎（pinyin.cpp） | ✅ | ✅ | — |
 | 简拼 | ✅ 纯声母+混合模式+用户词简拼索引（pinyin.cpp:348,516,850） | ✅ | ✅ | — |
 | 双拼 | 🟡 仅小鹤方案（pinyin.cpp:108 ShuangpinToQuanpin） | 🟡 仅微软双拼方案 | ✅ 等价（方案不同属偏好） | P2 |
-| 模糊音 | 🟡 5 组：zh/z、ch/c、sh/s、n/l、前后鼻音（pinyin.cpp:961） | 🟡 组更多且可细分开关（f/h、l/r、g/k…） | 🟡 | P2 |
+| 模糊音 | ✅ 5 组各自独立开关（fuzzyGroups 位掩码 + 索引热重建，`ef28cda`） | 🟡 组更多且可细分（f/h、l/r、g/k…） | 🟡 组数略少（f/h 可再扩） | P2 |
 | 拼音纠错（gn→ng 等） | ❌ | ✅ 可开关 | ❌ | P1 |
 | 声调输入（lv4→绿） | ❌ | ❌（微软拼音也无） | ✅ 双方都无 | P2 |
 | U 模式拆字/笔画 | ❌ | ✅ | ❌ | P2 |
@@ -112,9 +112,9 @@
 - **R5（已完成 fd7bfa2）**：emoji 候选融合（EmojiFusionMap 静态 35 词条，
   哈哈→😄/谢谢→🙏 等，命中词后紧跟注入同 cover，只跟随不夺位；
   engine_test P13 断言组）。
-- **R6（长尾池，部分完成）**：屏蔽词 blocked.txt 热载已做（`7a5077b`，
-  Generate+自学习同口径过滤，engine_test P14）；U 模式拆字、以词定字、
-  模糊音细分开关、候选注音、手写/无障碍专项待做。
+- **R6（长尾池，持续消化）**：屏蔽词 blocked.txt 热载 ✅（`7a5077b`，
+  Generate+自学习同口径过滤，engine_test P14）；**模糊音组细分开关 ✅（`ef28cda`，
+  fuzzyGroups 位掩码 5 组独立勾选+索引热重建，engine_test P8b 4 断言）；
 
 ## 9. 结论
 
