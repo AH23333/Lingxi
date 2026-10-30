@@ -1313,6 +1313,9 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case SB_LINEDOWN: pos += line; break;
         case SB_PAGEUP: pos -= (int)si.nPage; break;
         case SB_PAGEDOWN: pos += (int)si.nPage; break;
+        case SB_TOP: pos = 0; break;          // Home/程序化回顶（验证轮发现缺失）
+        case SB_BOTTOM:                       // End/程序化到底：目标=可滚最大值
+            pos = (int)si.nMax - (int)si.nPage; break;
         case SB_THUMBTRACK:
         case SB_THUMBPOSITION: pos = (int)si.nTrackPos; break;
         default: return 0;
