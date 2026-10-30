@@ -62,7 +62,12 @@
     <ClCompile Include="window.cpp" />
     <ClCompile Include="pipeserver.cpp" />
     <ClCompile Include="settingsui.cpp" />
-  <ClCompile Include="usagestats.cpp" />
+    <ClCompile Include="tray.cpp" />
+    <ClCompile Include="userdictwnd.cpp" />
+    <ClCompile Include="helpwnd.cpp" />
+    <ClCompile Include="statswnd.cpp" />
+    <ClCompile Include="settingsbackup.cpp" />
+    <ClCompile Include="usagestats.cpp" />
     <ClCompile Include="hotphraseui.cpp" />
     <ClCompile Include="phraseui.cpp" />
     <ClCompile Include="symbolpanel.cpp" />
@@ -74,7 +79,8 @@
     <ClInclude Include="window.h" />
     <ClInclude Include="pipeserver.h" />
     <ClInclude Include="settingsui.h" />
-  <ClInclude Include="usagestats.h" />
+    <ClInclude Include="uiinternal.h" />
+    <ClInclude Include="usagestats.h" />
     <ClInclude Include="hotphraseui.h" />
     <ClInclude Include="phraseui.h" />
     <ClInclude Include="symbolpanel.h" />
