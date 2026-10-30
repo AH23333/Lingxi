@@ -70,6 +70,17 @@ private:
     // 工具条按钮 tooltip：懒建常驻、隐藏复用（避免跨线程 DestroyWindow）
     void ShowTip(const wchar_t* text, const POINT& clientPt);
     void HideTip();
+    // 手势消息处理（定义在 candwnd_interact.cpp；WndProc 分发壳在 candwnd_core.cpp）
+    LRESULT OnMouseMove(HWND hwnd, LPARAM lParam);
+    LRESULT OnMouseHover(HWND hwnd, LPARAM lParam);
+    LRESULT OnMouseLeave(HWND hwnd);
+    LRESULT OnLButtonDown(HWND hwnd, LPARAM lParam);
+    BOOL OnSetCursor(HWND hwnd, LPARAM lParam); // TRUE=已处理；FALSE=落 DefWindowProc
+    LRESULT OnMouseWheel(WPARAM wParam);
+    LRESULT OnLButtonUp(HWND hwnd, LPARAM lParam);
+    LRESULT OnRButtonUp(HWND hwnd, LPARAM lParam);
+    LRESULT OnXButtonUp(WPARAM wParam);
+    LRESULT OnMButtonUp(HWND hwnd, LPARAM lParam);
 
     HWND _hwnd = nullptr;
     HFONT _font = nullptr;

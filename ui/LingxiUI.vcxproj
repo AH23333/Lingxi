@@ -59,7 +59,9 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="window.cpp" />
+    <ClCompile Include="candwnd_core.cpp" />
+    <ClCompile Include="candwnd_render.cpp" />
+    <ClCompile Include="candwnd_interact.cpp" />
     <ClCompile Include="pipeserver.cpp" />
     <ClCompile Include="settingsui.cpp" />
     <ClCompile Include="tray.cpp" />
@@ -80,6 +82,7 @@
     <ClInclude Include="pipeserver.h" />
     <ClInclude Include="settingsui.h" />
     <ClInclude Include="uiinternal.h" />
+    <ClInclude Include="candwnd_internal.h" />
     <ClInclude Include="usagestats.h" />
     <ClInclude Include="hotphraseui.h" />
     <ClInclude Include="phraseui.h" />
