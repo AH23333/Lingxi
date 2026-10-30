@@ -289,6 +289,9 @@ constexpr int IDC_CHK_FZ_CH = 122;   // ch/c
 constexpr int IDC_CHK_FZ_SH = 123;   // sh/s
 constexpr int IDC_CHK_FZ_NL = 124;   // n/l
 constexpr int IDC_CHK_FZ_NG = 125;   // 前后鼻音
+constexpr int IDC_CHK_FZ_FH = 127;   // f/h
+constexpr int IDC_CHK_FZ_LR = 128;   // l/r
+constexpr int IDC_CHK_FZ_GK = 129;   // g/k
 constexpr int IDC_CMB_TOGGLEMODE = 117; // B5 草案②：中英切换键（旧 109 复选框弃用）
 constexpr int IDC_CHK_VMODE = 110;
 constexpr int IDC_BTN_USERDICT = 111;
@@ -311,7 +314,7 @@ HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
      g_hChkVMode = nullptr,
      g_hChkShuangpin = nullptr, g_hChkSymbolHotkey = nullptr, g_hChkTraditional = nullptr,
       g_hChkLlmRerank = nullptr, g_hChkLlmMultiPath = nullptr;
-HWND g_hChkFz[5] = { nullptr, nullptr, nullptr, nullptr, nullptr }; // 模糊音组细分开关
+HWND g_hChkFz[8] = {}; // 模糊音组细分开关（8 组）
 HWND g_hCmbOpacity = nullptr;
 HFONT g_hFont = nullptr;        // 12px：通用控件（用户词典窗沿用）
 HFONT g_hFontLabel = nullptr;   // 设置行标题 14px
@@ -353,7 +356,7 @@ void LoadToControls()
     SetToggle(g_hChkEn, s.enCompletion);
     SetToggle(g_hChkCnPunct, s.cnPunct);
     SetToggle(g_hChkFuzzy, s.fuzzyPinyin);
-    for (int fz = 0; fz < 5; fz++) SetToggle(g_hChkFz[fz], (s.fuzzyGroups >> fz) & 1u);
+    for (int fz = 0; fz < 8; fz++) SetToggle(g_hChkFz[fz], (s.fuzzyGroups >> fz) & 1u);
     ComboBox_SetCurSel(g_hCmbToggleMode, (int)(s.toggleMode <= 4 ? s.toggleMode : 1));
     SetToggle(g_hChkVMode, s.vMode);
     SetToggle(g_hChkShuangpin, s.shuangpin);
@@ -388,8 +391,8 @@ void SaveFromControls()
     s.enCompletion = ToggleOn(g_hChkEn);
     s.cnPunct = ToggleOn(g_hChkCnPunct);
     s.fuzzyPinyin = ToggleOn(g_hChkFuzzy);
-    { unsigned grp = 0; for (int fz = 0; fz < 5; fz++) if (ToggleOn(g_hChkFz[fz])) grp |= 1u << fz;
-      s.fuzzyGroups = grp ? grp : 0x1F; } // 一组未勾=退回全组（总开关才是关闭入口，避免"全关静默失聪"）
+    { unsigned grp = 0; for (int fz = 0; fz < 8; fz++) if (ToggleOn(g_hChkFz[fz])) grp |= 1u << fz;
+      s.fuzzyGroups = grp ? grp : 0xFF; } // 一组未勾=退回全组（总开关才是关闭入口，避免"全关静默失聪"）
     int tsel = ComboBox_GetCurSel(g_hCmbToggleMode);
         if (tsel >= 0 && tsel <= 4) s.toggleMode = (uint32_t)tsel;
     s.vMode = ToggleOn(g_hChkVMode);
@@ -1172,6 +1175,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CHK_FUZZY:
         case IDC_CHK_FZ_ZH: case IDC_CHK_FZ_CH: case IDC_CHK_FZ_SH:
         case IDC_CHK_FZ_NL: case IDC_CHK_FZ_NG:
+        case IDC_CHK_FZ_FH: case IDC_CHK_FZ_LR: case IDC_CHK_FZ_GK:
         case IDC_CHK_VMODE:
         case IDC_CHK_SHUANGPIN:
         case IDC_CHK_SYMBOLHOTKEY:
@@ -1521,10 +1525,11 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_hChkFuzzy = mkToggle(IDC_CHK_FUZZY);
     mkRow(L"模糊音", L"z/zh、c/ch、s/sh、n/l、前后鼻音互通，精确匹配优先",
           g_hChkFuzzy, CK_TOGGLE, 44);
-    { static const wchar_t* fzName[5] = { L"zh 与 z 互通", L"ch 与 c 互通", L"sh 与 s 互通",
-        L"n 与 l 互通", L"前鼻音与后鼻音互通" };
-      static const int fzId[5] = { IDC_CHK_FZ_ZH, IDC_CHK_FZ_CH, IDC_CHK_FZ_SH, IDC_CHK_FZ_NL, IDC_CHK_FZ_NG };
-      for (int fz = 0; fz < 5; fz++)
+    { static const wchar_t* fzName[8] = { L"zh 与 z 互通", L"ch 与 c 互通", L"sh 与 s 互通",
+        L"n 与 l 互通", L"前鼻音与后鼻音互通", L"f 与 h 互通", L"l 与 r 互通", L"g 与 k 互通" };
+      static const int fzId[8] = { IDC_CHK_FZ_ZH, IDC_CHK_FZ_CH, IDC_CHK_FZ_SH, IDC_CHK_FZ_NL, IDC_CHK_FZ_NG,
+        IDC_CHK_FZ_FH, IDC_CHK_FZ_LR, IDC_CHK_FZ_GK };
+      for (int fz = 0; fz < 8; fz++)
       { g_hChkFz[fz] = mkToggle(fzId[fz]); mkRow(fzName[fz], L"总开关开启时按组生效", g_hChkFz[fz], CK_TOGGLE, 44); } }
     g_hChkShuangpin = mkToggle(IDC_CHK_SHUANGPIN);
     mkRow(L"小鹤双拼", L"每音节两键：声母+韵母，零声母按韵母首字母补齐",

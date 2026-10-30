@@ -70,7 +70,7 @@ Settings LoadSettings()
     if (GetDword(hKey, L"Paused", v)) s.paused = v != 0;
     if (GetDword(hKey, L"CnPunct", v)) s.cnPunct = v != 0;
     if (GetDword(hKey, L"FuzzyPinyin", v)) s.fuzzyPinyin = v != 0;
-    if (GetDword(hKey, L"FuzzyGroups", v) && v <= 0x1F) s.fuzzyGroups = v; // 缺键=全组，与历史行为一致
+    if (GetDword(hKey, L"FuzzyGroups", v) && v <= 0xFF) s.fuzzyGroups = v; // 缺键=全组，与历史行为一致
     // 中英切换键：新键 ToggleMode 优先；无/越界则旧键 ShiftToggle
     // （bool）派生 0/1；两键均缺 = 默认 1（Shift 切换，与历史行为一致）
     DWORD tm = 0;

@@ -983,13 +983,27 @@ int wmain()
                     for (const auto& c : r.cands) if (c == L"京") hasJing = true;
                     Report(!hasJing, "fuzzy group gating: nasal off, jin no longer hits 京", L"");
                 }
-                sg.fuzzyGroups = 0x1F; // 全组恢复
+                sg.fuzzyGroups = 0xFF; // 全组恢复
                 lingxi::SaveSettings(sg);
                 {
                     lingxi::Prediction r = py->Predict(L"si");
                     bool hasShi = false;
                     for (const auto& c : r.cands) if (c == L"是") hasShi = true;
                     Report(hasShi, "fuzzy group gating: all groups on, si hits 是 again", L"");
+                }
+                {
+                    // f/h 组（bit5）：关→"he" 不再模糊出"和"(fo? 反向)；开→"fei" 可出"费"旁证。
+                    // 用 hu↔fu：关组时 hu 输入不得出"服"（fu 系），开组时应可。
+                    sg.fuzzyGroups = 1; lingxi::SaveSettings(sg);
+                    lingxi::Prediction r1 = py->Predict(L"fu");
+                    bool noHu = true;
+                    for (const auto& c : r1.cands) if (c == L"湖") noHu = false;
+                    Report(noHu, "fuzzy group gating: f/h off, fu no longer hits 湖", L"");
+                    sg.fuzzyGroups = 0xFF; lingxi::SaveSettings(sg);
+                    lingxi::Prediction r2 = py->Predict(L"fu");
+                    bool hasHu = false;
+                    for (const auto& c : r2.cands) if (c == L"湖") hasHu = true;
+                    Report(hasHu, "fuzzy group gating: f/h on, fu hits 湖", L"");
                 }
                 lingxi::SaveSettings(s0); // 还原沙盒基线
             }

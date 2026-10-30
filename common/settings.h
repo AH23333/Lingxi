@@ -18,7 +18,7 @@ struct Settings
     bool paused = false;          // 暂停预测：完全直通，不出任何候选（临时需要时用）
     bool cnPunct = true;          // 中文标点：中文模式下 . , / ; 等映射为全角标点
     bool fuzzyPinyin = true;      // 模糊音总开关：关=全部组失效；开=按 fuzzyGroups 位掩码生效
-    uint32_t fuzzyGroups = 0x1F;  // 模糊音组位掩码：bit0=zh/z bit1=ch/c bit2=sh/s bit3=n/l bit4=前后鼻音
+    uint32_t fuzzyGroups = 0xFF;  // 模糊音组位掩码：bit0=zh/z bit1=ch/c bit2=sh/s bit3=n/l bit4=前后鼻音 bit5=f/h bit6=l/r bit7=g/k
                                   // （对标微软拼音"可细分开关"；0 视为仅总开关无组=无互通，默认全组）
     uint32_t toggleMode = 1;      // 中英切换键（B5 草案②）：0 无 1 Shift 2 Shift 或
                                   // Ctrl 3 CapsLock（KeyDown 即吞，不翻转大小写）

@@ -336,7 +336,7 @@ public:
         if (context.empty()) return p;
         Settings st = LoadSettings();
         _fuzzy = st.fuzzyPinyin; // 开关实时生效
-        if (st.fuzzyGroups >= 1 && st.fuzzyGroups <= 0x1F && st.fuzzyGroups != _fuzzyGroups)
+        if (st.fuzzyGroups >= 1 && st.fuzzyGroups <= 0xFF && st.fuzzyGroups != _fuzzyGroups)
         {
             // 组掩码变更：重建预计算模糊索引（音节量级小，毫秒级，仅变更时发生）
             _fuzzyGroups = st.fuzzyGroups;
@@ -1395,6 +1395,13 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         else if (initial == "sh" && (_fuzzyGroups & 4)) initVar.push_back("s");
         else if (initial == "n" && (_fuzzyGroups & 8)) initVar.push_back("l");
         else if (initial == "l" && (_fuzzyGroups & 8)) initVar.push_back("n");
+        // f/h、l/r、g/k 三组：对标微软拼音更多组细分（GAP §1）
+        else if (initial == "f" && (_fuzzyGroups & 0x20)) initVar.push_back("h");
+        else if (initial == "h" && (_fuzzyGroups & 0x20)) initVar.push_back("f");
+        else if (initial == "r" && (_fuzzyGroups & 0x40)) initVar.push_back("l");
+        else if (initial == "l" && (_fuzzyGroups & 0x40)) initVar.push_back("r");
+        else if (initial == "g" && (_fuzzyGroups & 0x80)) initVar.push_back("k");
+        else if (initial == "k" && (_fuzzyGroups & 0x80)) initVar.push_back("g");
 
         std::vector<std::string> finVar{ final };
         if ((_fuzzyGroups & 0x10) &&

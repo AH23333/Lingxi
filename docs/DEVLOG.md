@@ -568,3 +568,9 @@ R2-R4 收口后用户要求继续低难度功能、40 分钟内收口——选 R
 - GAP §3 透明度 ❌→✅：candidateOpacity 设置（70–100 四档，缺键=100 与历史一致）→ CandWindow 创建加 WS_EX_LAYERED、Show 时 ApplyOpacity 按 % 去重应用 LWA_ALPHA → 设置页「外观」页不透明度下拉（复用 combo 模式）。
 - 验证：全链构建绿；regress 一次 ALL PASS（engine 218/0+deep+e2e，tmp/regress-257628887）；**程序化实测** GetLayeredWindowAttributes 返回 ok=True flags=0x2(LWA_ALPHA) alpha=255（100% 档正确输出，通道打通实锤——桌面多 agent 争用中，截图不可信时改用窗口属性取证，#55 方法论延伸）。
 - 过程：沙盒 NS 实例设 80% 触发候选窗验证时实例被宿主重启换岗（读到的是真实 NS 实例 255）——不影响链路结论，档位映射是同一 MulDiv 纯计算。
+
+## 2026-10-30 午后·续2（Loomy：模糊音扩到 8 组，GAP §1 🟡→✅）
+
+- 承接组掩码框架顺手扩 f/h、l/r、g/k 三组（bit5-7）：ComputeFuzzy 三新分支、设置页 8 行子勾选、默认掩码 0x1F→0xFF（缺键行为仍=全组，老用户无感）、Load 校验放宽到 0xFF。
+- engine_test P8b 追加 f/h 双向断言（关组 fu 不出"湖"、开组可出）；总 220/0；regress 一次 ALL PASS（tmp/regress-886520942）。
+- GAP §1 模糊音行 🟡→✅（组数与微软持平且细分粒度不输）。
