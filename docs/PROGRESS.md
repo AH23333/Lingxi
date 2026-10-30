@@ -65,4 +65,4 @@
 - 已完成（同日）：候选窗透明度四档（`ef0e61d`）、模糊音 8 组（`7569b31`）。
 - **选词联想 ✅（`04d589b`，GAP §11 主线一 P0 收官）**：上屏后语境联想+空格连续输出，
   deep_test T18a/b 真机 33/33（tmp/regress-2937629603）；assocAfterPick 默认开可关。
-- **待办1 两项视觉验证 ✅（10-29 遗留结案）**：①设置页滚动条/底部裁切——GetScrollInfo 真值 + 真屏/PrintWindow 双截图证底部无裁切（黑条=DWM 边框伪影，PITFALLS #58）；②owner-draw 勾选（现 UI 实为 mkToggle 药丸）ON/OFF 两态多页实测渲染正确。顺带修 settingsui WM_VSCROLL 缺 SB_TOP/SB_BOTTOM case（程序化 Home/End 无效），构建+运行进程实测生效；全量 regress 留下轮补跑。
+- **待办1 两项视觉验证 ✅（10-29 遗留结案）**：①设置页滚动条/底部裁切——GetScrollInfo 真值 + 真屏/PrintWindow 双截图证底部无裁切（黑条=DWM 边框伪影，PITFALLS #58）；②owner-draw 勾选（现 UI 实为 mkToggle 药丸）ON/OFF 两态多页实测渲染正确。顺带修 settingsui WM_VSCROLL 缺 SB_TOP/SB_BOTTOM case（程序化 Home/End 无效），构建+运行进程实测生效；收口后全量 regress 补跑一次 ALL PASS（regress-2538823020）。

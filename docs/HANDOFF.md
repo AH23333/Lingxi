@@ -4,8 +4,8 @@
 
 - **待验证两项（10-29 遗留，下方速报所列）全部结案 PASS**：①设置页底部裁切/滚动条真值——GetScrollInfo(0/1076/641/0) + 真屏/PrintWindow 双截图 + SB_PAGEDOWN 到底尾部行完整渲染，**无裁切**（PrintWindow 黑条=DWM resize 边框伪影，真屏对照排除，PITFALLS #58）；②owner-draw 勾选 checked 态——现 UI 布尔项已全部是 mkToggle 药丸（BS_OWNERDRAW+外置 g_toggleOn，settingsui DrawToggle），ON(#107C10 绿带)/OFF(灰 pill+深灰钮) 两态多页实测渲染正确，无黑块/错位/默认 Win32 样式。
 - **顺带修**：settingsui WM_VSCROLL 缺 SB_TOP/SB_BOTTOM case（程序化 Home/End 无效；滚轮/拖拽/PgUp/PgDn 用户路径不受影响）——补 case 后 build.cmd exit 0 ×2 + 对运行中设置窗实测 SB_BOTTOM 0→435 / SB_TOP 435→0 全对。
-- **本轮未跑全量 regress**（改动仅设置 UI 两行 case + 机器重载 + 用户活跃），**下轮开工第一件事 regress.cmd 补跑**；竞态新坑（并发行为者启动旧码进程伪装"修复无效"，判别=StartTime vs exe mtime + 新 case 探针）入 PITFALLS #57。
-- **下一轮待办**：regress 补跑 → pf_shot 补 dark 态与 hover/点选流截图/联想态走查 → GAP R6 长尾（U 模式拆字、以词定字、候选注音、联想多段呈现）。
+- **全量 regress 已补跑（速报后当即）**：`tools\regress.cmd` 一次 **ALL PASS**（regress-2538823020：build gate 三构建 + engine + fix_readings + deep + e2e attempt1 全绿）；竞态新坑（并发行为者启动旧码进程伪装"修复无效"，判别=StartTime vs exe mtime + 新 case 探针）入 PITFALLS #57。
+- **下一轮待办**：pf_shot 补 dark 态与 hover/点选流截图/联想态走查 → GAP R6 长尾（U 模式拆字、以词定字、候选注音、联想多段呈现）。
 
 （以下为历史速报。）
 ## ⚡ 最新状态速报（2026-10-29 下午·新会话：AI 补全大量重复修复 `d5a7d64` + regress 全绿）

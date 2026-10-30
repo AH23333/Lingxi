@@ -625,7 +625,7 @@ R2-R4 收口后用户要求继续低难度功能、40 分钟内收口——选 R
 **顺带修复：WM_VSCROLL 处理器缺 SB_TOP/SB_BOTTOM case（ui/settingsui.cpp:1316-1318）**
 - 症状：程序化 Home/End（SB_TOP/SB_BOTTOM）无效；用户路径（滚轮/拖拽/PgUp/PgDn）不受影响，故长期未暴露。
 - 修复后两轮 tools/build.cmd exit 0；对运行中设置窗实测 SB_BOTTOM 0→435、SB_TOP 435→0、PAGEDOWN 0→435 全对。
-- **本轮未跑全量 regress**：改动仅设置 UI 两行 case；机器持续重载（atrustagent 84%）+用户活跃窗口在场，build×2 + 运行进程实证已覆盖本改动面；全量回归留待下轮开工补跑（LOOMY-HANDOFF 已注记）。
+- **本轮未跑全量 regress（当时）**：改动仅设置 UI 两行 case；机器持续重载（atrustagent 84%）+用户活跃窗口在场，build×2 + 运行进程实证已覆盖本改动面；**收口提交后当即补跑：`tools\regress.cmd` 一次 ALL PASS**（tmp/regress-2538823020：build gate 三构建 + engine + fix_readings + deep + e2e attempt1 全绿）——缓跑账清零。
 
 **竞态插曲（PITFALLS #57）**：期间两次非本会话启动的 LingxiUI（12816@18:33:04 / 22912@18:50:58）；12816 为竞态旧码进程（SB_TOP 无效暴露，实为加载修复前 exe），22912 加载含修复 exe 实测通过。判定一律以"进程 StartTime vs exe LastWriteTime + 新 case 实测"为准，勿以 Get-Process 焦点进程为先验。
 - 方法论沉淀：截图取证一律 PrintWindow(hwnd, hdc, 2)（抗遮挡窗口干扰）；PS EnumWindows 委托回调内 Write-Output 不外传——必须 ArrayList 闭包（引用类型）收集；FindWindowW 按类查在本环境多次失败（#55 同族），EnumWindows+闭包可靠。
