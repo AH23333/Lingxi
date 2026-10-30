@@ -958,6 +958,42 @@ int wmain()
                 }
             }
 
+            // P8b. 模糊音组细分开关（Settings.fuzzyGroups 位掩码）门控行为
+            {
+                lingxi::Settings s0 = lingxi::LoadSettings();
+                lingxi::Settings sg = s0;
+                sg.fuzzyPinyin = true;
+                sg.fuzzyGroups = 1; // 仅 zh/z 组
+                lingxi::SaveSettings(sg);   // 引擎每次 Predict 热读，组变更自动重建模糊索引
+                {
+                    lingxi::Prediction r = py->Predict(L"si");
+                    bool hasShi = false;
+                    for (const auto& c : r.cands) if (c == L"是") hasShi = true;
+                    Report(!hasShi, "fuzzy group gating: sh/s off, si no longer hits 是", L"");
+                }
+                {
+                    lingxi::Prediction r = py->Predict(L"zhang");
+                    bool hasZang = false;
+                    for (const auto& c : r.cands) if (c == L"脏") hasZang = true;
+                    Report(hasZang, "fuzzy group gating: zh/z on, zhang still hits 脏", L"");
+                }
+                {
+                    lingxi::Prediction r = py->Predict(L"jin");
+                    bool hasJing = false;
+                    for (const auto& c : r.cands) if (c == L"京") hasJing = true;
+                    Report(!hasJing, "fuzzy group gating: nasal off, jin no longer hits 京", L"");
+                }
+                sg.fuzzyGroups = 0x1F; // 全组恢复
+                lingxi::SaveSettings(sg);
+                {
+                    lingxi::Prediction r = py->Predict(L"si");
+                    bool hasShi = false;
+                    for (const auto& c : r.cands) if (c == L"是") hasShi = true;
+                    Report(hasShi, "fuzzy group gating: all groups on, si hits 是 again", L"");
+                }
+                lingxi::SaveSettings(s0); // 还原沙盒基线
+            }
+
             // P9. 自学习用户词典：选字后该词置顶（备份/恢复真实词典，不污染）
             {
                 // 拼出 userdict 路径并备份现有内容

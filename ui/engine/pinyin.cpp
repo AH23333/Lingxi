@@ -336,6 +336,12 @@ public:
         if (context.empty()) return p;
         Settings st = LoadSettings();
         _fuzzy = st.fuzzyPinyin; // 开关实时生效
+        if (st.fuzzyGroups >= 1 && st.fuzzyGroups <= 0x1F && st.fuzzyGroups != _fuzzyGroups)
+        {
+            // 组掩码变更：重建预计算模糊索引（音节量级小，毫秒级，仅变更时发生）
+            _fuzzyGroups = st.fuzzyGroups;
+            BuildFuzzyIndex();
+        }
         std::string raw = ToUtf8(context);
         if (raw.empty()) return p;
         // B1 部分提交 cover：仅全 ASCII 且非双拼时提供。双拼键位→全拼映射
@@ -568,6 +574,7 @@ private:
 
     // 模糊音开关（每次 Predict 从设置读取，默认开）
     bool _fuzzy = true;
+    unsigned _fuzzyGroups = 0x1F; // 模糊音组位掩码，见 Settings.fuzzyGroups
     // 音节 → 合法模糊变体（含自身，自身在首位）；加载后一次性预计算，热路径只查表。
     std::unordered_map<std::string, std::vector<std::string>> _fuzzyOf;
 
@@ -1379,22 +1386,24 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         std::string final = s.substr(iLen);
 
         std::vector<std::string> initVar{ initial };
-        if (initial == "z") initVar.push_back("zh");
-        else if (initial == "zh") initVar.push_back("z");
-        else if (initial == "c") initVar.push_back("ch");
-        else if (initial == "ch") initVar.push_back("c");
-        else if (initial == "s") initVar.push_back("sh");
-        else if (initial == "sh") initVar.push_back("s");
-        else if (initial == "n") initVar.push_back("l");
-        else if (initial == "l") initVar.push_back("n");
+        // 组位掩码：bit0=zh/z bit1=ch/c bit2=sh/s bit3=n/l（细分开关，对标微软拼音）
+        if (initial == "z" && (_fuzzyGroups & 1)) initVar.push_back("zh");
+        else if (initial == "zh" && (_fuzzyGroups & 1)) initVar.push_back("z");
+        else if (initial == "c" && (_fuzzyGroups & 2)) initVar.push_back("ch");
+        else if (initial == "ch" && (_fuzzyGroups & 2)) initVar.push_back("c");
+        else if (initial == "s" && (_fuzzyGroups & 4)) initVar.push_back("sh");
+        else if (initial == "sh" && (_fuzzyGroups & 4)) initVar.push_back("s");
+        else if (initial == "n" && (_fuzzyGroups & 8)) initVar.push_back("l");
+        else if (initial == "l" && (_fuzzyGroups & 8)) initVar.push_back("n");
 
         std::vector<std::string> finVar{ final };
-        if (final.size() >= 2 && final[final.size() - 1] == 'g' &&
+        if ((_fuzzyGroups & 0x10) &&
+            final.size() >= 2 && final[final.size() - 1] == 'g' &&
             final[final.size() - 2] == 'n')
         {
             finVar.push_back(final.substr(0, final.size() - 1)); // -ng → -n
         }
-        else if (!final.empty() && final.back() == 'n')
+        else if ((_fuzzyGroups & 0x10) && !final.empty() && final.back() == 'n')
         {
             finVar.push_back(final + "g"); // -n → -ng
         }
