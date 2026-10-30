@@ -1365,7 +1365,19 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
 void CreateSettingsWindow(HINSTANCE hInst)
 {
-    if (g_hSettings) { LX_LOG(L"ui", L"设置窗复用 isIcon=%d", IsWindow(g_hSettings)); ShowWindow(g_hSettings, SW_SHOW); SetForegroundWindow(g_hSettings); return; } // FORWARD-DIAG
+    if (g_hSettings && IsWindow(g_hSettings))
+    {
+        LX_LOG(L"ui", L"设置窗复用");
+        ShowWindow(g_hSettings, SW_SHOW);
+        SetForegroundWindow(g_hSettings);
+        return;
+    }
+    if (g_hSettings)
+    {
+        // 句柄已失效（窗口曾被销毁）：清空指针走重建，否则复用路径永远静默空转
+        LX_LOG(L"ui", L"设置窗句柄失效，重建");
+        g_hSettings = nullptr;
+    }
 
     WNDCLASSEXW wc = { sizeof(wc) };
     wc.lpfnWndProc = SettingsWndProc;
@@ -1404,6 +1416,13 @@ void CreateSettingsWindow(HINSTANCE hInst)
                                    CW_USEDEFAULT, CW_USEDEFAULT,
                                    MulDiv(900, scale, 96), MulDiv(680, scale, 96),
                                    NULL, NULL, hInst, NULL);
+    if (!g_hSettings)
+    {
+        LX_LOG(L"ui", L"设置窗创建失败 gle=%u（诊断）", GetLastError());
+        g_updating = false;
+        return;
+    }
+    LX_LOG(L"ui", L"设置窗句柄 OK，继续子控件构建（诊断）");
 
     auto mkFont = [scale](int px, int weight) {
         return CreateFontW(-MulDiv(px, scale, 96), 0, 0, 0, weight, FALSE, FALSE, FALSE,
@@ -1577,6 +1596,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     ApplyPageVisibility(); // 只显示当前页的行控件
     UpdateSettingsScrollbar(LayoutSettings());
     ShowWindow(g_hSettings, SW_SHOW);
+    LX_LOG(L"ui", L"设置窗构建完成并显示（诊断）");
     SetForegroundWindow(g_hSettings);
 }
 

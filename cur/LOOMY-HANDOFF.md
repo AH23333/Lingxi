@@ -14,8 +14,8 @@
 
 **本轮提交链**（dfc9ec5→e059e38，5 修复 + 3 文档）：续写去堆叠/空文闸/缩写限长（dfc9ec5）、变体质量闸（29f9ec2）、回显掐头+字体+构建戳门控（6536e3c）、设置回写双保险（04ac2fb）、转发观测日志（f4911ff）、PITFALLS #44/#45 立案。
 
-**下一轮待办（按优先级）**：
-1. 两项待验证（方法已备好，一次同会话复现即可判定）：①设置页底部裁切/滚动条真值——同会话 Start-Process 起 UI→--settings→FindWindow+截图+查 WS_VSCROLL；②owner-draw 勾选框 checked 态渲染（accent 底+白勾）——同会话截图复核。观测日志 f4911ff 已就位。
+**10-30 午后转发结案**：「--settings 不弹窗」= FindWindow 跨 window station 假象（PITFALLS #46），转发链无 bug；已补 IsWindow 存活守卫（失效句柄置空重建）。**下一轮待办（按优先级）**：
+1. 两项待验证（**桌面空闲时**做；窗口观测改用 EnumThreadWindows 而非 FindWindow，#46）：①设置页滚动条真值与底部裁切；②owner-draw 勾选框 checked 态截图复核。
 2. 视觉走查继续自转（用户已明令"自己测"）：pf_shot 已支持 cand/page/en/toast 四态；建议补 dark 态（同会话实例+临时 DarkMode 截图后还原）与 hover/点击选词流。抓到问题→小步修→截图回验。
 3. 遗留功能项：R3 真机压测 p50/p95（pf_ux 现成）；组合期内联编辑（M5 尾巴，导航键已预留吞下）；快捷短语/符号面板走查未覆盖。
 
