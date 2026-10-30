@@ -1,4 +1,4 @@
-//
+﻿//
 // 用户词典：存储层 + 管理窗 + 候选词右键词典操作。
 // 原 settingsui.cpp 词典段拆出（P1 重构）。
 // - 存储：%APPDATA%\LingxiIme\userdict.txt（UTF-8：词\t拼音\t次数）；
@@ -225,7 +225,7 @@ void PersistUdEntries(const std::vector<UdEntry>& entries)
                     L"灵犀输入法", MB_OK | MB_ICONWARNING);
         return;
     }
-    if (g_reloadUserDict) g_reloadUserDict();
+    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
 }
 
 void UdDeleteSelected()
@@ -298,7 +298,7 @@ void UdClearAll()
                     L"清空用户词典", MB_OKCANCEL | MB_ICONQUESTION) != IDOK)
         return;
     WriteFileBytes(UserDictPathW(), std::string());
-    if (g_reloadUserDict) g_reloadUserDict();
+    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
     RefreshUdList();
 }
 
@@ -383,7 +383,7 @@ void UdAddWord()
                     L"灵犀输入法", MB_OK | MB_ICONWARNING);
         return;
     }
-    if (g_reloadUserDict) g_reloadUserDict();
+    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
     RefreshUdList();
     SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC,
         merged ? L"词条已存在，已提升其排序（+1000）"
@@ -446,7 +446,7 @@ void UdNudgeSelected(int delta)
                     L"灵犀输入法", MB_OK | MB_ICONWARNING);
         return;
     }
-    if (g_reloadUserDict) g_reloadUserDict();
+    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
     RefreshUdList();
     // 按内容重选（索引可能因 count 排序变化而移动）
     for (int i = 0; i < (int)SendMessageW(g_hUdList, LB_GETCOUNT, 0, 0); i++)
@@ -734,7 +734,7 @@ bool ApplyCandidateDictOp(const std::wstring& word, const std::wstring& keyHint,
         LX_LOG(L"ui", L"右键词典操作写入失败（文件被占用或无权限）: %ls", word.c_str());
         return false;
     }
-    if (g_reloadUserDict) g_reloadUserDict();
+    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
     LX_LOG(L"ui", L"右键词典操作完成: op=%d word=%ls", (int)op, word.c_str());
     return true;
 }

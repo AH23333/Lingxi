@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "phraseui.h"
+#include "uiinternal.h" // g_hooks（P3 回调收口）
 #include "../common/log.h"
 #include "uistyle.h"
 
@@ -28,8 +29,6 @@ constexpr int IDC_PH_ADD = 503;
 constexpr int IDC_PH_DEL = 504;
 constexpr int IDC_PH_CLOSE = 505;
 constexpr int IDC_PH_STATUS = 506;
-
-std::function<void()> g_phChanged;
 
 // ---------------- 存储层 ----------------
 
@@ -68,33 +67,7 @@ std::wstring Utf8ToW(const std::string& s)
     return w;
 }
 
-bool ReadFileBytes(const std::wstring& path, std::string& out)
-{
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD size = GetFileSize(h, NULL);
-    out.resize(size);
-    DWORD got = 0;
-    BOOL ok = ReadFile(h, out.data(), size, &got, NULL);
-    CloseHandle(h);
-    out.resize(ok ? got : 0);
-    return ok != FALSE;
-}
-
-bool WriteFileBytes(const std::wstring& path, const std::string& data)
-{
-    // 原子写：.tmp 替换式（同用户词典/快捷短语——避免读写者撞车产生半截文件）
-    std::wstring tmp = path + L".tmp";
-    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, NULL,
-                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD wrote = 0;
-    BOOL ok = WriteFile(h, data.data(), (DWORD)data.size(), &wrote, NULL);
-    CloseHandle(h);
-    if (!ok || wrote != data.size()) { DeleteFileW(tmp.c_str()); return false; }
-    return MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
-}
+// ReadFileBytes/WriteFileBytes：共享实现见 uiinternal.h（userdictwnd.cpp）
 
 // ---------------- 管理窗口 ----------------
 
@@ -195,7 +168,7 @@ void PhAdd()
         return;
     }
     LX_LOG(L"ui", L"自定义短语添加: %ls -> %ls", a.c_str(), t.c_str());
-    if (g_phChanged) g_phChanged();
+    if (g_hooks.phrasesChanged) g_hooks.phrasesChanged();
     RefreshPhList();
     SetDlgItemTextW(g_hPhWnd, IDC_PH_STATUS, L"已添加，打字时整串输入缩写即出");
 }
@@ -216,7 +189,7 @@ void PhDeleteSelected()
                     L"灵犀输入法", MB_OK | MB_ICONWARNING);
         return;
     }
-    if (g_phChanged) g_phChanged();
+    if (g_hooks.phrasesChanged) g_hooks.phrasesChanged();
     RefreshPhList();
     SetDlgItemTextW(g_hPhWnd, IDC_PH_STATUS, L"已删除，下次输入不再出现");
 }
@@ -296,11 +269,6 @@ bool SavePhraseEntries(const std::vector<PhraseEntry>& entries)
     // 带 BOM 写：文本编辑器打开不乱码（引擎解析端 BOM 容忍）
     std::string utf = "\xEF\xBB\xBF" + WToUtf8(text);
     return WriteFileBytes(PhrasePathW(), utf);
-}
-
-void SetPhrasesChangedCallback(std::function<void()> cb)
-{
-    g_phChanged = std::move(cb);
 }
 
 void ShowPhraseWindow(HINSTANCE hInst, HWND hParent)

@@ -31,7 +31,5 @@ void NotifyHotPhrasesChanged();    // 外部改写存储文件后触发回调（
 
 // 快捷短语管理窗口（单例；重复调用仅前置已建窗口）
 void ShowHotPhraseWindow(HINSTANCE hInst, HWND hParent);
-// 条目保存后回调（LingxiUI 重新注册全局热键）
-void SetHotPhrasesChangedCallback(std::function<void()> cb);
 
 } // namespace lingxi

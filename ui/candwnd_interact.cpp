@@ -677,7 +677,7 @@ LRESULT CandWindow::OnRButtonUp(HWND hwnd, LPARAM lParam)
                     : (cmd == 2) ? CandDictOp::Boost
                     : (cmd == 3) ? CandDictOp::Lower : CandDictOp::Delete;
         // 失败仅记日志不打断输入（词典窗提供手动键兜底）；成功后下一次
-        // 击键即见新排序（引擎经 g_reloadUserDict 已重载）。
+        // 击键即见新排序（引擎经 g_hooks.reloadUserDict 已重载）。
         if (ApplyCandidateDictOp(word, composing, op))
         {
             // 成功反馈浮窗 1.5s（选词不刷新场景下告知"已生效"，防重复点击）

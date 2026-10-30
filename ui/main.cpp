@@ -8,6 +8,7 @@
 #include "window.h"
 #include "pipeserver.h"
 #include "settingsui.h"
+#include "uiinternal.h" // g_hooks（P3 回调收口：装配段一次性填充）
 #include "usagestats.h"
 #include "hotphraseui.h"
 #include "phraseui.h"
@@ -292,7 +293,7 @@ const wchar_t* kHelpText =
     L"                 内部探针（回归脚本用）\n";
 
 // --diagnostics：OS/构建/DPI/设置/数据文件统计（排障一屏汇总）
-std::wstring BuildDiagnosticsText()
+std::wstring lingxi::BuildDiagnosticsText()
 {
     std::wstring t = L"灵犀输入法 诊断报告\n";
     wchar_t buf[512];
@@ -414,7 +415,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     {
         // 诊断真实配置：清测试沙箱变量后读（与生产路径同口径）
         SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", NULL);
-        EmitCliText(BuildDiagnosticsText().c_str());
+        EmitCliText(lingxi::BuildDiagnosticsText().c_str());
         LocalFree(argv);
         return 0;
     }
@@ -490,11 +491,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     if (hReady) SetEvent(hReady); // 管道服务已监听；句柄随进程存活，不主动关
 
     LX_LOG(L"ui", L"LingxiUI 启动完成");
-    // 用户词典管理变更后让拼音引擎重新加载
-    if (pinyinEngine)
-        lingxi::SetUserDictReloadCallback([&] { pinyinEngine->ReloadUserDict(); });
-    // R2 自定义短语：与用户词典同一热载通道（phrases.txt 在同一次重载里装入）
-    lingxi::SetPhrasesChangedCallback([&] { if (pinyinEngine) pinyinEngine->ReloadUserDict(); });
     lingxi::InitTrayAndSettings(hInst); // 托盘 + 设置入口（右下角）
 
     // 单实例命令转发：命名事件（自动重置）+ 隐藏通知窗口 + 等待线程
@@ -516,7 +512,6 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
             UnregisterHotKey(hNotify, kHotkeySymbols);
     };
     syncHotkey();
-    lingxi::SetSettingsChangedCallback(syncHotkey); // 设置保存后动态注册/注销
     // 快捷短语热键：全量注销→重读文件→逐条注册（失败=组合键被占用，记日志继续）
     auto syncHotPhrases = [hNotify] {
         for (size_t i = 0; i < lingxi::kMaxHotPhrases; i++)
@@ -537,22 +532,30 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
             LX_LOG(L"ui", L"快捷短语热键 %d 个注册失败（组合键被其他程序占用）", failed);
     };
     syncHotPhrases();
-    lingxi::SetHotPhrasesChangedCallback(syncHotPhrases); // 管理窗保存后重注册
     g_insertText = [&server](const std::wstring& s) { server.SendInsertText(s); };
     g_reqSymbols = [&] {
         lingxi::ShowSymbolPanel(hInst,
             [&server](const std::wstring& s) { server.SendInsertText(s); });
     };
     g_reqSettings = [&] { lingxi::ShowSettingsWindow(hInst); };
-    // 托盘菜单"符号面板"入口（复用 g_reqSymbols）
-    lingxi::SetShowSymbolsCallback([] { if (g_reqSymbols) g_reqSymbols(); });
-    // 托盘菜单"固定候选窗位置"勾选项：按窗口实际位置切换（固/拖拽同语义）
-    lingxi::SetPinToggleCallback([&] { wnd.TogglePin(); });
     // 候选窗工具条按钮（符/设）→ 与托盘/热键同入口；‹›翻页与固钉在窗口内部处理
     wnd.SetButtonHandler([&](lingxi::CandWindow::Btn b) {
         if (b == lingxi::CandWindow::Btn::Symbols) { if (g_reqSymbols) g_reqSymbols(); }
         else if (b == lingxi::CandWindow::Btn::Settings) { if (g_reqSettings) g_reqSettings(); }
     });
+    // ---- 全局回调装配（P3 收口：一次性填充 lingxi::g_hooks，见 uiinternal.h）----
+    // 消费点：托盘菜单/设置窗/词典窗/短语窗/备份导入，统一读 g_hooks.xxx。
+    // 用户词典管理变更后让拼音引擎重新加载；R2 自定义短语与用户词典同一
+    // 热载通道（phrases.txt 在同一次重载里装入）。
+    if (pinyinEngine)
+        lingxi::g_hooks.reloadUserDict = [&] { pinyinEngine->ReloadUserDict(); };
+    lingxi::g_hooks.phrasesChanged = [&] { if (pinyinEngine) pinyinEngine->ReloadUserDict(); };
+    lingxi::g_hooks.settingsChanged = syncHotkey;       // 设置保存后动态注册/注销热键
+    lingxi::g_hooks.hotPhrasesChanged = syncHotPhrases; // 管理窗保存后重注册短语热键
+    // 托盘菜单"符号面板"入口（复用 g_reqSymbols）；"固定候选窗位置"勾选项
+    // 按窗口实际位置切换（固/拖拽同语义）。
+    lingxi::g_hooks.showSymbols = [] { if (g_reqSymbols) g_reqSymbols(); };
+    lingxi::g_hooks.pinToggle = [&] { wnd.TogglePin(); };
     static NotifyThreadParam tpS{ hEvtSymbols, hNotify, WM_NOTIFY_SYMBOLS };
     static NotifyThreadParam tpE{ hEvtSettings, hNotify, WM_NOTIFY_SETTINGS };
     CreateThread(NULL, 0, NotifyThreadProc, &tpS, 0, NULL);

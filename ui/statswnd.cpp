@@ -4,8 +4,7 @@
 // （确认）/ 导出诊断报告（诊断全文+统计 → APPDATA lingxi-diag-时间戳.txt，
 // UTF-8 BOM）。Esc 双路关窗（正文子类化 + 窗口本身）。
 //
-#include "uiinternal.h"
-#include "settingsui.h" // BuildDiagnosticsText（main.cpp 实现，导出诊断报告复用）
+#include "uiinternal.h" // 含 BuildDiagnosticsText（main.cpp 实现，导出诊断报告复用）
 
 #include <windows.h>
 #include <string>

@@ -182,7 +182,7 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
             break;
         }
         case 2013:
-            if (g_reloadUserDict) g_reloadUserDict(); // 词典文件外部编辑后免重启生效
+            if (g_hooks.reloadUserDict) g_hooks.reloadUserDict(); // 词典文件外部编辑后免重启生效
             break;
         case 2014:
         {
@@ -203,7 +203,7 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
                     L"恢复默认设置", MB_OKCANCEL | MB_ICONQUESTION) == IDOK)
             {
                 ResetSettingsToDefaults();
-                if (g_settingsChanged) g_settingsChanged(); // 热键按默认重注册
+                if (g_hooks.settingsChanged) g_hooks.settingsChanged(); // 热键按默认重注册
                 UpdateTrayTip();
                 RefreshSettingsControls(); // 设置窗开着则同步控件
                 LX_LOG(L"ui", L"已恢复默认设置（注册表值已清除）");
@@ -215,10 +215,10 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
             break;
         case 2007:
             // 勾选态由 main 侧 CandWindow::TogglePin 按窗口实际位置写入
-            if (g_reqPinToggle) g_reqPinToggle();
+            if (g_hooks.pinToggle) g_hooks.pinToggle();
             break;
         case 2005:
-            if (g_showSymbols) g_showSymbols();
+            if (g_hooks.showSymbols) g_hooks.showSymbols();
             break;
         case 2006:
         {

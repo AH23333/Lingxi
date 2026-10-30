@@ -5,7 +5,7 @@
 // （用户词典窗+存储）/ helpwnd.cpp（帮助窗）/ statswnd.cpp（统计窗）/
 // settingsbackup.cpp（设置备份）。本头只声明跨文件符号；各文件私有
 // 状态一律留在各自匿名命名空间。对外公共 API 仍走 settingsui.h 等
-// 公共头，本头不得被 main.cpp/window.cpp 之外的范围扩散使用。
+// 公共头；本头仅限上述拆分文件与 main.cpp（g_hooks 装配）使用，不得扩散。
 //
 #include <windows.h>
 #include <string>
@@ -13,11 +13,20 @@
 
 namespace lingxi {
 
-// ---- 跨文件回调（定义于 settingsui.cpp；公开 setter 见 settingsui.h）----
-extern std::function<void()> g_reloadUserDict;   // 用户词典变更后引擎重载
-extern std::function<void()> g_showSymbols;      // 托盘菜单：打开符号面板
-extern std::function<void()> g_settingsChanged;  // 设置保存后（同步热键等）
-extern std::function<void()> g_reqPinToggle;     // 托盘菜单：切换候选窗固定
+// ---- 全局回调收口（P3 重构，2026-10-31）----
+// 旧 6 组"文件级全局 + SetXxxCallback setter"（g_reloadUserDict/g_showSymbols/
+// g_settingsChanged/g_reqPinToggle/g_phChanged/g_hpChanged）归并为本结构：
+// 消费点统一读 g_hooks.xxx；唯一写点=main.cpp 装配段一次性填充。
+struct UiHooks
+{
+    std::function<void()> reloadUserDict;    // 用户词典变更后引擎重载
+    std::function<void()> showSymbols;       // 托盘菜单：打开符号面板
+    std::function<void()> settingsChanged;   // 设置保存后（同步热键等）
+    std::function<void()> pinToggle;         // 托盘菜单：切换候选窗位置固定
+    std::function<void()> phrasesChanged;    // 自定义短语保存后（与用户词典同一热载通道）
+    std::function<void()> hotPhrasesChanged; // 快捷短语保存后重注册全局热键
+};
+extern UiHooks g_hooks; // 定义于 settingsui.cpp
 
 // ---- 共享资源（g_hIcon 定义于 tray.cpp；画刷/字体定义于 settingsui.cpp）----
 extern HICON g_hIcon;
@@ -51,5 +60,9 @@ bool IsAutoStartEnabled();       // HKCU\Run\LingxiIme 存在即开
 // ---- settingsbackup.cpp：设置备份 ----
 void ExportSettingsBackup(HWND owner);
 void ImportSettingsBackup(HWND owner);
+
+// ---- main.cpp ----
+// --diagnostics 全文（打字统计窗"导出诊断报告"复用）
+std::wstring BuildDiagnosticsText();
 
 } // namespace lingxi

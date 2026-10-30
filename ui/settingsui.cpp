@@ -228,7 +228,7 @@ void SaveFromControls()
     int sel = ComboBox_GetCurSel(g_hCmbDark);
     if (sel >= 0) s.darkMode = (uint32_t)sel;
     SaveSettingsDiff(s);
-    if (g_settingsChanged) g_settingsChanged();
+    if (g_hooks.settingsChanged) g_hooks.settingsChanged();
     if (g_hSettings) InvalidateRect(g_hSettings, NULL, TRUE); // 换肤等即时重绘自绘控件
     LX_LOG(L"ui", L"设置已保存: pinyin=%d count=%u dark=%u en=%d cnPunct=%d fuzzy=%d toggleMode=%u",
            (int)s.pinyinEnabled, s.candidateCount, s.darkMode, (int)s.enCompletion,
@@ -822,10 +822,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
 // ---------------- 跨文件共享资源与回调（uiinternal.h）----------------
 
-std::function<void()> g_reloadUserDict;   // 用户词典变更后重新加载引擎
-std::function<void()> g_showSymbols;      // 托盘菜单：打开符号面板
-std::function<void()> g_settingsChanged;  // 设置保存后（同步热键等）
-std::function<void()> g_reqPinToggle;     // 托盘菜单：切换候选窗位置固定
+UiHooks g_hooks; // 全局回调收口（P3）：唯一写点=main.cpp 装配段
 
 HBRUSH g_hBgBrush = nullptr;    // WinUI 中性窗体底
 HBRUSH g_hCardBrush = nullptr;  // WinUI 卡片白
@@ -1175,26 +1172,6 @@ void CreateSettingsWindow(HINSTANCE hInst)
 }
 
 // ---------------- 公共 API（settingsui.h）----------------
-
-void SetUserDictReloadCallback(std::function<void()> cb)
-{
-    g_reloadUserDict = std::move(cb);
-}
-
-void SetShowSymbolsCallback(std::function<void()> cb)
-{
-    g_showSymbols = std::move(cb);
-}
-
-void SetSettingsChangedCallback(std::function<void()> cb)
-{
-    g_settingsChanged = std::move(cb);
-}
-
-void SetPinToggleCallback(std::function<void()> cb)
-{
-    g_reqPinToggle = std::move(cb);
-}
 
 void ShowSettingsWindow(HINSTANCE hInst)
 {

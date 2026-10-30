@@ -1,7 +1,7 @@
 //
 // 快捷短语：存储 + 管理窗口（热键录制编辑框 + 列表 + 添加/删除）。
 // 热键注册在 main.cpp（RegisterHotKey id 100 起）；保存后经
-// SetHotPhrasesChangedCallback 通知重新注册。DLL 侧零改动——插入走
+// g_hooks.hotPhrasesChanged 通知重新注册。DLL 侧零改动——插入走
 // 既有的 PipeServer::SendInsertText → MSG_INSERT_TEXT 链路。
 //
 #include <windows.h>
@@ -15,6 +15,7 @@
 #include <vector>
 
 #include "hotphraseui.h"
+#include "uiinternal.h" // g_hooks（P3 回调收口）
 #include "../common/log.h"
 #include "uistyle.h"
 
@@ -31,8 +32,6 @@ constexpr int IDC_HP_ADD = 403;
 constexpr int IDC_HP_DEL = 404;
 constexpr int IDC_HP_CLOSE = 405;
 constexpr int IDC_HP_STATUS = 406;
-
-std::function<void()> g_hpChanged;
 
 // ---------------- 存储层 ----------------
 
@@ -71,33 +70,7 @@ std::wstring Utf8ToW(const std::string& s)
     return w;
 }
 
-bool ReadFileBytes(const std::wstring& path, std::string& out)
-{
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD size = GetFileSize(h, NULL);
-    out.resize(size);
-    DWORD got = 0;
-    BOOL ok = ReadFile(h, out.data(), size, &got, NULL);
-    CloseHandle(h);
-    out.resize(ok ? got : 0);
-    return ok != FALSE;
-}
-
-bool WriteFileBytes(const std::wstring& path, const std::string& data)
-{
-    // 原子写：.tmp 替换式（同用户词典——避免读写者撞车产生半截文件）
-    std::wstring tmp = path + L".tmp";
-    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, NULL,
-                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD wrote = 0;
-    BOOL ok = WriteFile(h, data.data(), (DWORD)data.size(), &wrote, NULL);
-    CloseHandle(h);
-    if (!ok || wrote != data.size()) { DeleteFileW(tmp.c_str()); return false; }
-    return MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
-}
+// ReadFileBytes/WriteFileBytes：共享实现见 uiinternal.h（userdictwnd.cpp）
 
 // ---------------- 管理窗口 ----------------
 
@@ -277,7 +250,7 @@ void HpAdd()
         return;
     }
     LX_LOG(L"ui", L"快捷短语添加: %ls", FormatHotkey(g_capMods, g_capVk).c_str());
-    if (g_hpChanged) g_hpChanged();
+    if (g_hooks.hotPhrasesChanged) g_hooks.hotPhrasesChanged();
     RefreshHpList();
     SetDlgItemTextW(g_hHpWnd, IDC_HP_STATUS, L"已添加，热键即时生效");
 }
@@ -298,7 +271,7 @@ void HpDeleteSelected()
                     L"灵犀输入法", MB_OK | MB_ICONWARNING);
         return;
     }
-    if (g_hpChanged) g_hpChanged();
+    if (g_hooks.hotPhrasesChanged) g_hooks.hotPhrasesChanged();
     RefreshHpList();
     SetDlgItemTextW(g_hHpWnd, IDC_HP_STATUS, L"已删除，热键已注销");
 }
@@ -355,11 +328,6 @@ std::vector<HotPhrase> LoadHotPhrases()
 bool SaveHotPhrases(const std::vector<HotPhrase>& entries)
 {
     return SaveEntries(entries);
-}
-
-void SetHotPhrasesChangedCallback(std::function<void()> cb)
-{
-    g_hpChanged = std::move(cb);
 }
 
 void ShowHotPhraseWindow(HINSTANCE hInst, HWND hParent)
@@ -448,9 +416,9 @@ std::wstring HotPhraseDataPath()
 
 void NotifyHotPhrasesChanged()
 {
-    // 备份导入等外部改写存储文件后手动触发（SaveHotPhrases 自动触发；
-    // 回调由 LingxiUI main 绑定为"注销→重读→重注册全部短语热键"）
-    if (g_hpChanged) g_hpChanged();
+    // 备份导入等外部改写存储文件后手动触发（保存路径自动触发；
+    // 回调由 LingxiUI main 装配为"注销→重读→重注册全部短语热键"）
+    if (g_hooks.hotPhrasesChanged) g_hooks.hotPhrasesChanged();
 }
 
 } // namespace lingxi

@@ -1,4 +1,4 @@
-//
+﻿//
 // 设置备份（注册表导出/导入）。原 settingsui.cpp 备份段拆出（P1 重构）。
 // reg.exe export/import 整个 HKCU\Software\LingxiIme 键（全部设置+热短语）。
 // 用户词典/热键短语在 APPDATA 文本文件，注册表备份不含——导出时随行
@@ -103,7 +103,7 @@ void ImportSettingsBackup(HWND owner)
     bool dictRestored = false, hpRestored = false;
     if (ok)
     {
-        if (g_settingsChanged) g_settingsChanged(); // 热键等需随新设置重注册
+        if (g_hooks.settingsChanged) g_hooks.settingsChanged(); // 热键等需随新设置重注册
         UpdateTrayTip();
         std::wstring base(path);
         size_t dot = base.rfind(L'.');
@@ -120,7 +120,7 @@ void ImportSettingsBackup(HWND owner)
                 if (ReadFileBytes(dictSrc, raw) &&
                     WriteFileBytes(UserDictPathW(), raw))
                 {
-                    if (g_reloadUserDict) g_reloadUserDict();
+                    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
                     dictRestored = true;
                 }
             }
