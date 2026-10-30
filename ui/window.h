@@ -35,24 +35,48 @@ public:
         _pick = std::move(handler);
     }
 
+    // 底部工具条按钮（左键行为；固=固定位置、符=符号面板、设=设置，
+    // 设右键=循环换肤、固右键=解除固定）。Symbols/Settings 经回调转 main 侧
+    // 既有入口（与托盘/热键同路）。
+    enum class Btn { None = 0, PrevPage, NextPage, Pin, Symbols, Settings };
+    void SetButtonHandler(std::function<void(Btn)> handler)
+    {
+        _btnCmd = std::move(handler);
+    }
+
+    // 托盘切换位置固定：开=固定在当前窗口位置（写注册表），关=恢复跟随光标。
+    // 与"固"按钮左键同语义，供托盘菜单勾选项调用。
+    void TogglePin();
+
 private:
     static LRESULT CALLBACK s_WndProc(HWND, UINT, WPARAM, LPARAM);
+    static LRESULT CALLBACK s_TipWndProc(HWND, UINT, WPARAM, LPARAM); // 工具条按钮 tooltip
     LRESULT WndProc(HWND, UINT, WPARAM, LPARAM);
     void OnPaint();
     void LayoutAndPosition();
     void LayoutMetrics(int* itemH, int* pad);
-    // 按字号（DPI 缩放）重建三支字体；先删除旧字体，避免泄漏
+    // 按字号（DPI 缩放）重建三支字体；先删旧字体，避免泄漏
     void RebuildFonts(uint32_t fontSize);
     // 应用皮肤（强调色 + 浅色 hover 底色）；越界回退默认翠绿
     void ApplySkin(uint32_t idx);
     // 调用方持锁：返回当前页在全量列表中的起止 [begin,end)
     void CurrentPageRangeLocked(size_t* begin, size_t* end) const;
+    // 底部工具条高（DPI 缩放）
+    int ToolbarHeight();
+    // 客户区坐标 → 工具条按钮（非工具条区域返回 None）
+    Btn HitTestButton(int x, int y);
+    // 翻页 ±1 页（与滚轮同夹取语义；页内按钮/滚轮共用）
+    void DoPageStep(int steps);
+    // 工具条按钮 tooltip：懒建常驻、隐藏复用（避免跨线程 DestroyWindow）
+    void ShowTip(const wchar_t* text, const POINT& clientPt);
+    void HideTip();
 
     HWND _hwnd = nullptr;
     HFONT _font = nullptr;
     HFONT _toastFont = nullptr; // toast 大字（进程内复用）
     HFONT _smallFont = nullptr; // 底部页码/标记小字
     uint32_t _fontSize = 16;    // 当前字号（变化时重建字体）
+    uint32_t _fontFace = 0;     // 当前字体族（Settings.uiFont；变化时重建字体）
     uint32_t _skinIndex = 0;    // 当前皮肤（变化时换强调色）
     COLORREF _accent = RGB(16, 124, 16);        // 首行/toast 底色（皮肤）
     COLORREF _hoverLight = RGB(230, 242, 230);  // 浅色 hover 底色（皮肤）
@@ -70,9 +94,16 @@ private:
     bool _toastEnglish = false;
     int _hoverRow = -1;        // 鼠标悬停的页内行号（-1 无），用于高亮
     bool _trackingMouse = false;
+    int _hoverBtn = 0;         // 悬停中的工具条按钮（Btn 枚举值，0=None）
+    bool _dragging = false;    // 拖拽移动窗口中（回显行/工具条空白按住）
+    POINT _dragOff{};          // 拖拽：光标→窗口左上角偏移
+    bool _dragMoved = false;   // 拖拽发生实际位移（松开时才写入固定位置）
+    HWND _ttHwnd = nullptr;    // tooltip 常驻隐藏复用（跨线程只做 ShowWindow）
+    wchar_t _ttText[128] = L"";
     CRITICAL_SECTION _cs{};
     bool _csInit = false;
     std::function<void(uint32_t, uint32_t)> _pick;
+    std::function<void(Btn)> _btnCmd;
 };
 
 } // namespace lingxi

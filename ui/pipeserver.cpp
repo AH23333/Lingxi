@@ -4,6 +4,7 @@
 #include "../common/pipe_util.h"
 #include "../common/settings.h"
 #include "../common/log.h"
+#include "usagestats.h"
 
 #include <thread>
 
@@ -513,8 +514,11 @@ void PipeServer::PredictProc()
             LeaveCriticalSection(&_cs);
         }
         bool dark = (st.darkMode == 0) ? e.dark : (st.darkMode == 2);
-        // B2：拼音请求把组合串传给候选窗首行回显（纯 UI 内部，不走协议）
-        if (!pred.cands.empty())
+        // B2：拼音请求把组合串传给候选窗首行回显（纯 UI 内部，不走协议）。
+        // 0 候选拼音帧也显示（echo-only 窗）：v 临时英文（"v"/"vlog"）与无效
+        // 拼音（"zhx"）没有候选但组合串需要回显，0 反馈=用户体感"按键失灵"。
+        // 非拼音帧 0 候选维持隐藏（英文补全无候选不占屏）。
+        if (!pred.cands.empty() || e.pinyin)
             _wnd->Show(e.caret, pred.cands, dark, e.ver, e.pinyin ? e.text : std::wstring());
         else
             _wnd->Hide();
@@ -683,6 +687,7 @@ void PipeServer::ApplyLearn(ClientCtx* c, uint32_t ver, uint32_t index)
         cover = index < c->lastLearn.cover.size() ? c->lastLearn.cover[index] : 0;
     }
     LeaveCriticalSection(&_cs);
+    StatsAddPick(word.c_str()); // 打字统计（空词/沙箱宿主内部自动跳过）
     if (cover > 0 && cover < raw.size())
         raw = raw.substr(0, cover); // 学习键=消耗前缀
     if (!raw.empty() && !word.empty() && _pinyinEngine)

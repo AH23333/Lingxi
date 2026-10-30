@@ -4,7 +4,10 @@
 #include "uistyle.h"
 
 #include <windowsx.h>
+#include <stdio.h>
 #include <string>
+#include <vector>
+#include <algorithm>
 
 namespace lingxi {
 namespace {
@@ -79,6 +82,32 @@ const wchar_t* const kSymKaomoji[] = {
     L"(>3<)", L"(;-;)", L"(X_X)", L"(O_O)", L"(o_o)", L"(Q_Q)", L"(^_~)", L"(^_-)",
 };
 
+const wchar_t* const kSymZhuyin[] = { // 拼音声调字母（注音/教学场景）
+    L"ā", L"á", L"ǎ", L"à", L"ē", L"é", L"ě", L"è", L"ī", L"í", L"ǐ", L"ì",
+    L"ō", L"ó", L"ǒ", L"ò", L"ū", L"ú", L"ǔ", L"ù", L"ǖ", L"ǘ", L"ǚ", L"ǜ",
+    L"ü", L"ń", L"ň", L"ê", L"À", L"É", L"Ò",
+};
+
+const wchar_t* const kSymGreek[] = { // 希腊字母（数学/物理/公式场景）
+    L"α", L"β", L"γ", L"δ", L"ε", L"ζ", L"η", L"θ", L"ι", L"κ", L"λ", L"μ",
+    L"ν", L"ξ", L"ο", L"π", L"ρ", L"σ", L"τ", L"υ", L"φ", L"χ", L"ψ", L"ω",
+    L"Α", L"Β", L"Γ", L"Δ", L"Ε", L"Ζ", L"Η", L"Θ", L"Ι", L"Κ", L"Λ", L"Μ",
+    L"Ν", L"Ξ", L"Ο", L"Π", L"Ρ", L"Σ", L"Τ", L"Υ", L"Φ", L"Χ", L"Ψ", L"Ω",
+};
+
+const wchar_t* const kSymBox[] = { // 制表符/方块（文本示意图、进度条场景）
+    L"─", L"│", L"┌", L"┐", L"└", L"┘", L"├", L"┤", L"┬", L"┴", L"┼", L"═",
+    L"║", L"╔", L"╗", L"╚", L"╝", L"╠", L"╣", L"╦", L"╩", L"╬", L"▁", L"▂",
+    L"▃", L"▄", L"▅", L"▆", L"▇", L"█", L"▉", L"▊", L"▌", L"▍", L"▎", L"░",
+    L"▒", L"▓",
+};
+
+const wchar_t* const kSymIndex[] = { // 序号（列表编号/章节号场景）
+    L"①", L"②", L"③", L"④", L"⑤", L"⑥", L"⑦", L"⑧", L"⑨", L"⑩", L"⑪", L"⑫",
+    L"Ⅰ", L"Ⅱ", L"Ⅲ", L"Ⅳ", L"Ⅴ", L"Ⅵ", L"Ⅶ", L"Ⅷ", L"Ⅸ", L"Ⅹ", L"⑴", L"⑵",
+    L"⑶", L"⑷", L"⑸", L"⑹", L"⑺", L"⑻", L"⑼", L"⑽",
+};
+
 const Category kCats[] = {
     { L"常用",   kSymCommon,   (int)(sizeof(kSymCommon) / sizeof(kSymCommon[0])),   38, 12 },
     { L"数学",   kSymMath,     (int)(sizeof(kSymMath) / sizeof(kSymMath[0])),      38, 12 },
@@ -89,6 +118,10 @@ const Category kCats[] = {
     { L"动物",   kSymAnimal,   (int)(sizeof(kSymAnimal) / sizeof(kSymAnimal[0])),   38, 12 },
     { L"食物",   kSymFood,     (int)(sizeof(kSymFood) / sizeof(kSymFood[0])),       38, 12 },
     { L"活动",   kSymActivity, (int)(sizeof(kSymActivity) / sizeof(kSymActivity[0])), 38, 12 },
+    { L"注音",   kSymZhuyin,   (int)(sizeof(kSymZhuyin) / sizeof(kSymZhuyin[0])),   38, 12 },
+    { L"希腊",   kSymGreek,    (int)(sizeof(kSymGreek) / sizeof(kSymGreek[0])),    38, 12 },
+    { L"框线",   kSymBox,      (int)(sizeof(kSymBox) / sizeof(kSymBox[0])),         38, 12 },
+    { L"序号",   kSymIndex,    (int)(sizeof(kSymIndex) / sizeof(kSymIndex[0])),     38, 12 },
     { L"^_^",   kSymKaomoji,  (int)(sizeof(kSymKaomoji) / sizeof(kSymKaomoji[0])), 104, 4 },
 };
 
@@ -96,26 +129,151 @@ constexpr int kCell = 38;      // 单元格高（宽随分类：普通 38 / 颜�
 constexpr int kCatH = 26;
 constexpr int kPad = 4;
 constexpr int kCatTabW = 48;   // 标签宽（10 分类×48=480，3 全角字标签也放得下）
+constexpr int kCloseW = 22;    // 头部右侧 × 关闭按钮宽（搜狗/Win+. 范式：显式出口）
 constexpr int kCatCount = (int)(sizeof(kCats) / sizeof(kCats[0]));
+
+// ---------------- "最近"页（动态分类，注册表持久化）----------------
+// 首标签 = 最近使用（最新在前，≤12 项）；条目存 g_recentStore，
+// 指针数组适配 Category::items 的只读指针约定（store 存活期间指针稳定）。
+constexpr size_t kRecentMax = 12;
+std::vector<std::wstring> g_recentStore;
+std::vector<const wchar_t*> g_recentPtrs;
+Category g_recentCat = { L"最近", nullptr, 0, 38, 12 };
+
+void RebuildRecentPtrs()
+{
+    g_recentPtrs.clear();
+    for (const auto& r : g_recentStore) g_recentPtrs.push_back(r.c_str());
+}
+
+void LoadRecents()
+{
+    g_recentStore.clear();
+    std::wstring s = LoadSettings().recentSymbols;
+    size_t start = 0;
+    while (g_recentStore.size() < kRecentMax)
+    {
+        size_t p = s.find(L'\x1F', start);
+        size_t end = (p == std::wstring::npos) ? s.size() : p;
+        if (end <= start) break; // 空段/到尾
+        g_recentStore.push_back(s.substr(start, end - start));
+        if (p == std::wstring::npos) break;
+        start = p + 1;
+    }
+    RebuildRecentPtrs();
+}
+
+void AddRecent(const std::wstring& sym)
+{
+    if (sym.empty()) return;
+    auto it = std::find(g_recentStore.begin(), g_recentStore.end(), sym);
+    if (it != g_recentStore.end()) g_recentStore.erase(it);      // 去重前移（最新在前）
+    g_recentStore.insert(g_recentStore.begin(), sym);
+    if (g_recentStore.size() > kRecentMax) g_recentStore.pop_back();
+    RebuildRecentPtrs();
+    std::wstring joined;
+    for (size_t i = 0; i < g_recentStore.size(); i++)
+    {
+        if (i) joined += L'\x1F';
+        joined += g_recentStore[i];
+    }
+    Settings st = LoadSettings();
+    if (st.recentSymbols != joined)
+    {
+        st.recentSymbols = joined;
+        SaveSettingsDiff(st);
+    }
+}
+
+// ---------------- "日期时间"页（动态分类，打开/切页时现算）----------------
+// 日期/时间/星期随开随算（点击上屏当前值）；排在尾标签，不挤占既有序号。
+std::vector<std::wstring> g_dtStore;
+std::vector<const wchar_t*> g_dtPtrs;
+Category g_dtCat = { L"日期", nullptr, 0, 210, 2 }; // "2026年10月31日"≈200px 需宽格
+
+void RebuildDateTimeItems()
+{
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    static const wchar_t* kWeek[] = { L"日", L"一", L"二", L"三", L"四", L"五", L"六" };
+    wchar_t buf[64];
+    g_dtStore.clear();
+    _snwprintf_s(buf, _TRUNCATE, L"%04d-%02d-%02d", st.wYear, st.wMonth, st.wDay);
+    g_dtStore.push_back(buf);
+    _snwprintf_s(buf, _TRUNCATE, L"%04d年%02d月%02d日", st.wYear, st.wMonth, st.wDay);
+    g_dtStore.push_back(buf);
+    _snwprintf_s(buf, _TRUNCATE, L"%02d:%02d", st.wHour, st.wMinute);
+    g_dtStore.push_back(buf);
+    _snwprintf_s(buf, _TRUNCATE, L"%02d:%02d:%02d", st.wHour, st.wMinute, st.wSecond);
+    g_dtStore.push_back(buf);
+    _snwprintf_s(buf, _TRUNCATE, L"星期%ls", kWeek[st.wDayOfWeek]);
+    g_dtStore.push_back(buf);
+    _snwprintf_s(buf, _TRUNCATE, L"%02d-%02d %02d:%02d",
+                 st.wMonth, st.wDay, st.wHour, st.wMinute);
+    g_dtStore.push_back(buf);
+    g_dtPtrs.clear();
+    for (const auto& s : g_dtStore) g_dtPtrs.push_back(s.c_str());
+    g_dtCat.items = g_dtPtrs.data();
+    g_dtCat.count = (int)g_dtPtrs.size();
+}
+
+// 标签序：0="最近"（动态），1..kCatCount=静态分类，kCatCount+1="日期时间"（动态）
+const Category& CatAt(int i)
+{
+    if (i <= 0)
+    {
+        g_recentCat.items = g_recentPtrs.empty() ? nullptr : g_recentPtrs.data();
+        g_recentCat.count = (int)g_recentPtrs.size();
+        return g_recentCat;
+    }
+    if (i == kCatCount + 1) return g_dtCat;
+    return kCats[i - 1];
+}
+
+constexpr int kTabCount = kCatCount + 2;      // 含"最近"与"日期时间"页
+constexpr int kDtTabIndex = kCatCount + 1;    // "日期时间"页标签序号
+
+// × 关闭按钮命中区（头部最右）
+RECT CloseBtnRect()
+{
+    return { kPad + kCatTabW * kTabCount + 2, 2,
+             kPad + kCatTabW * kTabCount + kCloseW - 2, kCatH - 1 };
+}
 
 HWND g_hPanel = nullptr;
 int g_cat = 0;
+int g_hoverIdx = -1; // 网格悬停高亮（-1=无；hover 高亮 + 手型光标）
+bool g_mouseTracked = false;
 HFONT g_font = nullptr;
 std::function<void(const std::wstring&)> g_onInsert;
 
-const Category& CurCat() { return kCats[g_cat]; }
+const Category& CurCat() { return CatAt(g_cat); }
 
 int PanelHeight()
 {
     const Category& c = CurCat();
     int rows = (c.count + c.cols - 1) / c.cols;
+    if (rows < 1) rows = 1; // "最近"空态也保一行高（画提示文字）
     return kCatH + kPad + rows * kCell + kPad;
 }
 
-int PanelWidth() { return kPad + kCatTabW * kCatCount + kPad; }
+int PanelWidth() { return kPad + kCatTabW * kTabCount + kCloseW + kPad; }
 
 // 网格水平居中于面板（不同分类网格宽不同）
 int GridX() { return kPad + (PanelWidth() - 2 * kPad - CurCat().cellW * CurCat().cols) / 2; }
+
+// 网格命中：返回分类内条目序号（-1=头部/格间/页外）；供点击/hover/光标三路复用
+int HitItem(int x, int y)
+{
+    if (y < kCatH) return -1;
+    const Category& cat = CurCat();
+    int gx = GridX();
+    int col = (x - gx) / cat.cellW;
+    int row = (y - kCatH - kPad) / kCell;
+    int idx = row * cat.cols + col;
+    if (col < 0 || col >= cat.cols || x < gx || idx < 0 || idx >= cat.count) return -1;
+    return idx;
+}
 
 void ClosePanel()
 {
@@ -133,10 +291,20 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         int y = GET_Y_LPARAM(lp);
         if (y < kCatH)
         {
+            // × 关闭按钮（头部最右）：显式出口（NOACTIVATE 收不到 Esc，
+            // 右键关闭又无提示——用户报"面板关不掉"的两个入口缺口）
+            RECT cb = CloseBtnRect();
+            if (x >= cb.left && x <= cb.right && y >= cb.top && y <= cb.bottom)
+            {
+                ClosePanel();
+                return 0;
+            }
             int c = (x - kPad) / kCatTabW;
-            if (c >= 0 && c < kCatCount && c != g_cat)
+            if (c >= 0 && c < kTabCount && c != g_cat)
             {
                 g_cat = c;
+                if (c == kDtTabIndex) RebuildDateTimeItems(); // 时间页切到时现算保鲜
+                g_hoverIdx = -1; // 换页旧 hover 高亮作废
                 SetWindowPos(h, HWND_TOPMOST, 0, 0, PanelWidth(), PanelHeight(),
                              SWP_NOMOVE | SWP_NOACTIVATE);
                 UiApplyRoundCorners(h, PanelWidth(), PanelHeight()); // RGN 路径随尺寸重设
@@ -151,15 +319,93 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         int idx = row * cat.cols + col;
         if (col >= 0 && col < cat.cols && x >= gx && idx >= 0 && idx < cat.count)
         {
-            if (g_onInsert) g_onInsert(std::wstring(cat.items[idx]));
+            std::wstring item(cat.items[idx]);
+            if (g_onInsert) g_onInsert(item);
+            // "最近"页记录（去重前移+落盘）；"日期时间"页不进最近（随开随算，长串也挤坏 38px 格）
+            if (g_cat != kDtTabIndex) AddRecent(item);
+            if (g_cat == 0) InvalidateRect(h, NULL, FALSE); // 正看"最近"页则即时刷新
             // 插入后保留面板（便于连续输入）；点击符号不抢焦点
             return 0;
         }
         return 0;
     }
     case WM_RBUTTONDOWN:
+    {
+        // 右键"最近"标签 = 清空最近记录（其余右键=关面板，原语义不变）
+        int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
+        if (y < kCatH && x >= kPad && x < kPad + kCatTabW)
+        {
+            g_recentStore.clear();
+            g_recentPtrs.clear();
+            Settings st = LoadSettings();
+            if (!st.recentSymbols.empty())
+            {
+                st.recentSymbols.clear();
+                SaveSettingsDiff(st);
+            }
+            InvalidateRect(h, NULL, TRUE); // 清空后空态提示立现
+            LX_LOG(L"ui", L"右键\"最近\"标签清空记录");
+            return 0;
+        }
         ClosePanel();
         return 0;
+    }
+    case WM_MOUSEMOVE:
+    {
+        // 网格悬停高亮（Win 标准点击反馈；无高亮时"能不能点"不可感知）
+        int idx = HitItem(GET_X_LPARAM(lp), GET_Y_LPARAM(lp));
+        if (idx != g_hoverIdx)
+        {
+            g_hoverIdx = idx;
+            InvalidateRect(h, NULL, FALSE);
+        }
+        if (!g_mouseTracked)
+        {
+            TRACKMOUSEEVENT tme{ sizeof(tme), TME_LEAVE, h, 0 };
+            if (TrackMouseEvent(&tme)) g_mouseTracked = true;
+        }
+        return 0;
+    }
+    case WM_MOUSELEAVE:
+        g_mouseTracked = false;
+        if (g_hoverIdx != -1)
+        {
+            g_hoverIdx = -1;
+            InvalidateRect(h, NULL, FALSE);
+        }
+        return 0;
+    case WM_SETCURSOR:
+        // 网格条目上用手型（可点暗示），其余区域走系统默认
+        if (LOWORD(lp) == HTCLIENT)
+        {
+            POINT pt;
+            GetCursorPos(&pt);
+            ScreenToClient(h, &pt);
+            if (HitItem(pt.x, pt.y) >= 0)
+            {
+                SetCursor(LoadCursor(NULL, IDC_HAND));
+                return TRUE;
+            }
+        }
+        break;
+    case WM_MOUSEWHEEL:
+    {
+        // 滚轮换分类标签（12 页横向不便点击时的快捷手势；上滚=左一页）
+        int d = (short)GET_WHEEL_DELTA_WPARAM(wp);
+        if (d == 0) return 0;
+        int nc = (g_cat + (d > 0 ? -1 : 1) + kTabCount) % kTabCount;
+        if (nc != g_cat)
+        {
+            g_cat = nc;
+            if (nc == kDtTabIndex) RebuildDateTimeItems(); // 时间页切到时现算保鲜
+            g_hoverIdx = -1; // 换页旧 hover 高亮作废
+            SetWindowPos(h, HWND_TOPMOST, 0, 0, PanelWidth(), PanelHeight(),
+                         SWP_NOMOVE | SWP_NOACTIVATE);
+            UiApplyRoundCorners(h, PanelWidth(), PanelHeight());
+            InvalidateRect(h, NULL, TRUE);
+        }
+        return 0;
+    }
     case WM_PAINT:
     {
         PAINTSTRUCT ps;
@@ -185,7 +431,7 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         HGDIOBJ oldFont = SelectObject(hdc, g_font);
 
         // 分类按钮：选中=皮肤浅底药丸 + 强调色字；未选中=次级灰字
-        for (int i = 0; i < kCatCount; i++)
+        for (int i = 0; i < kTabCount; i++)
         {
             RECT cr{ kPad + i * kCatTabW, 2, kPad + (i + 1) * kCatTabW, kCatH - 1 };
             if (i == g_cat)
@@ -206,22 +452,49 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             {
                 SetTextColor(hdc, kUiText2);
             }
-            DrawTextW(hdc, kCats[i].name, -1, &cr,
+            DrawTextW(hdc, CatAt(i).name, -1, &cr,
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
+
+        // × 关闭按钮：次级灰，hover 语义省略（静态可见即可）
+        RECT cb = CloseBtnRect();
+        SetTextColor(hdc, kUiText2);
+        DrawTextW(hdc, L"\u00D7", -1, &cb,
+                  DT_CENTER | DT_VCENTER | DT_SINGLELINE);
 
         // 网格符号（字符串条目：单符号/颜文字/含 VS16 变体选择符的 emoji）
         const Category& cat = CurCat();
         int gx = GridX();
-        SetTextColor(hdc, kUiText);
         for (int i = 0; i < cat.count; i++)
         {
             int c = i % cat.cols;
             int r = i / cat.cols;
             RECT cell{ gx + c * cat.cellW, kCatH + kPad + r * kCell,
                        gx + (c + 1) * cat.cellW, kCatH + kPad + (r + 1) * kCell };
+            if (i == g_hoverIdx) // 悬停高亮：皮肤浅底 + 强调色字（与选中标签同语言）
+            {
+                RECT hl = cell;
+                InflateRect(&hl, -1, -1);
+                HBRUSH hb = CreateSolidBrush(skin.hoverLight);
+                FillRect(hdc, &hl, hb);
+                DeleteObject(hb);
+                SetTextColor(hdc, skin.accent);
+            }
+            else
+            {
+                SetTextColor(hdc, kUiText);
+            }
             DrawTextW(hdc, cat.items[i], -1, &cell,
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+
+        // "最近"页空态提示（首行网格区居中）
+        if (g_cat == 0 && g_recentPtrs.empty())
+        {
+            RECT hint{ kPad, kCatH + kPad, rc.right - kPad, kCatH + kPad + kCell };
+            SetTextColor(hdc, kUiText2);
+            DrawTextW(hdc, L"暂无最近使用（点击任意符号自动记录，最多 12 个）",
+                      -1, &hint, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
 
         SelectObject(hdc, oldFont);
@@ -229,6 +502,16 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         return 0;
     }
     case WM_DESTROY:
+        // 记忆上次查看的静态分类标签（动态页"最近/日期"不记忆——各自有更优默认）
+        if (g_cat >= 1 && g_cat <= kCatCount)
+        {
+            Settings st = LoadSettings();
+            if (st.lastSymbolCat != (uint32_t)g_cat)
+            {
+                st.lastSymbolCat = (uint32_t)g_cat;
+                SaveSettingsDiff(st);
+            }
+        }
         g_hPanel = nullptr;
         return 0;
     }
@@ -239,13 +522,26 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 
 void ShowSymbolPanel(HINSTANCE hInst, std::function<void(const std::wstring&)> onInsert)
 {
-    g_onInsert = std::move(onInsert);
+    // 热键/托盘重按 = 切替关闭（搜狗范式）：旧实现已开只置顶，用户重按热键
+    // 面板纹丝不动，叠加"仅右键可关且无提示"——体感"面板关不掉"。
     if (g_hPanel)
     {
-        SetWindowPos(g_hPanel, HWND_TOPMOST, 0, 0, 0, 0,
-                     SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW | SWP_NOACTIVATE);
+        ClosePanel();
         return;
     }
+    g_onInsert = std::move(onInsert);
+
+    // "最近"页载入 + 上次静态分类记忆：动态页保持智能默认（有记录开
+    // "最近"，空则开"常用"），静态分类（数学/表情/…）则恢复上次查看页。
+    LoadRecents();
+    RebuildDateTimeItems(); // "日期时间"页现算（面板开着时间会走，切页时再刷新）
+    g_hoverIdx = -1;
+    g_mouseTracked = false;
+    uint32_t lastCat = LoadSettings().lastSymbolCat;
+    if (lastCat >= 1 && lastCat <= (uint32_t)kCatCount)
+        g_cat = (int)lastCat;
+    else
+        g_cat = g_recentPtrs.empty() ? 1 : 0;
 
     WNDCLASSW wc{};
     wc.lpfnWndProc = PanelWndProc;

@@ -10,7 +10,8 @@
 
 namespace lingxi {
 
-// 打开（已打开则置前）符号面板。onInsert 在点击符号时由 UI 线程回调。
+// 切换式打开符号面板（已打开则关闭——热键/托盘重按即关）。onInsert 在点击
+// 符号时由 UI 线程回调。关闭入口：× 按钮 / 右键 / 热键重按。
 void ShowSymbolPanel(HINSTANCE hInst,
                      std::function<void(const std::wstring&)> onInsert);
 

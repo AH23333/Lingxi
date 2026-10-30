@@ -25,6 +25,7 @@
 #include "../common/log.h"
 #include "../common/settings.h"
 #include "uistyle.h"
+#include "usagestats.h"
 
 namespace lingxi {
 
@@ -34,10 +35,16 @@ constexpr wchar_t kMainWndClass[] = L"LingxiUIMainWnd";
 constexpr wchar_t kSettingsWndClass[] = L"LingxiSettingsWnd";
 constexpr wchar_t kUserDictWndClass[] = L"LingxiUserDictWnd";
 constexpr UINT WM_APP_TRAY = WM_APP + 10; // 托盘回调消息
+constexpr int kTrayHotkeyPause = 3; // RegisterHotKey 热键 ID（Ctrl+Alt+P 切暂停；与 main.cpp 侧 ID 不同窗不冲突）
+constexpr int kTrayHotkeyHelp = 4;  // Ctrl+Alt+H 打开使用帮助
 
 std::function<void()> g_reloadUserDict; // 用户词典变更后重新加载引擎
 std::function<void()> g_showSymbols;   // 托盘菜单：打开符号面板
 std::function<void()> g_settingsChanged; // 设置保存后（同步热键等）
+std::function<void()> g_reqPinToggle;    // 托盘菜单：切换候选窗位置固定
+
+// 打字统计窗（实现位于帮助窗之后；设置窗/托盘菜单入口先用，须前置声明）
+void ShowUsageStatsWindow(HINSTANCE hInst);
 
 // ---------------- GDI+ 抗锯齿绘制助手 ----------------
 // GDI RoundRect/Ellipse 无抗锯齿，真机肉眼可见锯齿；GDI+ GraphicsPath+
@@ -293,7 +300,6 @@ constexpr int IDC_CHK_FZ_FH = 127;   // f/h
 constexpr int IDC_CHK_FZ_LR = 128;   // l/r
 constexpr int IDC_CHK_FZ_GK = 129;   // g/k
 constexpr int IDC_CMB_TOGGLEMODE = 117; // B5 草案②：中英切换键（旧 109 复选框弃用）
-constexpr int IDC_CHK_VMODE = 110;
 constexpr int IDC_BTN_USERDICT = 111;
 constexpr int IDC_CHK_SHUANGPIN = 112;
 constexpr int IDC_CHK_SYMBOLHOTKEY = 113;
@@ -305,6 +311,8 @@ constexpr int IDC_BTN_HOTPHRASES = 118; // 快捷短语管理入口
 constexpr int IDC_BTN_PHRASES = 120;    // R2 自定义短语管理入口
 constexpr int IDC_CMB_OPACITY = 126;    // 候选窗不透明度
 constexpr int IDC_CHK_ASSOCPICK = 130;  // 选词联想开关（GAP §11)
+constexpr int IDC_CMB_UIFONT = 131;     // 界面字体族（候选窗/浮层共用）
+constexpr int IDC_BTN_STATS = 132;      // 打字统计入口（词典页"词典与工具"卡）
 
 HWND g_hMain = nullptr;    // 隐藏消息窗口（托盘宿主）
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
@@ -312,11 +320,11 @@ HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
      g_hCmbDark = nullptr, g_hCmbFontSize = nullptr, g_hCmbSkin = nullptr,
      g_hCmbToggleMode = nullptr,
      g_hChkCnPunct = nullptr, g_hChkFuzzy = nullptr,
-     g_hChkVMode = nullptr,
      g_hChkShuangpin = nullptr, g_hChkSymbolHotkey = nullptr, g_hChkTraditional = nullptr,
       g_hChkLlmRerank = nullptr, g_hChkLlmMultiPath = nullptr, g_hChkAssocPick = nullptr;
 HWND g_hChkFz[8] = {}; // 模糊音组细分开关（8 组）
 HWND g_hCmbOpacity = nullptr;
+HWND g_hCmbUiFont = nullptr; // 界面字体族下拉
 HFONT g_hFont = nullptr;        // 12px：通用控件（用户词典窗沿用）
 HFONT g_hFontLabel = nullptr;   // 设置行标题 14px
 HFONT g_hFontDesc = nullptr;    // 设置行描述 12px（次级色）
@@ -359,7 +367,6 @@ void LoadToControls()
     SetToggle(g_hChkFuzzy, s.fuzzyPinyin);
     for (int fz = 0; fz < 8; fz++) SetToggle(g_hChkFz[fz], (s.fuzzyGroups >> fz) & 1u);
     ComboBox_SetCurSel(g_hCmbToggleMode, (int)(s.toggleMode <= 4 ? s.toggleMode : 1));
-    SetToggle(g_hChkVMode, s.vMode);
     SetToggle(g_hChkShuangpin, s.shuangpin);
     SetToggle(g_hChkSymbolHotkey, s.symbolHotkey);
     SetToggle(g_hChkTraditional, s.traditionalOutput);
@@ -379,6 +386,7 @@ void LoadToControls()
     ComboBox_SetCurSel(g_hCmbFontSize, fsSel);
     ComboBox_SetCurSel(g_hCmbSkin, (int)s.skinIndex);
     ComboBox_SetCurSel(g_hCmbDark, (int)s.darkMode);
+    ComboBox_SetCurSel(g_hCmbUiFont, (int)(s.uiFont <= 3 ? s.uiFont : 0));
     g_controlsLoaded = true;
     g_updating = false;
 }
@@ -397,7 +405,6 @@ void SaveFromControls()
       s.fuzzyGroups = grp ? grp : 0xFF; } // 一组未勾=退回全组（总开关才是关闭入口，避免"全关静默失聪"）
     int tsel = ComboBox_GetCurSel(g_hCmbToggleMode);
         if (tsel >= 0 && tsel <= 4) s.toggleMode = (uint32_t)tsel;
-    s.vMode = ToggleOn(g_hChkVMode);
     s.shuangpin = ToggleOn(g_hChkShuangpin);
     s.symbolHotkey = ToggleOn(g_hChkSymbolHotkey);
     s.traditionalOutput = ToggleOn(g_hChkTraditional);
@@ -416,15 +423,17 @@ void SaveFromControls()
     int fsIdx = ComboBox_GetCurSel(g_hCmbFontSize);
     if (fsIdx >= 0 && fsIdx < 8) s.candidateFontSize = kFontSizesSave[fsIdx];
     int skinSel = ComboBox_GetCurSel(g_hCmbSkin);
-    if (skinSel >= 0 && skinSel <= 4) s.skinIndex = (uint32_t)skinSel;
+    if (skinSel >= 0 && skinSel <= 6) s.skinIndex = (uint32_t)skinSel;
+    int fontSel = ComboBox_GetCurSel(g_hCmbUiFont);
+    if (fontSel >= 0 && fontSel <= 3) s.uiFont = (uint32_t)fontSel;
     int sel = ComboBox_GetCurSel(g_hCmbDark);
     if (sel >= 0) s.darkMode = (uint32_t)sel;
     SaveSettingsDiff(s);
     if (g_settingsChanged) g_settingsChanged();
     if (g_hSettings) InvalidateRect(g_hSettings, NULL, TRUE); // 换肤等即时重绘自绘控件
-    LX_LOG(L"ui", L"设置已保存: pinyin=%d count=%u dark=%u en=%d cnPunct=%d fuzzy=%d toggleMode=%u v=%d",
+    LX_LOG(L"ui", L"设置已保存: pinyin=%d count=%u dark=%u en=%d cnPunct=%d fuzzy=%d toggleMode=%u",
            (int)s.pinyinEnabled, s.candidateCount, s.darkMode, (int)s.enCompletion,
-           (int)s.cnPunct, (int)s.fuzzyPinyin, (unsigned)s.toggleMode, (int)s.vMode);
+           (int)s.cnPunct, (int)s.fuzzyPinyin, (unsigned)s.toggleMode);
 }
 
 // ---------------- 用户词典管理窗口 ----------------
@@ -441,26 +450,51 @@ constexpr int IDC_UD_KEY = 308;   // 拼音输入框（空=自动推断）
 constexpr int IDC_UD_ADD = 309;   // 添加/已存在则提升
 constexpr int IDC_UD_BOOST = 310; // 提升选中（+1000，排到更前）
 constexpr int IDC_UD_LOWER = 311; // 降低选中（-1000，下限 1）
+constexpr int IDC_UD_SEARCH = 312; // 搜索过滤框（词条/拼音子串，不区分大小写）
 
 HWND g_hUserDict = nullptr;
 HWND g_hUdList = nullptr;
+HWND g_hUdSearch = nullptr;
 
 void RefreshUdList()
 {
     if (!g_hUdList) return;
+    // 搜索过滤：词条或拼音键的子串命中（不区分大小写）；空=全量
+    std::wstring fl;
+    if (g_hUdSearch)
+    {
+        wchar_t filter[64] = L"";
+        GetWindowTextW(g_hUdSearch, filter, 64);
+        for (wchar_t ch : std::wstring(filter))
+            fl.push_back((wchar_t)towlower(ch));
+    }
     std::string raw;
     std::vector<UdEntry> entries;
     if (ReadFileBytes(UserDictPathW(), raw)) entries = ParseUserDict(raw);
     SendMessageW(g_hUdList, LB_RESETCONTENT, 0, 0);
+    size_t shown = 0;
     for (size_t i = 0; i < entries.size(); i++)
     {
+        if (!fl.empty())
+        {
+            std::wstring w = entries[i].word, k = entries[i].key;
+            for (auto& ch : w) ch = (wchar_t)towlower(ch);
+            for (auto& ch : k) ch = (wchar_t)towlower(ch);
+            if (w.find(fl) == std::wstring::npos && k.find(fl) == std::wstring::npos)
+                continue;
+        }
         wchar_t line[256];
         _snwprintf_s(line, _TRUNCATE, L"%ls    %ls    %d",
                      entries[i].word.c_str(), entries[i].key.c_str(), entries[i].count);
         SendMessageW(g_hUdList, LB_ADDSTRING, 0, (LPARAM)line);
+        shown++;
     }
-    wchar_t cap[64];
-    _snwprintf_s(cap, _TRUNCATE, L"已学习词条：%zu", entries.size());
+    wchar_t cap[96];
+    if (fl.empty())
+        _snwprintf_s(cap, _TRUNCATE, L"已学习词条：%zu", entries.size());
+    else
+        _snwprintf_s(cap, _TRUNCATE, L"匹配 %zu / %zu 条（清空搜索框恢复全量）",
+                     shown, entries.size());
     SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, cap);
 }
 
@@ -727,6 +761,9 @@ LRESULT CALLBACK UserDictWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_UD_ADD: UdAddWord(); return 0;
         case IDC_UD_BOOST: UdNudgeSelected(1000); return 0;
         case IDC_UD_LOWER: UdNudgeSelected(-1000); return 0;
+        case IDC_UD_SEARCH:
+            if (HIWORD(wParam) == EN_CHANGE) RefreshUdList(); // 实时过滤
+            return 0;
         case IDC_UD_CLOSE: ShowWindow(hwnd, SW_HIDE); return 0;
         }
         break;
@@ -778,10 +815,17 @@ void CreateUserDictWindow(HINSTANCE hInst)
 
     CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
                     pad, pad, W - pad * 2, btnH, g_hUserDict, (HMENU)(INT_PTR)IDC_UD_STATIC, hInst, NULL);
+    // 搜索过滤行（词条/拼音子串实时过滤；清空恢复全量）
+    g_hUdSearch = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                  pad, pad + btnH + 4, W - pad * 2, btnH, g_hUserDict,
+                                  (HMENU)(INT_PTR)IDC_UD_SEARCH, hInst, NULL);
+    SendMessageW(g_hUdSearch, 0x1501 /*EM_SETCUEBANNERW*/, TRUE,
+                 (LPARAM)L"搜索：词条或拼音（实时过滤）");
     // 自底向上：按钮行 → 自定义词条输入行 → 列表占满余下空间
     int rowBtnY = H - btnH - pad;
     int inputY = rowBtnY - btnH - 6;
-    int listTop = pad + btnH + 4;
+    int listTop = pad + btnH * 2 + 8;
     g_hUdList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
                                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
                                 pad, listTop, W - pad * 2, inputY - listTop - 8,
@@ -1165,6 +1209,26 @@ void DrawAccentBtn(const DRAWITEMSTRUCT* dis)
     SelectObject(hdc, oldFont);
 }
 
+// 设置窗位置/尺寸落盘（隐藏/销毁时调用；重开恢复，免每次居中回默认尺寸）
+void SaveSettingsWindowRect()
+{
+    if (!g_hSettings || !IsWindow(g_hSettings) || IsIconic(g_hSettings)) return;
+    RECT wr{};
+    GetWindowRect(g_hSettings, &wr);
+    int w = wr.right - wr.left, h = wr.bottom - wr.top;
+    if (w < 50 || h < 50) return; // 异常态不记录
+    Settings st = LoadSettings();
+    if (st.setWinX != wr.left || st.setWinY != wr.top ||
+        st.setWinW != w || st.setWinH != h)
+    {
+        st.setWinX = wr.left;
+        st.setWinY = wr.top;
+        st.setWinW = w;
+        st.setWinH = h;
+        SaveSettingsDiff(st);
+    }
+}
+
 LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     switch (msg)
@@ -1179,7 +1243,6 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CHK_FZ_ZH: case IDC_CHK_FZ_CH: case IDC_CHK_FZ_SH:
         case IDC_CHK_FZ_NL: case IDC_CHK_FZ_NG:
         case IDC_CHK_FZ_FH: case IDC_CHK_FZ_LR: case IDC_CHK_FZ_GK:
-        case IDC_CHK_VMODE:
         case IDC_CHK_SHUANGPIN:
         case IDC_CHK_SYMBOLHOTKEY:
         case IDC_CHK_TRADITIONAL:
@@ -1199,6 +1262,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CMB_DARK:
         case IDC_CMB_FONTSIZE:
         case IDC_CMB_SKIN:
+        case IDC_CMB_UIFONT:
         case IDC_CMB_TOGGLEMODE:
             if (HIWORD(wParam) == CBN_SELCHANGE) SaveFromControls();
             return 0;
@@ -1210,6 +1274,9 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             return 0;
         case IDC_BTN_PHRASES:
             ShowPhraseWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE), hwnd);
+            return 0;
+        case IDC_BTN_STATS:
+            ShowUsageStatsWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
             return 0;
         }
         break;
@@ -1240,6 +1307,14 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             if (idx >= 0 && idx < (int)g_pages.size() && idx != g_curPage)
             {
                 g_curPage = idx;
+                { // 记忆导航页（重开设置窗回到上次查看页）
+                    Settings st = LoadSettings();
+                    if (st.lastSettingsPage != (uint32_t)idx)
+                    {
+                        st.lastSettingsPage = (uint32_t)idx;
+                        SaveSettingsDiff(st);
+                    }
+                }
                 g_scrollY = 0; // 换页回顶
                 ApplyPageVisibility();
                 UpdateSettingsScrollbar(LayoutSettings());
@@ -1386,8 +1461,21 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         SetBkColor((HDC)wParam, kUiCard);
         SetTextColor((HDC)wParam, kUiText);
         return (LRESULT)g_hCardBrush;
+    case WM_KEYDOWN:
+        // Esc 隐藏设置窗（与标题栏关闭同语义；焦点在子控件时不触发）
+        if (wParam == VK_ESCAPE)
+        {
+            SaveSettingsWindowRect();
+            ShowWindow(hwnd, SW_HIDE);
+            return 0;
+        }
+        break;
     case WM_CLOSE:
+        SaveSettingsWindowRect();
         ShowWindow(hwnd, SW_HIDE); // 关闭=隐藏，保留控件状态
+        return 0;
+    case WM_DESTROY:
+        SaveSettingsWindowRect(); // 进程退出兜底（隐藏路径已存则 diff 零写）
         return 0;
     }
     return DefWindowProcW(hwnd, msg, wParam, lParam);
@@ -1453,6 +1541,47 @@ void CreateSettingsWindow(HINSTANCE hInst)
         return;
     }
     LX_LOG(L"ui", L"设置窗句柄 OK，继续子控件构建（诊断）");
+
+    // 恢复上次位置/尺寸（隐藏时落盘）；无效（未记录/显示器拔了/
+    // 分辨率变了）则回退默认尺寸+居中
+    {
+        Settings stR = LoadSettings();
+        bool restored = false;
+        if (stR.setWinW >= MulDiv(700, scale, 96) && stR.setWinH >= MulDiv(520, scale, 96))
+        {
+            RECT wr{ stR.setWinX, stR.setWinY,
+                     stR.setWinX + stR.setWinW, stR.setWinY + stR.setWinH };
+            HMONITOR mon = MonitorFromRect(&wr, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi{ sizeof(mi) };
+            RECT inter;
+            if (mon && GetMonitorInfoW(mon, &mi) &&
+                IntersectRect(&inter, &wr, &mi.rcWork) &&
+                inter.right - inter.left >= 100 && inter.bottom - inter.top >= 60)
+            {
+                SetWindowPos(g_hSettings, NULL,
+                             stR.setWinX, stR.setWinY, stR.setWinW, stR.setWinH,
+                             SWP_NOZORDER);
+                restored = true;
+            }
+        }
+        if (!restored)
+        {
+            // 打开即居中于鼠标所在显示器工作区（CW_USEDEFAULT 是级联位，
+            // 反复开关逐次偏移；居中固定观感）
+            RECT wr{};
+            GetWindowRect(g_hSettings, &wr);
+            POINT cpt{};
+            GetCursorPos(&cpt);
+            HMONITOR mon = MonitorFromPoint(cpt, MONITOR_DEFAULTTONEAREST);
+            MONITORINFO mi{ sizeof(mi) };
+            RECT wa = wr;
+            if (GetMonitorInfoW(mon, &mi)) wa = mi.rcWork;
+            SetWindowPos(g_hSettings, NULL,
+                         wa.left + ((wa.right - wa.left) - (wr.right - wr.left)) / 2,
+                         wa.top + ((wa.bottom - wa.top) - (wr.bottom - wr.top)) / 2,
+                         0, 0, SWP_NOSIZE | SWP_NOZORDER);
+        }
+    }
 
     auto mkFont = [scale](int px, int weight) {
         return CreateFontW(-MulDiv(px, scale, 96), 0, 0, 0, weight, FALSE, FALSE, FALSE,
@@ -1540,9 +1669,6 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_hChkShuangpin = mkToggle(IDC_CHK_SHUANGPIN);
     mkRow(L"小鹤双拼", L"每音节两键：声母+韵母，零声母按韵母首字母补齐",
           g_hChkShuangpin, CK_TOGGLE, 44);
-    g_hChkVMode = mkToggle(IDC_CHK_VMODE);
-    mkRow(L"v 模式", L"中文下首字母 v 直通英文，如 vhello 输出 hello",
-          g_hChkVMode, CK_TOGGLE, 44);
     addCard(L"输出");
     g_hChkCnPunct = mkToggle(IDC_CHK_CNPUNCT);
     mkRow(L"中文标点", L". , / ; 等自动转全角，Shift 输出 ？：》《 等",
@@ -1589,8 +1715,14 @@ void CreateSettingsWindow(HINSTANCE hInst)
     };
     g_hCmbFontSize = mkCombo(IDC_CMB_FONTSIZE, fillFont);
     mkRow(L"字号", L"候选词条文字大小", g_hCmbFontSize, CK_COMBO, 100);
+    auto fillUiFont = [](HWND h) {
+        for (const wchar_t* s : kUiFontNames)
+            ComboBox_AddString(h, s);
+    };
+    g_hCmbUiFont = mkCombo(IDC_CMB_UIFONT, fillUiFont);
+    mkRow(L"字体", L"候选窗与浮层文字字体族（下次出候选即时生效）", g_hCmbUiFont, CK_COMBO, 130);
     auto fillSkin = [](HWND h) {
-        for (const wchar_t* s : { L"翠绿", L"青碧", L"橙色", L"红色", L"金色" })
+        for (const wchar_t* s : { L"翠绿", L"青碧", L"橙色", L"红色", L"金色", L"茶棕", L"玫粉" })
             ComboBox_AddString(h, s);
     };
     auto fillOpacity = [](HWND h) {
@@ -1612,6 +1744,9 @@ void CreateSettingsWindow(HINSTANCE hInst)
     HWND hBtnCphrases = mkBtn(L"管理短语", IDC_BTN_PHRASES);
     mkRow(L"自定义短语", L"缩写一打就出长句（如 addr→地址，整串输入触发）",
           hBtnCphrases, CK_BUTTON, 130);
+    HWND hBtnStats = mkBtn(L"查看统计", IDC_BTN_STATS);
+    mkRow(L"打字统计", L"今日/累计选词次数、上屏汉字数与活跃天数（托盘菜单也可打开）",
+          hBtnStats, CK_BUTTON, 130);
 
     // ---- 页 5：智能 ----
     addPage(L"智能");
@@ -1638,6 +1773,12 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_setMinH = MulDiv(520, scale, 96);
 
     LoadToControls();
+    // 记忆上次查看页（重开直达；页数随版本变，越界回首页）
+    {
+        uint32_t lp = LoadSettings().lastSettingsPage;
+        if (lp >= g_pages.size()) lp = 0;
+        g_curPage = (int)lp;
+    }
     ApplyPageVisibility(); // 只显示当前页的行控件
     UpdateSettingsScrollbar(LayoutSettings());
     ShowWindow(g_hSettings, SW_SHOW);
@@ -1646,6 +1787,62 @@ void CreateSettingsWindow(HINSTANCE hInst)
 }
 
 // ---------------- 托盘 ----------------
+
+// ---------------- 开机自启动（HKCU\Run）----------------
+// 状态以 HKCU\Run 的 LingxiIme 键为准（不另存设置，避免双源漂移）。
+bool IsAutoStartEnabled()
+{
+    HKEY hk = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER,
+                      L"Software\\Microsoft\\Windows\\CurrentVersion\\Run",
+                      0, KEY_QUERY_VALUE, &hk) != ERROR_SUCCESS)
+        return false;
+    bool found = RegQueryValueExW(hk, L"LingxiIme", NULL, NULL, NULL, NULL)
+                 == ERROR_SUCCESS;
+    RegCloseKey(hk);
+    return found;
+}
+
+void SetAutoStartEnabled(bool enable)
+{
+    const wchar_t* runKey = L"Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+    HKEY hk = nullptr;
+    if (enable)
+    {
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, runKey, 0, NULL, 0,
+                            KEY_SET_VALUE, NULL, &hk, NULL) != ERROR_SUCCESS)
+            return;
+        wchar_t exe[MAX_PATH] = {};
+        GetModuleFileNameW(NULL, exe, MAX_PATH);
+        wchar_t val[MAX_PATH + 4] = {};
+        _snwprintf_s(val, _TRUNCATE, L"\"%s\"", exe);
+        RegSetValueExW(hk, L"LingxiIme", 0, REG_SZ,
+                       (const BYTE*)val,
+                       (DWORD)((wcslen(val) + 1) * sizeof(wchar_t)));
+        LX_LOG(L"ui", L"开机自启动已开启: %ls", val);
+    }
+    else
+    {
+        if (RegOpenKeyExW(HKEY_CURRENT_USER, runKey, 0, KEY_SET_VALUE, &hk)
+            != ERROR_SUCCESS)
+            return;
+        RegDeleteValueW(hk, L"LingxiIme");
+        LX_LOG(L"ui", L"开机自启动已关闭");
+    }
+    if (hk) RegCloseKey(hk);
+}
+
+// 托盘悬停文字：基础名 + 状态摘要（暂停/拼音关/双拼/繁体——一眼可辨运行态）
+std::wstring BuildTrayTip()
+{
+    Settings s = LoadSettings();
+    std::wstring t = L"灵犀输入法";
+    if (s.paused) t += L"（已暂停）";
+    if (!s.pinyinEnabled) t += L" · 拼音关";
+    if (s.shuangpin) t += L" · 双拼";
+    if (s.traditionalOutput) t += L" · 繁体";
+    return t;
+}
 
 void AddTrayIcon()
 {
@@ -1656,8 +1853,20 @@ void AddTrayIcon()
     nid.uFlags = NIF_ICON | NIF_MESSAGE | NIF_TIP;
     nid.uCallbackMessage = WM_APP_TRAY;
     nid.hIcon = g_hIcon;
-    wcscpy_s(nid.szTip, L"灵犀输入法");
+    wcscpy_s(nid.szTip, BuildTrayTip().c_str());
     g_trayAdded = Shell_NotifyIconW(NIM_ADD, &nid) != FALSE;
+}
+
+// 暂停等状态变化后刷新托盘悬停文字（NIM_MODIFY 只改 tip）
+void UpdateTrayTip()
+{
+    if (!g_trayAdded || !g_hMain) return;
+    NOTIFYICONDATAW nid = { sizeof(nid) };
+    nid.hWnd = g_hMain;
+    nid.uID = 1;
+    nid.uFlags = NIF_TIP;
+    wcscpy_s(nid.szTip, BuildTrayTip().c_str());
+    Shell_NotifyIconW(NIM_MODIFY, &nid);
 }
 
 void RemoveTrayIcon()
@@ -1670,15 +1879,627 @@ void RemoveTrayIcon()
     g_trayAdded = false;
 }
 
+// ---------------- 使用帮助窗（交互速查）----------------
+// 交互功能越加越多（工具条/修饰键/中键/侧键…），可发现性靠集中速查页兜底。
+// 只读多行 EDIT + 系统滚动，内容由实现同步维护。
+
+const wchar_t* kHelpText =
+    L"灵犀输入法 · 交互速查\r\n"
+    L"\r\n"
+    L"【候选窗】\r\n"
+    L"· 数字键 1-9 / 鼠标点击：选词上屏\r\n"
+    L"· 滚轮、‹ › 按钮、鼠标侧键（后退/前进）：翻页\r\n"
+    L"· Ctrl + 滚轮：候选字号调节（12-32，即时生效）\r\n"
+    L"· Shift + 滚轮：候选窗不透明度调节（70-100%）\r\n"
+    L"· 按住拼音回显行或底部工具条空白：拖动窗口，松手即固定位置\r\n"
+    L"· 右键候选词：词典菜单（置顶/提升/降频/删除/复制/联网搜索/查拼音），成功有浮窗反馈\r\n"
+    L"· 中键点击候选词：置顶　Shift+中键：降频　Ctrl+中键：删除\r\n"
+    L"· Ctrl + 左键候选词：联网搜索　　Shift + 左键：复制该词\r\n"
+    L"· Ctrl + Shift + 左键候选词：从用户词典删除\r\n"
+    L"· 右键拼音回显行：复制拼音串\r\n"
+    L"· 工具条按钮：固=固定位置开关（右键解除）　符=符号面板　设=设置（右键换肤）\r\n"
+    L"· 右键工具条空白：7 款皮肤直选子菜单\r\n"
+    L"· 悬停按钮或被截断的长候选：显示提示\r\n"
+    L"\r\n"
+    L"【符号面板】（托盘菜单 / Ctrl+Shift+B（设置页可开） / 候选窗\"符\"按钮）\r\n"
+    L"· 点击符号插入，面板保留便于连续输入；悬停高亮+手型光标\r\n"
+    L"· \"最近\"页自动记录最近使用的符号（最新在前，最多 12 个；右键\"最近\"标签清空）\r\n"
+    L"· \"日期\"页插入当前日期/时间/星期（打开/切页时现算）\r\n"
+    L"· 分类：常用/数学/货币/箭头/表情/手势/动物/食物/活动/注音/希腊/框线/序号/颜文字\r\n"
+    L"· 静态分类记忆上次查看页（重开直达）；滚轮换分类\r\n"
+    L"· 关闭：右上角 × / 右键 / 重按热键或\"符\"按钮\r\n"
+    L"\r\n"
+    L"【中英文切换】\r\n"
+    L"· 切换键在设置页选择（Shift / Ctrl / CapsLock / 关闭）；无拼音时触发\r\n"
+    L"· 中文模式：字母组拼音，标点自动全角\r\n"
+    L"\r\n"
+    L"【托盘图标】\r\n"
+    L"· 左键：打开/关闭设置　　右键：菜单　　中键：使用帮助\r\n"
+    L"· 右键菜单：拼音模式 / 暂停预测 / 暂停 30 分钟或 1 小时 / 打字统计 /\r\n"
+    L"  固定候选窗位置 / 设置备份导出导入 / 重新加载用户词典 / 打开数据文件夹 /\r\n"
+    L"  恢复默认设置 / 开机自动启动 / 退出\r\n"
+    L"· Ctrl+Alt+P：全局热键切换暂停预测\r\n"
+    L"· Ctrl+Alt+H：全局热键打开使用帮助\r\n"
+    L"· 悬停图标显示状态摘要（暂停/拼音关/双拼/繁体）\r\n"
+    L"\r\n"
+    L"【打字统计】（托盘菜单 / 设置·词典页）\r\n"
+    L"· 今日/累计选词次数、上屏汉字数、活跃与连续天数\r\n"
+    L"· 刷新实时更新；清零不可恢复；\"导出诊断报告\"生成可分享的文本文件\r\n"
+    L"· Esc 关闭统计窗\r\n"
+    L"\r\n"
+    L"【帮助窗 / 设置窗】\r\n"
+    L"· 帮助窗 Ctrl + 滚轮：正文字号调节（12-28）\r\n"
+    L"· 帮助窗 Esc：关闭　　底部\"复制全部文本\"：速查内容一键进剪贴板\r\n"
+    L"· 设置窗 Esc：隐藏；位置与尺寸自动记忆（重开恢复）\r\n"
+    L"\r\n"
+    L"【词典与学习】\r\n"
+    L"· 候选词右键菜单可置顶/提升/降频/删除用户词条，下次击键即生效\r\n"
+    L"· 词典窗顶部搜索框：词条/拼音实时过滤（不区分大小写）\r\n"
+    L"\r\n"
+    L"设置即时保存（HKCU\\Software\\LingxiIme），全部改动立即生效。\r\n"
+    L"命令行：--version / --help / --diagnostics / --settings / --symbols。\r\n";
+
+// 帮助文本 = 静态速查 + 打开时刻的实时配置快照（只读，改设置请进设置页/托盘）
+std::wstring BuildHelpText()
+{
+    Settings s = LoadSettings();
+    static const wchar_t* kSkinNames[] = { L"翠绿", L"青碧", L"橙", L"红", L"金", L"茶棕", L"玫粉" };
+    static const wchar_t* kToggleNames[] = { L"关闭", L"Shift", L"Shift 或 Ctrl",
+                                             L"CapsLock", L"仅 Ctrl" };
+    static const wchar_t* kDarkNames[] = { L"跟随应用", L"浅色", L"深色" };
+    wchar_t cfg[4096];
+    _snwprintf_s(cfg, _TRUNCATE,
+        L"%s"
+        L"【当前生效配置】（打开时刻快照）\r\n"
+        L"· 中英切换键：%ls（无拼音时触发）\r\n"
+        L"· 皮肤：%ls　候选数：%u　字号：%u　不透明度：%u%%\r\n"
+        L"· 界面字体：%ls　明暗：%ls\r\n"
+        L"· 模糊音：%ls　双拼：%ls　繁体输出：%ls\r\n"
+        L"· 英文补全：%ls　中文标点：%ls　选词联想：%ls\r\n"
+        L"· 符号热键 Ctrl+Shift+B：%ls　LLM 重排：%ls\r\n"
+        L"· 位置固定：%ls　开机自启动：%ls　预测：%ls\r\n"
+        L"· 打字：%ls\r\n"
+        L"\r\n"
+        L"（本页只读；修改请进设置页或托盘菜单，改动即时生效）\r\n",
+        kHelpText,
+        kToggleNames[s.toggleMode],
+        kSkinNames[s.skinIndex], s.candidateCount, s.candidateFontSize,
+        s.candidateOpacity,
+        kUiFontNames[s.uiFont], kDarkNames[s.darkMode],
+        s.fuzzyPinyin ? L"开" : L"关", s.shuangpin ? L"小鹤" : L"关",
+        s.traditionalOutput ? L"开" : L"关",
+        s.enCompletion ? L"开" : L"关", s.cnPunct ? L"开" : L"关",
+        s.assocAfterPick ? L"开" : L"关",
+        s.symbolHotkey ? L"开" : L"关", s.llmRerank ? L"开" : L"关",
+        s.candidatePinned ? L"开" : L"关",
+        IsAutoStartEnabled() ? L"开" : L"关",
+        s.paused ? L"已暂停" : L"运行中",
+        BuildStatsBrief().c_str());
+    return cfg;
+}
+
+HWND g_hHelp = nullptr;
+int g_helpFontH = 15;  // 帮助正文字号（Ctrl+滚轮 12..28 可调）
+HFONT g_helpFont = nullptr; // 进程内复用，防反复开关帮助窗泄漏
+HWND g_hHelpBtn = nullptr;  // 底部"复制全部文本"按钮
+WNDPROC g_oldHelpEditProc = nullptr; // 正文 EDIT 子类化（Esc 关窗）
+constexpr int IDC_HELP_COPY = 350;
+constexpr int kHelpBarH = 48; // 底部按钮条高（px，帮助窗无 DPI 缩放基础设施）
+
+// 复制帮助正文到剪贴板（含实时配置快照；剪贴板被占 3×30ms 重试——
+// 复制是用户主动点击，偶发占用不该静默失败）
+void HelpCopyAll(HWND h)
+{
+    HWND edit = (HWND)GetWindowLongPtrW(h, GWLP_USERDATA);
+    if (!edit) return;
+    int len = GetWindowTextLengthW(edit);
+    HGLOBAL hg = GlobalAlloc(GMEM_MOVEABLE, (size_t)(len + 1) * sizeof(wchar_t));
+    bool ok = false;
+    if (hg)
+    {
+        wchar_t* p = (wchar_t*)GlobalLock(hg);
+        if (p)
+        {
+            GetWindowTextW(edit, p, len + 1);
+            GlobalUnlock(hg);
+            bool opened = false;
+            for (int i = 0; i < 3 && !(opened = OpenClipboard(h)); i++) Sleep(30);
+            if (opened)
+            {
+                if (EmptyClipboard() && SetClipboardData(CF_UNICODETEXT, hg))
+                {
+                    ok = true;
+                    hg = NULL; // 成功后内存归系统所有
+                }
+                CloseClipboard();
+            }
+        }
+    }
+    if (hg) GlobalFree(hg);
+    if (g_hHelpBtn) SetWindowTextW(g_hHelpBtn, ok ? L"已复制" : L"复制失败");
+    SetTimer(h, 3, 1500, NULL); // 1.5s 后恢复按钮文字
+    LX_LOG(L"ui", L"帮助文本复制 ok=%d len=%d", (int)ok, len);
+}
+
+LRESULT CALLBACK HelpEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE)
+    {
+        DestroyWindow(GetParent(h)); // 焦点在正文时 Esc 同样关窗
+        return 0;
+    }
+    return CallWindowProcW(g_oldHelpEditProc, h, msg, wp, lp);
+}
+
+LRESULT CALLBACK HelpWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_SIZE)
+    {
+        HWND edit = (HWND)GetWindowLongPtrW(h, GWLP_USERDATA);
+        int cx = LOWORD(lp), cy = HIWORD(lp);
+        int bodyH = cy > kHelpBarH ? cy - kHelpBarH : cy; // 正文让出底部按钮条
+        if (edit) MoveWindow(edit, 0, 0, cx, bodyH, TRUE);
+        if (g_hHelpBtn) MoveWindow(g_hHelpBtn, 12, cy > kHelpBarH ? cy - kHelpBarH + 8 : 0,
+                                   140, 32, TRUE);
+        return 0;
+    }
+    if (msg == WM_MOUSEWHEEL)
+    {
+        // Ctrl+滚轮调帮助正文字号（12..28；速查页长文可读性，浏览器缩放手势同款）
+        int nh = g_helpFontH + ((short)GET_WHEEL_DELTA_WPARAM(wp) > 0 ? 1 : -1);
+        if (nh < 12) nh = 12;
+        if (nh > 28) nh = 28;
+        if (nh != g_helpFontH)
+        {
+            g_helpFontH = nh;
+            if (g_helpFont) DeleteObject(g_helpFont);
+            g_helpFont = CreateFontW(-g_helpFontH, 0, 0, 0, FW_NORMAL, 0, 0, 0,
+                                     DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0,
+                                     L"Microsoft YaHei UI");
+            HWND edit = (HWND)GetWindowLongPtrW(h, GWLP_USERDATA);
+            if (edit) SendMessageW(edit, WM_SETFONT, (WPARAM)g_helpFont, TRUE);
+            LX_LOG(L"ui", L"帮助窗字号调整为 %d", g_helpFontH);
+        }
+        return 0;
+    }
+    if (msg == WM_COMMAND && LOWORD(wp) == IDC_HELP_COPY)
+    {
+        HelpCopyAll(h);
+        return 0;
+    }
+    if (msg == WM_TIMER && wp == 3)
+    {
+        KillTimer(h, 3);
+        if (g_hHelpBtn) SetWindowTextW(g_hHelpBtn, L"复制全部文本"); // 反馈复位
+        return 0;
+    }
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE)
+    {
+        DestroyWindow(h); // 帮助窗本身持焦点时 Esc 关窗
+        return 0;
+    }
+    if (msg == WM_CTLCOLORSTATIC) // 只读 EDIT 默认灰字 → 正常深色可读
+    {
+        HDC hdc = (HDC)wp;
+        SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
+        SetTextColor(hdc, RGB(32, 32, 32));
+        return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
+    }
+    if (msg == WM_DESTROY)
+    {
+        g_hHelp = nullptr;
+        g_hHelpBtn = nullptr;
+        return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+void ShowHelpWindow(HINSTANCE hInst)
+{
+    if (g_hHelp && IsWindow(g_hHelp))
+    {
+        ShowWindow(g_hHelp, SW_RESTORE);
+        SetForegroundWindow(g_hHelp);
+        return;
+    }
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = HelpWndProc;
+    wc.hInstance = hInst;
+    wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.lpszClassName = L"LingxiHelp";
+    RegisterClassW(&wc);
+
+    const int W = 560, H = 640;
+    POINT pt;
+    GetCursorPos(&pt);
+    HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{ sizeof(mi) };
+    RECT wa{ 0, 0, 1920, 1040 };
+    if (GetMonitorInfoW(mon, &mi)) wa = mi.rcWork;
+    int x = wa.left + ((wa.right - wa.left) - W) / 2;
+    int y = wa.top + ((wa.bottom - wa.top) - H) / 2;
+
+    g_hHelp = CreateWindowExW(WS_EX_TOPMOST, L"LingxiHelp", L"灵犀输入法 · 使用帮助",
+                              WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                              x, y, W, H, NULL, NULL, hInst, NULL);
+    if (!g_hHelp) return;
+
+    HWND edit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_READONLY |
+                                    ES_AUTOVSCROLL | WS_VSCROLL,
+                                0, 0, W, H - kHelpBarH, g_hHelp, NULL, hInst, NULL);
+    SetWindowLongPtrW(g_hHelp, GWLP_USERDATA, (LONG_PTR)edit);
+    // 正文 EDIT 子类化：焦点在正文时 Esc 关窗（帮助窗其余区域由 HelpWndProc 处理）
+    g_oldHelpEditProc = (WNDPROC)SetWindowLongPtrW(edit, GWLP_WNDPROC, (LONG_PTR)HelpEditProc);
+    if (!g_helpFont) // 进程内复用；Ctrl+滚轮调号时在 HelpWndProc 重建
+        g_helpFont = CreateFontW(-g_helpFontH, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                                 0, 0, CLEARTYPE_QUALITY, 0, L"Microsoft YaHei UI");
+    SendMessageW(edit, WM_SETFONT, (WPARAM)g_helpFont, TRUE);
+    SetWindowTextW(edit, BuildHelpText().c_str());
+    SendMessageW(edit, EM_SETSEL, 0, 0); // 定位开头
+    // 底部按钮条："复制全部文本"（速查页分享/存档一键进剪贴板）
+    g_hHelpBtn = CreateWindowExW(0, L"BUTTON", L"复制全部文本",
+                                 WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                 12, H - kHelpBarH + 8, 140, 32, g_hHelp,
+                                 (HMENU)(INT_PTR)IDC_HELP_COPY, hInst, NULL);
+    SendMessageW(g_hHelpBtn, WM_SETFONT, (WPARAM)g_helpFont, TRUE);
+    UpdateWindow(g_hHelp);
+}
+
+// ---------------- 打字统计窗（托盘 2017 / 设置·词典页）----------------
+
+HWND g_hStats = nullptr;
+HWND g_hStatsEdit = nullptr;
+HFONT g_statsFont = nullptr;
+WNDPROC g_oldStatsEditProc = nullptr; // 正文 EDIT 子类化（Esc 关窗）
+constexpr int kStatsBarH = 48;        // 底部按钮条高
+constexpr int IDC_STATS_REFRESH = 360;
+constexpr int IDC_STATS_RESET = 361;
+constexpr int IDC_STATS_EXPORT = 362;
+
+void StatsRefreshText()
+{
+    if (g_hStatsEdit) SetWindowTextW(g_hStatsEdit, BuildStatsText().c_str());
+}
+
+// 导出诊断报告：诊断全文 + 统计正文 → APPDATA\LingxiIme\lingxi-diag-<时间戳>.txt
+// （排障时可分享的完整文本文件；\n 统一转 \r\n、UTF-8 带 BOM，记事本直开不乱码）
+void StatsExportReport(HWND h)
+{
+    std::wstring crlf;
+    {
+        std::wstring wtext = BuildDiagnosticsText();
+        crlf.reserve(wtext.size() + 16);
+        for (wchar_t ch : wtext)
+        {
+            if (ch == L'\n') crlf += L'\r';
+            crlf += ch;
+        }
+    }
+    crlf += L"\r\n打字统计：\r\n";
+    crlf += BuildStatsText();
+    std::string u8 = "\xEF\xBB\xBF"; // BOM
+    {
+        int n = WideCharToMultiByte(CP_UTF8, 0, crlf.c_str(), (int)crlf.size(),
+                                    NULL, 0, NULL, NULL);
+        std::string s((size_t)(n > 0 ? n : 0), '\0');
+        if (n > 0)
+            WideCharToMultiByte(CP_UTF8, 0, crlf.c_str(), (int)crlf.size(),
+                                &s[0], n, NULL, NULL);
+        u8 += s;
+    }
+    std::wstring path = L"lingxi-diag.txt"; // APPDATA 缺失时的兜底（当前目录）
+    wchar_t ap[MAX_PATH] = {};
+    if (GetEnvironmentVariableW(L"APPDATA", ap, MAX_PATH) > 0)
+    {
+        std::wstring dir = std::wstring(ap) + L"\\LingxiIme";
+        CreateDirectoryW(dir.c_str(), NULL);
+        SYSTEMTIME st{};
+        GetLocalTime(&st);
+        wchar_t name[64];
+        _snwprintf_s(name, _TRUNCATE, L"\\lingxi-diag-%04u%02u%02u-%02u%02u%02u.txt",
+                     st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
+        path = dir + name;
+    }
+    bool ok = false;
+    HANDLE hf = CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL,
+                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hf != INVALID_HANDLE_VALUE)
+    {
+        DWORD written = 0;
+        ok = WriteFile(hf, u8.data(), (DWORD)u8.size(), &written, NULL) &&
+             written == u8.size();
+        CloseHandle(hf);
+    }
+    MessageBoxW(h, ok ? (L"诊断报告已导出到：\n" + path).c_str()
+                      : L"导出失败（无法写入文件，详见日志）",
+                L"导出诊断报告", MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONWARNING));
+    LX_LOG(L"ui", L"诊断报告导出 ok=%d path=%ls", (int)ok, path.c_str());
+}
+
+LRESULT CALLBACK StatsEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE)
+    {
+        DestroyWindow(GetParent(h)); // 焦点在正文时 Esc 关窗
+        return 0;
+    }
+    return CallWindowProcW(g_oldStatsEditProc, h, msg, wp, lp);
+}
+
+LRESULT CALLBACK StatsWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_SIZE)
+    {
+        int cx = LOWORD(lp), cy = HIWORD(lp);
+        int bodyH = cy > kStatsBarH ? cy - kStatsBarH : cy; // 正文让出底部按钮条
+        if (g_hStatsEdit) MoveWindow(g_hStatsEdit, 0, 0, cx, bodyH, TRUE);
+        int y = cy > kStatsBarH ? cy - kStatsBarH + 8 : 0;
+        HWND b1 = GetDlgItem(h, IDC_STATS_REFRESH);
+        HWND b2 = GetDlgItem(h, IDC_STATS_RESET);
+        HWND b3 = GetDlgItem(h, IDC_STATS_EXPORT);
+        if (b1) MoveWindow(b1, 12, y, 100, 32, TRUE);
+        if (b2) MoveWindow(b2, 120, y, 100, 32, TRUE);
+        if (b3) MoveWindow(b3, 228, y, 160, 32, TRUE);
+        return 0;
+    }
+    if (msg == WM_COMMAND)
+    {
+        switch (LOWORD(wp))
+        {
+        case IDC_STATS_REFRESH:
+            StatsRefreshText();
+            return 0;
+        case IDC_STATS_RESET:
+            if (MessageBoxW(h, L"确定清零全部打字统计？此操作不可恢复。",
+                            L"清零统计", MB_OKCANCEL | MB_ICONQUESTION) == IDOK)
+            {
+                StatsReset();
+                StatsRefreshText();
+                LX_LOG(L"ui", L"打字统计已清零");
+            }
+            return 0;
+        case IDC_STATS_EXPORT:
+            StatsExportReport(h);
+            return 0;
+        }
+        return 0;
+    }
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE)
+    {
+        DestroyWindow(h); // 统计窗本身持焦点时 Esc 关窗
+        return 0;
+    }
+    if (msg == WM_CTLCOLORSTATIC) // 只读 EDIT 默认灰字 → 正常深色可读
+    {
+        HDC hdc = (HDC)wp;
+        SetBkColor(hdc, GetSysColor(COLOR_WINDOW));
+        SetTextColor(hdc, RGB(32, 32, 32));
+        return (LRESULT)GetSysColorBrush(COLOR_WINDOW);
+    }
+    if (msg == WM_DESTROY)
+    {
+        g_hStats = nullptr;
+        g_hStatsEdit = nullptr;
+        return 0;
+    }
+    return DefWindowProcW(h, msg, wp, lp);
+}
+
+void ShowUsageStatsWindow(HINSTANCE hInst)
+{
+    if (g_hStats && IsWindow(g_hStats))
+    {
+        ShowWindow(g_hStats, SW_RESTORE);
+        SetForegroundWindow(g_hStats);
+        StatsRefreshText();
+        return;
+    }
+    WNDCLASSW wc{};
+    wc.lpfnWndProc = StatsWndProc;
+    wc.hInstance = hInst;
+    wc.hCursor = LoadCursorW(NULL, IDC_ARROW);
+    wc.hbrBackground = (HBRUSH)(COLOR_WINDOW + 1);
+    wc.lpszClassName = L"LingxiStats";
+    RegisterClassW(&wc);
+
+    const int W = 460, H = 400;
+    POINT pt;
+    GetCursorPos(&pt);
+    HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{ sizeof(mi) };
+    RECT wa{ 0, 0, 1920, 1040 };
+    if (GetMonitorInfoW(mon, &mi)) wa = mi.rcWork;
+    int x = wa.left + ((wa.right - wa.left) - W) / 2;
+    int y = wa.top + ((wa.bottom - wa.top) - H) / 2;
+
+    g_hStats = CreateWindowExW(WS_EX_TOPMOST, L"LingxiStats", L"灵犀输入法 · 打字统计",
+                               WS_OVERLAPPEDWINDOW | WS_VISIBLE,
+                               x, y, W, H, NULL, NULL, hInst, NULL);
+    if (!g_hStats) return;
+
+    g_hStatsEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                   WS_CHILD | WS_VISIBLE | ES_MULTILINE | ES_READONLY |
+                                       ES_AUTOVSCROLL | WS_VSCROLL,
+                                   0, 0, W, H - kStatsBarH, g_hStats, NULL, hInst, NULL);
+    g_oldStatsEditProc = (WNDPROC)SetWindowLongPtrW(g_hStatsEdit, GWLP_WNDPROC,
+                                                    (LONG_PTR)StatsEditProc);
+    if (!g_statsFont)
+        g_statsFont = CreateFontW(-15, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                                  0, 0, CLEARTYPE_QUALITY, 0, L"Microsoft YaHei UI");
+    SendMessageW(g_hStatsEdit, WM_SETFONT, (WPARAM)g_statsFont, TRUE);
+    SetWindowTextW(g_hStatsEdit, BuildStatsText().c_str());
+    SendMessageW(g_hStatsEdit, EM_SETSEL, 0, 0);
+    // 底部按钮条：刷新 / 清零 / 导出诊断报告
+    struct { int id; const wchar_t* text; int x, w; } btns[3] = {
+        { IDC_STATS_REFRESH, L"刷新", 12, 100 },
+        { IDC_STATS_RESET, L"清零...", 120, 100 },
+        { IDC_STATS_EXPORT, L"导出诊断报告...", 228, 160 },
+    };
+    for (const auto& b : btns)
+    {
+        HWND hb = CreateWindowExW(0, L"BUTTON", b.text,
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                                  b.x, H - kStatsBarH + 8, b.w, 32, g_hStats,
+                                  (HMENU)(INT_PTR)b.id, hInst, NULL);
+        SendMessageW(hb, WM_SETFONT, (WPARAM)g_statsFont, TRUE);
+    }
+    UpdateWindow(g_hStats);
+}
+
+// ---------------- 设置备份（注册表导出/导入）----------------
+// reg.exe export/import 整个 HKCU\Software\LingxiIme 键（全部设置+热短语）。
+// 用户词典在 APPDATA 文本文件，不在此路径（用户词典窗自带导入/导出）。
+
+bool RunCmdHidden(const std::wstring& args)
+{
+    std::wstring cmd = L"cmd.exe " + args;
+    STARTUPINFOW si{ sizeof(si) };
+    si.dwFlags = STARTF_USESHOWWINDOW;
+    si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi{};
+    if (!CreateProcessW(NULL, &cmd[0], NULL, NULL, FALSE, CREATE_NO_WINDOW,
+                        NULL, NULL, &si, &pi))
+        return false;
+    WaitForSingleObject(pi.hProcess, 15000);
+    DWORD code = 1;
+    GetExitCodeProcess(pi.hProcess, &code);
+    CloseHandle(pi.hThread);
+    CloseHandle(pi.hProcess);
+    return code == 0;
+}
+
+void ExportSettingsBackup(HWND owner)
+{
+    SYSTEMTIME st;
+    GetLocalTime(&st);
+    wchar_t path[MAX_PATH];
+    _snwprintf_s(path, _TRUNCATE, L"LingxiIme-设置备份-%04u%02u%02u.reg",
+                 st.wYear, st.wMonth, st.wDay);
+    OPENFILENAMEW ofn{ sizeof(ofn) };
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = L"注册表文件 (*.reg)\0*.reg\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"reg";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    if (!GetSaveFileNameW(&ofn)) return;
+    std::wstring args = L"/c reg export \"HKCU\\Software\\LingxiIme\" \"" +
+                        std::wstring(path) + L"\" /y";
+    bool ok = RunCmdHidden(args);
+    // 用户词典 + 热键短语随行（同 basename"-用户词典.txt"/"-热键短语.txt"）：
+    // 两者都在 APPDATA 文本文件，注册表备份不含；一并导出让备份完整可迁移。
+    bool dictOk = false, hpOk = false;
+    if (ok)
+    {
+        std::wstring base(path);
+        size_t dot = base.rfind(L'.');
+        if (dot != std::wstring::npos) base = base.substr(0, dot);
+        std::string raw;
+        if (ReadFileBytes(UserDictPathW(), raw))
+        {
+            WriteFileBytes(base + L"-用户词典.txt", raw);
+            dictOk = true;
+        }
+        if (ReadFileBytes(HotPhraseDataPath(), raw))
+        {
+            WriteFileBytes(base + L"-热键短语.txt", raw);
+            hpOk = true;
+        }
+    }
+    LX_LOG(L"ui", L"设置备份导出 ok=%d dict=%d hp=%d path=%ls",
+           (int)ok, (int)dictOk, (int)hpOk, path);
+    MessageBoxW(owner,
+                ok ? L"设置备份已导出。" : L"导出失败（路径不可写或 reg.exe 不可用）。",
+                L"导出设置备份",
+                MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONWARNING));
+}
+
+void ImportSettingsBackup(HWND owner)
+{
+    wchar_t path[MAX_PATH] = L"";
+    OPENFILENAMEW ofn{ sizeof(ofn) };
+    ofn.hwndOwner = owner;
+    ofn.lpstrFilter = L"注册表文件 (*.reg)\0*.reg\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
+    if (!GetOpenFileNameW(&ofn)) return;
+    if (MessageBoxW(owner,
+                    L"将用备份覆盖当前全部设置（切换键/皮肤/热键/候选等），确定继续？",
+                    L"导入设置备份", MB_OKCANCEL | MB_ICONQUESTION) != IDOK)
+        return;
+    std::wstring args = L"/c reg import \"" + std::wstring(path) + L"\"";
+    bool ok = RunCmdHidden(args);
+    bool dictRestored = false, hpRestored = false;
+    if (ok)
+    {
+        if (g_settingsChanged) g_settingsChanged(); // 热键等需随新设置重注册
+        UpdateTrayTip();
+        std::wstring base(path);
+        size_t dot = base.rfind(L'.');
+        if (dot != std::wstring::npos) base = base.substr(0, dot);
+        // 随行用户词典存在则询问恢复（覆盖当前词典 → 引擎重载）
+        std::wstring dictSrc = base + L"-用户词典.txt";
+        if (GetFileAttributesW(dictSrc.c_str()) != INVALID_FILE_ATTRIBUTES)
+        {
+            if (MessageBoxW(owner,
+                            L"备份中含用户词典，一并恢复（覆盖当前词典）？",
+                            L"导入设置备份", MB_OKCANCEL | MB_ICONQUESTION) == IDOK)
+            {
+                std::string raw;
+                if (ReadFileBytes(dictSrc, raw) &&
+                    WriteFileBytes(UserDictPathW(), raw))
+                {
+                    if (g_reloadUserDict) g_reloadUserDict();
+                    dictRestored = true;
+                }
+            }
+        }
+        // 随行热键短语存在则询问恢复（覆盖后通知重注册全部短语热键）
+        std::wstring hpSrc = base + L"-热键短语.txt";
+        if (GetFileAttributesW(hpSrc.c_str()) != INVALID_FILE_ATTRIBUTES)
+        {
+            if (MessageBoxW(owner,
+                            L"备份中含热键短语，一并恢复（覆盖当前短语）？",
+                            L"导入设置备份", MB_OKCANCEL | MB_ICONQUESTION) == IDOK)
+            {
+                std::string rawHp;
+                if (ReadFileBytes(hpSrc, rawHp) &&
+                    WriteFileBytes(HotPhraseDataPath(), rawHp))
+                {
+                    NotifyHotPhrasesChanged();
+                    hpRestored = true;
+                }
+            }
+        }
+    }
+    LX_LOG(L"ui", L"设置备份导入 ok=%d dict=%d hp=%d path=%ls",
+           (int)ok, (int)dictRestored, (int)hpRestored, path);
+    MessageBoxW(owner,
+                ok ? L"设置已导入，即时生效（设置页若开着请重开刷新）。"
+                   : L"导入失败（文件不是有效的注册表导出格式？）。",
+                L"导入设置备份",
+                MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONWARNING));
+}
+
 void OnTrayCommand(HWND hwnd, LPARAM lParam)
 {
     switch (lParam)
     {
     case WM_LBUTTONUP:
         if (g_hSettings && IsWindowVisible(g_hSettings))
+        {
+            SaveSettingsWindowRect(); // 托盘隐藏也走矩形落盘（与 WM_CLOSE 同路径）
             ShowWindow(g_hSettings, SW_HIDE);
+        }
         else
             CreateSettingsWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
+        return;
+
+    case WM_MBUTTONUP: // 中键托盘 = 使用帮助（左键已被设置占用，帮助常驻无冲突）
+        ShowHelpWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
         return;
 
     case WM_RBUTTONUP:
@@ -1688,10 +2509,23 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         Settings s = LoadSettings();
         AppendMenuW(menu, MF_STRING | (s.pinyinEnabled ? MF_CHECKED : 0), 2001, L"拼音组合模式");
         AppendMenuW(menu, MF_STRING | (s.paused ? MF_CHECKED : 0), 2004, L"暂停预测（完全直通）");
+        AppendMenuW(menu, MF_STRING, 2012, L"暂停 30 分钟后自动恢复");
+        AppendMenuW(menu, MF_STRING, 2016, L"暂停 1 小时后自动恢复");
+    AppendMenuW(menu, MF_STRING, 2017, L"打字统计...");
+        AppendMenuW(menu, MF_STRING | (s.candidatePinned ? MF_CHECKED : 0), 2007, L"固定候选窗位置");
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(menu, MF_STRING, 2005, L"符号面板（Ctrl+Shift+B）");
         AppendMenuW(menu, MF_STRING, 2002, L"设置...");
+        AppendMenuW(menu, MF_STRING, 2009, L"使用帮助...");
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(menu, MF_STRING, 2010, L"导出设置备份...");
+        AppendMenuW(menu, MF_STRING, 2011, L"导入设置备份...");
+        AppendMenuW(menu, MF_STRING, 2013, L"重新加载用户词典");
+        AppendMenuW(menu, MF_STRING, 2014, L"打开数据文件夹");
+        AppendMenuW(menu, MF_STRING, 2015, L"恢复默认设置...");
+        AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+        AppendMenuW(menu, MF_STRING | (IsAutoStartEnabled() ? MF_CHECKED : 0),
+                    2008, L"开机自动启动");
         AppendMenuW(menu, MF_STRING, 2006, L"卸载灵犀输入法...");
         AppendMenuW(menu, MF_STRING, 2003, L"退出");
         POINT pt;
@@ -1713,8 +2547,66 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
             Settings ns = LoadSettings();
             ns.paused = !ns.paused;
             SaveSettings(ns);
+            KillTimer(hwnd, 2); // 手动切换暂停态则取消"30 分钟自动恢复"定时
+            UpdateTrayTip(); // 暂停态变化 → 托盘悬停文字同步
             break;
         }
+        case 2012: // 暂停 30 分钟：定时到自动恢复（写作/演示等场景的临时静音）
+        {
+            Settings ns = LoadSettings();
+            ns.paused = 1;
+            SaveSettings(ns);
+            SetTimer(hwnd, 2, 30 * 60 * 1000, NULL);
+            UpdateTrayTip();
+            LX_LOG(L"ui", L"暂停 30 分钟（定时自动恢复）");
+            break;
+        }
+        case 2016: // 暂停 1 小时：同"30 分钟"定时器，到点自动恢复
+        {
+            Settings ns = LoadSettings();
+            ns.paused = 1;
+            SaveSettings(ns);
+            SetTimer(hwnd, 2, 60 * 60 * 1000, NULL);
+            UpdateTrayTip();
+            LX_LOG(L"ui", L"暂停 1 小时（定时自动恢复）");
+            break;
+        }
+        case 2013:
+            if (g_reloadUserDict) g_reloadUserDict(); // 词典文件外部编辑后免重启生效
+            break;
+        case 2014:
+        {
+            // 打开数据文件夹（用户词典/设置备份所在地；取词典路径的父目录，
+            // 与实际数据位置永远一致）
+            std::wstring dictPath = UserDictPathW();
+            size_t slash = dictPath.rfind(L'\\');
+            std::wstring dir = (slash != std::wstring::npos)
+                               ? dictPath.substr(0, slash) : dictPath;
+            CreateDirectoryW(dir.c_str(), NULL); // 首次可能不存在
+            ShellExecuteW(NULL, L"open", dir.c_str(), NULL, NULL, SW_SHOWNORMAL);
+            break;
+        }
+        case 2015:
+        {
+            if (MessageBoxW(hwnd,
+                    L"将清除全部设置恢复默认（用户词典与热键短语保留），确定？",
+                    L"恢复默认设置", MB_OKCANCEL | MB_ICONQUESTION) == IDOK)
+            {
+                ResetSettingsToDefaults();
+                if (g_settingsChanged) g_settingsChanged(); // 热键按默认重注册
+                UpdateTrayTip();
+                if (g_hChkPinyin) LoadToControls(); // 设置窗开着则同步控件
+                LX_LOG(L"ui", L"已恢复默认设置（注册表值已清除）");
+            }
+            break;
+        }
+        case 2008:
+            SetAutoStartEnabled(!IsAutoStartEnabled()); // 勾选态以 HKCU\Run 为准
+            break;
+        case 2007:
+            // 勾选态由 main 侧 CandWindow::TogglePin 按窗口实际位置写入
+            if (g_reqPinToggle) g_reqPinToggle();
+            break;
         case 2005:
             if (g_showSymbols) g_showSymbols();
             break;
@@ -1749,6 +2641,18 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         case 2002:
             CreateSettingsWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
             break;
+        case 2009:
+            ShowHelpWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
+            break;
+        case 2017:
+            ShowUsageStatsWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
+            break;
+        case 2010:
+            ExportSettingsBackup(hwnd);
+            break;
+        case 2011:
+            ImportSettingsBackup(hwnd);
+            break;
         case 2003:
             PostQuitMessage(0);
             break;
@@ -1770,7 +2674,43 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_APP_TRAY:
         OnTrayCommand(hwnd, lParam);
         return 0;
+    case WM_HOTKEY:
+        // Ctrl+Alt+P：切换暂停预测（写作/游戏临时静音的全局快捷键；
+        // 与托盘菜单切换同语义——清"30 分钟"定时 + tip 同步）
+        if (wParam == (WPARAM)kTrayHotkeyPause)
+        {
+            Settings ns = LoadSettings();
+            ns.paused = !ns.paused;
+            SaveSettings(ns);
+            KillTimer(hwnd, 2);
+            UpdateTrayTip();
+            LX_LOG(L"ui", L"Ctrl+Alt+P 切换暂停 paused=%u", (unsigned)ns.paused);
+        }
+        // Ctrl+Alt+H：全局热键打开使用帮助（速查页随时可查）
+        else if (wParam == (WPARAM)kTrayHotkeyHelp)
+        {
+            ShowHelpWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
+            LX_LOG(L"ui", L"Ctrl+Alt+H 打开使用帮助");
+        }
+        return 0;
+    case WM_TIMER:
+        // "暂停 30 分钟"到期：自动恢复预测（用户中途手动切换过则定时已被清）
+        if (wParam == 2)
+        {
+            KillTimer(hwnd, 2);
+            Settings ns = LoadSettings();
+            ns.paused = 0;
+            SaveSettings(ns);
+            UpdateTrayTip();
+            LX_LOG(L"ui", L"30 分钟暂停到期，已自动恢复预测");
+        }
+        return 0;
+    case WM_ENDSESSION:
+        StatsFlush(); // 注销/关机：未落盘的打字统计（≤20 次）补写
+        return 0;
     case WM_DESTROY:
+        UnregisterHotKey(hwnd, kTrayHotkeyPause);
+        UnregisterHotKey(hwnd, kTrayHotkeyHelp);
         RemoveTrayIcon();
         return 0;
     }
@@ -1794,6 +2734,11 @@ void SetSettingsChangedCallback(std::function<void()> cb)
     g_settingsChanged = std::move(cb);
 }
 
+void SetPinToggleCallback(std::function<void()> cb)
+{
+    g_reqPinToggle = std::move(cb);
+}
+
 void ShowSettingsWindow(HINSTANCE hInst)
 {
     CreateSettingsWindow(hInst);
@@ -1813,6 +2758,14 @@ void InitTrayAndSettings(HINSTANCE hInst)
 
     g_hMain = CreateWindowExW(0, kMainWndClass, L"", WS_POPUP, 0, 0, 0, 0, HWND_MESSAGE, NULL, hInst, NULL);
     AddTrayIcon();
+    // 全局热键 Ctrl+Alt+P 切换暂停预测（被占用仅记日志，不阻断启动）
+    if (!RegisterHotKey(g_hMain, kTrayHotkeyPause,
+                        MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (UINT)'P'))
+        LX_LOG(L"ui", L"Ctrl+Alt+P 热键注册失败（组合键被其他程序占用）");
+    // 全局热键 Ctrl+Alt+H 打开使用帮助（同款容错）
+    if (!RegisterHotKey(g_hMain, kTrayHotkeyHelp,
+                        MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (UINT)'H'))
+        LX_LOG(L"ui", L"Ctrl+Alt+H 热键注册失败（组合键被其他程序占用）");
 }
 
 // ---------------- 候选词右键词典操作（候选窗右键菜单，2026-10-29） ----------------
@@ -1904,6 +2857,12 @@ bool ApplyCandidateDictOp(const std::wstring& word, const std::wstring& keyHint,
     if (g_reloadUserDict) g_reloadUserDict();
     LX_LOG(L"ui", L"右键词典操作完成: op=%d word=%ls", (int)op, word.c_str());
     return true;
+}
+
+std::wstring InferWordPinyin(const std::wstring& word)
+{
+    // 匿名命名空间助手 InferPinyinKey 的导出包装（候选窗右键"查拼音"用）
+    return InferPinyinKey(word);
 }
 
 } // namespace lingxi

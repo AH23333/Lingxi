@@ -8,6 +8,7 @@
 #include "window.h"
 #include "pipeserver.h"
 #include "settingsui.h"
+#include "usagestats.h"
 #include "hotphraseui.h"
 #include "phraseui.h"
 #include "symbolpanel.h"
@@ -135,10 +136,16 @@ static int ProbePinyin()
     lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
     LX_LOG(L"pinyin", L"probe: 引擎已加载");
     const wchar_t* inputs[] = { L"jintian", L"jintianqi", L"nihao", L"zhidao", L"ni hao", L"moran",
-                                // B3 零声母简写取证：i/u 打头韵母（省略 y/w 的人类写法）
-                                L"i", L"u", L"in", L"iu", L"ui", L"un", L"uo", L"ian",
-                                // B6 隔音符取证：xi'an（显式边界）vs xian（歧义串）
-                                L"xi'an", L"xian" };
+                                 // B3 零声母简写取证：i/u 打头韵母（省略 y/w 的人类写法）
+                                 L"i", L"u", L"in", L"iu", L"ui", L"un", L"uo", L"ian",
+                                 // v 组合语义取证（#1 v 重设计）：v/vk/vlog 应 0 候选→CommitRaw
+                                 L"v", L"vk", L"vlog",
+                                 // 长纯声母简拼取证：gylg→供应链、gylgl→供应链管理、xyzxyz→零
+                                 L"gyl", L"gylg", L"gylgl", L"xyzxyz",
+                                 // B6 隔音符取证：xi'an（显式边界）vs xian（歧义串）
+                                 L"xi'an", L"xian",
+                                 // P4c 长句+尾残段（碎切分闸门后的候选构成基线）
+                                 L"nichifanlemawohenb" };
     for (const wchar_t* in : inputs)
     {
         uint64_t t0 = GetTickCount64();
@@ -235,6 +242,145 @@ static int ProbeTyping()
     return 0;
 }
 
+// ===== 命令行信息类子命令的共享输出（--version/--help/--diagnostics） =====
+// 三级输出：① 控制台标准句柄 → WriteConsoleW（交互 cmd 下中文不乱码）；
+// ② 重定向句柄（管道/文件）→ UTF-16LE 直写（PowerShell -Encoding Unicode 读）；
+// ③ 都没有（双击启动等 GUI 场景）→ 弹窗兜底。
+void EmitCliText(const wchar_t* text)
+{
+    if (!text || !*text) return;
+    HANDLE hOut = GetStdHandle(STD_OUTPUT_HANDLE);
+    DWORD mode = 0;
+    if (hOut && hOut != INVALID_HANDLE_VALUE && GetConsoleMode(hOut, &mode))
+    {
+        DWORD written = 0;
+        WriteConsoleW(hOut, text, (DWORD)wcslen(text), &written, NULL);
+        return;
+    }
+    if (hOut && hOut != INVALID_HANDLE_VALUE)
+    {
+        DWORD written = 0;
+        WriteFile(hOut, text, (DWORD)(wcslen(text) * sizeof(wchar_t)),
+                  &written, NULL);
+        return;
+    }
+    if (AttachConsole(ATTACH_PARENT_PROCESS))
+    {
+        HANDLE hCon = CreateFileW(L"CONOUT$", GENERIC_WRITE, FILE_SHARE_WRITE,
+                                  NULL, OPEN_EXISTING, 0, NULL);
+        if (hCon != INVALID_HANDLE_VALUE)
+        {
+            DWORD written = 0;
+            WriteConsoleW(hCon, text, (DWORD)wcslen(text), &written, NULL);
+            CloseHandle(hCon);
+        }
+        FreeConsole();
+        return;
+    }
+    MessageBoxW(NULL, text, L"灵犀输入法", MB_OK);
+}
+
+// --help：命令行选项速查
+const wchar_t* kHelpText =
+    L"灵犀输入法命令行选项：\n"
+    L"  --version      版本与构建日期\n"
+    L"  --help         本帮助\n"
+    L"  --diagnostics  系统与配置诊断报告（排障一屏汇总）\n"
+    L"  --settings     打开设置页（已运行实例则转发后退出）\n"
+    L"  --symbols      打开符号面板（已运行实例则转发后退出）\n"
+    L"  --probe-pinyin / --probe-llm / --probe-chain / --probe-typing\n"
+    L"                 内部探针（回归脚本用）\n";
+
+// --diagnostics：OS/构建/DPI/设置/数据文件统计（排障一屏汇总）
+std::wstring BuildDiagnosticsText()
+{
+    std::wstring t = L"灵犀输入法 诊断报告\n";
+    wchar_t buf[512];
+    _snwprintf_s(buf, _TRUNCATE, L"构建日期：%hs\n", __DATE__);
+    t += buf;
+    { // OS 版本（注册表：Win10/11 一致存在）
+        wchar_t build[32] = L"", disp[32] = L"";
+        DWORD ubr = 0, cbUbr = sizeof(ubr);
+        HKEY hk = nullptr;
+        if (RegOpenKeyExW(HKEY_LOCAL_MACHINE,
+                          L"SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion",
+                          0, KEY_QUERY_VALUE, &hk) == ERROR_SUCCESS)
+        {
+            DWORD cb = 32;
+            RegQueryValueExW(hk, L"CurrentBuildNumber", NULL, NULL, (BYTE*)build, &cb);
+            cb = 32;
+            RegQueryValueExW(hk, L"DisplayVersion", NULL, NULL, (BYTE*)disp, &cb);
+            RegQueryValueExW(hk, L"UBR", NULL, NULL, (BYTE*)&ubr, &cbUbr);
+            RegCloseKey(hk);
+        }
+        _snwprintf_s(buf, _TRUNCATE, L"系统：Windows 10.0.%ls.%lu（%ls）\n",
+                     build, (unsigned long)ubr, disp);
+        t += buf;
+    }
+    { // 系统 DPI
+        UINT dpi = 96;
+        if (auto pGetDpi = (UINT(WINAPI*)())GetProcAddress(GetModuleHandleW(L"user32.dll"), "GetDpiForSystem"))
+            dpi = pGetDpi();
+        _snwprintf_s(buf, _TRUNCATE, L"系统 DPI：%u（缩放 %u%%）\n",
+                     dpi, (unsigned)(dpi * 100 / 96));
+        t += buf;
+    }
+    wchar_t exe[MAX_PATH] = {};
+    GetModuleFileNameW(NULL, exe, MAX_PATH);
+    _snwprintf_s(buf, _TRUNCATE, L"可执行：%ls\n", exe);
+    t += buf;
+    lingxi::Settings s = lingxi::LoadSettings();
+    _snwprintf_s(buf, _TRUNCATE,
+        L"设置：拼音=%u 候选数=%u 字号=%u 字体=%u 皮肤=%u 不透明度=%u%% "
+        L"双拼=%u 繁体=%u 暂停=%u 固定位置=%u\n",
+        (unsigned)s.pinyinEnabled, (unsigned)s.candidateCount,
+        (unsigned)s.candidateFontSize, (unsigned)s.uiFont, (unsigned)s.skinIndex,
+        (unsigned)s.candidateOpacity, (unsigned)s.shuangpin,
+        (unsigned)s.traditionalOutput, (unsigned)s.paused,
+        (unsigned)s.candidatePinned);
+    t += buf;
+    // 数据文件统计（用户词典行数 / 热键短语条数）
+    {
+        wchar_t ap[MAX_PATH] = {};
+        if (GetEnvironmentVariableW(L"APPDATA", ap, MAX_PATH) > 0)
+        {
+            std::wstring dp = std::wstring(ap) + L"\\LingxiIme\\userdict.txt";
+            HANDLE h = CreateFileW(dp.c_str(), GENERIC_READ,
+                                   FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                   OPEN_EXISTING, 0, NULL);
+            if (h != INVALID_HANDLE_VALUE)
+            {
+                char lb[8192];
+                DWORD n = 0;
+                long long lines = 0;
+                bool any = false;
+                while (ReadFile(h, lb, sizeof(lb), &n, NULL) && n)
+                {
+                    any = any || n > 0;
+                    for (DWORD i = 0; i < n; i++)
+                        if (lb[i] == '\n') lines++;
+                }
+                CloseHandle(h);
+                _snwprintf_s(buf, _TRUNCATE, L"用户词典：%lld 条（%ls）\n",
+                             any ? lines + 1 : 0, dp.c_str());
+                t += buf;
+            }
+            else
+            {
+                _snwprintf_s(buf, _TRUNCATE, L"用户词典：尚无（%ls）\n", dp.c_str());
+                t += buf;
+            }
+        }
+        _snwprintf_s(buf, _TRUNCATE, L"热键短语：%zu 条\n",
+                     lingxi::LoadHotPhrases().size());
+        t += buf;
+    }
+    _snwprintf_s(buf, _TRUNCATE, L"打字统计：%ls\n",
+                 lingxi::BuildStatsBrief().c_str());
+    t += buf;
+    return t;
+}
+
 int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
 {
     lingxi::InitLogging(); // 按 LINGXI_LOG 环境变量开启热路径诊断日志
@@ -249,6 +395,28 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
             if (wcscmp(argv[i], L"--settings") == 0) wantSettings = true;
             if (wcscmp(argv[i], L"--symbols") == 0) wantSymbols = true;
         }
+    }
+    if (argv && argc >= 2 && wcscmp(argv[1], L"--version") == 0)
+    {
+        wchar_t msg[96];
+        _snwprintf_s(msg, _TRUNCATE, L"灵犀输入法 1.0（构建于 %hs）\n", __DATE__);
+        EmitCliText(msg);
+        LocalFree(argv);
+        return 0;
+    }
+    if (argv && argc >= 2 && wcscmp(argv[1], L"--help") == 0)
+    {
+        EmitCliText(kHelpText);
+        LocalFree(argv);
+        return 0;
+    }
+    if (argv && argc >= 2 && wcscmp(argv[1], L"--diagnostics") == 0)
+    {
+        // 诊断真实配置：清测试沙箱变量后读（与生产路径同口径）
+        SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", NULL);
+        EmitCliText(BuildDiagnosticsText().c_str());
+        LocalFree(argv);
+        return 0;
     }
     if (argv && argc >= 2 && wcscmp(argv[1], L"--probe-llm") == 0)
     {
@@ -378,6 +546,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     g_reqSettings = [&] { lingxi::ShowSettingsWindow(hInst); };
     // 托盘菜单"符号面板"入口（复用 g_reqSymbols）
     lingxi::SetShowSymbolsCallback([] { if (g_reqSymbols) g_reqSymbols(); });
+    // 托盘菜单"固定候选窗位置"勾选项：按窗口实际位置切换（固/拖拽同语义）
+    lingxi::SetPinToggleCallback([&] { wnd.TogglePin(); });
+    // 候选窗工具条按钮（符/设）→ 与托盘/热键同入口；‹›翻页与固钉在窗口内部处理
+    wnd.SetButtonHandler([&](lingxi::CandWindow::Btn b) {
+        if (b == lingxi::CandWindow::Btn::Symbols) { if (g_reqSymbols) g_reqSymbols(); }
+        else if (b == lingxi::CandWindow::Btn::Settings) { if (g_reqSettings) g_reqSettings(); }
+    });
     static NotifyThreadParam tpS{ hEvtSymbols, hNotify, WM_NOTIFY_SYMBOLS };
     static NotifyThreadParam tpE{ hEvtSettings, hNotify, WM_NOTIFY_SETTINGS };
     CreateThread(NULL, 0, NotifyThreadProc, &tpS, 0, NULL);
@@ -393,6 +568,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
         DispatchMessageW(&msg);
     }
 
+    lingxi::StatsFlush(); // 退出：未落盘的打字统计（≤20 次）补写
     server.Stop();
     wnd.Shutdown();
     delete engine;

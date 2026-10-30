@@ -23,6 +23,8 @@ inline constexpr SkinDef kSkins[] = {
     { RGB(202, 80, 16),  RGB(250, 234, 224) }, // 2 橙
     { RGB(209, 52, 56),  RGB(251, 232, 232) }, // 3 红
     { RGB(152, 111, 11), RGB(247, 240, 219) }, // 4 金
+    { RGB(112, 76, 44),  RGB(238, 226, 214) }, // 5 茶棕
+    { RGB(186, 26, 79),  RGB(250, 228, 236) }, // 6 玫粉
 };
 constexpr uint32_t kSkinCount = (uint32_t)(sizeof(kSkins) / sizeof(kSkins[0]));
 
@@ -31,6 +33,19 @@ inline const SkinDef& UiSkin(uint32_t idx)
 {
     return kSkins[idx < kSkinCount ? idx : 0];
 }
+
+// ---- 界面字体族（Settings.uiFont 可选；候选窗/浮层共用）----
+inline constexpr const wchar_t* kUiFontFaces[] = {
+    L"Microsoft YaHei UI", // 0 微软雅黑（默认）
+    L"SimSun",             // 1 宋体
+    L"DengXian",           // 2 等线
+    L"Segoe UI",           // 3 Segoe UI
+};
+inline constexpr const wchar_t* kUiFontNames[] = {
+    L"微软雅黑", L"宋体", L"等线", L"Segoe UI",
+};
+constexpr uint32_t kUiFontCount =
+    (uint32_t)(sizeof(kUiFontFaces) / sizeof(kUiFontFaces[0]));
 
 // ---- WinUI 中性灰阶（浅色主题）----
 constexpr COLORREF kUiBg           = RGB(243, 243, 243); // 窗体底

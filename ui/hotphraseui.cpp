@@ -441,4 +441,16 @@ void ShowHotPhraseWindow(HINSTANCE hInst, HWND hParent)
     SetFocus(hHot);
 }
 
+std::wstring HotPhraseDataPath()
+{
+    return HotPhrasePathW(); // 同 TU 匿名命名空间助手，此处可见
+}
+
+void NotifyHotPhrasesChanged()
+{
+    // 备份导入等外部改写存储文件后手动触发（SaveHotPhrases 自动触发；
+    // 回调由 LingxiUI main 绑定为"注销→重读→重注册全部短语热键"）
+    if (g_hpChanged) g_hpChanged();
+}
+
 } // namespace lingxi

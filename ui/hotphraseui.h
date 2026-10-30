@@ -26,6 +26,8 @@ constexpr size_t kMaxHotPhrases = 24;
 std::vector<HotPhrase> LoadHotPhrases(); // 缺文件/解析失败 → 空
 bool SaveHotPhrases(const std::vector<HotPhrase>& entries);
 std::wstring FormatHotkey(uint32_t mods, uint32_t vk); // "Ctrl + Alt + 1"
+std::wstring HotPhraseDataPath();  // 存储文件全路径（设置备份随行导出用）
+void NotifyHotPhrasesChanged();    // 外部改写存储文件后触发回调（备份导入重注册热键）
 
 // 快捷短语管理窗口（单例；重复调用仅前置已建窗口）
 void ShowHotPhraseWindow(HINSTANCE hInst, HWND hParent);

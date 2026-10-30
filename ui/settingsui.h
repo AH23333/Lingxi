@@ -21,6 +21,8 @@ void SetUserDictReloadCallback(std::function<void()> cb);
 void SetShowSymbolsCallback(std::function<void()> cb);
 // 注册"设置已保存"回调，由 main 绑定（用于同步热键等需随设置变化的状态）。
 void SetSettingsChangedCallback(std::function<void()> cb);
+// 注册"切换候选窗位置固定"回调，由 main 绑定到 CandWindow::TogglePin（托盘菜单勾选项）。
+void SetPinToggleCallback(std::function<void()> cb);
 
 // 候选词右键词典操作类型（候选窗右键菜单入口，2026-10-29 补齐遗忘需求）。
 enum class CandDictOp
@@ -40,4 +42,10 @@ bool UserDictHasWord(const std::wstring& word);
 bool ApplyCandidateDictOp(const std::wstring& word, const std::wstring& keyHint,
                           CandDictOp op);
 
+// 推断汉字词的全拼键（小写连写；非汉字/推断失败返回空）——右键"查拼音"用。
+std::wstring InferWordPinyin(const std::wstring& word);
+
 } // namespace lingxi
+
+// --diagnostics 全文（main.cpp 实现；打字统计窗"导出诊断报告"复用）
+std::wstring BuildDiagnosticsText();
