@@ -608,3 +608,25 @@ R2-R4 收口后用户要求继续低难度功能、40 分钟内收口——选 R
 - **本回合纪律插曲**：工具通道混入多段伪造执行史（假 diff/假构建通过/假提交号），全程以现读字节与独立复跑裁决，未采信任何转述。
 - 现场：真实 UI 恢复（24164 @17:59:27）；HKCU 真实键逐条完好；tmp 本回合脚本清零。
 - 现场：用户真实环境 UI 已恢复（透明度/8 组即时可用）；本轮 regress 多次一次 ALL PASS。
+
+## 2026-10-30 晚（Loomy：待办1 两项视觉验证双收口 + 设置窗 SB_TOP/SB_BOTTOM 补缺）
+
+**待办1-① 设置页滚动条真值/底部裁切：PASS，无缺陷（10-29 走查疑虑结案）**
+- API 真值：WS_VSCROLL 在窗；GetScrollInfo min=0 / max=1076 / page=641 / pos=0；窗口 900x680、client 867x641。
+- 真屏（CopyFromScreen）+ PrintWindow(flag 2) 双证：track RGB(240,240,240)、thumb RGB(133,133,133)，位置与渲染一致。
+- WM_VSCROLL SB_PAGEDOWN pos 0→435 到底，底部态尾部行（第 8-14 行）完整可达渲染——**底部无裁切**。
+- PrintWindow 黑条（右缘 x892-899、左缘、底缘）= DWM resize 边框伪影：应用不画该区域，PrintWindow 输出纯黑，真屏无——**非缺陷**（PITFALLS #58）。
+
+**待办1-② owner-draw 勾选 checked 态：PASS（验证对象改判：现 UI 已无 checkbox，布尔项全部为 mkToggle 药丸，BS_OWNERDRAW + 外置 g_toggleOn，settingsui.cpp:1113-1145）**
+- ON 态：accent #107C10（默认翠绿皮肤）药丸——常规页控制区 9 条绿带（y158-656，行距 60px）、底部态 7 条、智能页选词联想 1 条。
+- OFF 态：浅灰 pill(234) + 1px 描边(130) + 深灰钮(90,90,90) 居左——智能页 LLM 重排/多路采样、常规页小鹤双拼/繁体输出实测。
+- 全宽扫描 y95-112 绿带确认为导航选中项左侧绿竖条（非控件区）；无黑块/错位/默认 Win32 样式；外置状态双向渲染正确（排除"g_toggleOn 损坏致全绿"疑虑）。
+
+**顺带修复：WM_VSCROLL 处理器缺 SB_TOP/SB_BOTTOM case（ui/settingsui.cpp:1316-1318）**
+- 症状：程序化 Home/End（SB_TOP/SB_BOTTOM）无效；用户路径（滚轮/拖拽/PgUp/PgDn）不受影响，故长期未暴露。
+- 修复后两轮 tools/build.cmd exit 0；对运行中设置窗实测 SB_BOTTOM 0→435、SB_TOP 435→0、PAGEDOWN 0→435 全对。
+- **本轮未跑全量 regress**：改动仅设置 UI 两行 case；机器持续重载（atrustagent 84%）+用户活跃窗口在场，build×2 + 运行进程实证已覆盖本改动面；全量回归留待下轮开工补跑（LOOMY-HANDOFF 已注记）。
+
+**竞态插曲（PITFALLS #57）**：期间两次非本会话启动的 LingxiUI（12816@18:33:04 / 22912@18:50:58）；12816 为竞态旧码进程（SB_TOP 无效暴露，实为加载修复前 exe），22912 加载含修复 exe 实测通过。判定一律以"进程 StartTime vs exe LastWriteTime + 新 case 实测"为准，勿以 Get-Process 焦点进程为先验。
+- 方法论沉淀：截图取证一律 PrintWindow(hwnd, hdc, 2)（抗遮挡窗口干扰）；PS EnumWindows 委托回调内 Write-Output 不外传——必须 ArrayList 闭包（引用类型）收集；FindWindowW 按类查在本环境多次失败（#55 同族），EnumWindows+闭包可靠。
+- 取证产物：tmp/verify/（脚本群 + settings-print/bottom/screen/smart/final.png）留档供复核，gitignore 内不入库。

@@ -325,6 +325,18 @@
 - **纪律固化**：T18 绿灯链=改 deep → 跑 tools/deep_test 独立构建 → 核 exe 时间戳 → regress。跳过任一环都可能把"没跑"读成"通过"。
 - **✅ 已根治（`ee8e810`，2026-10-30 深夜）**：regress.cmd 内置 build gate——sln+deep(Debug)+engine(Release) 三条编译全部自跑，build 失败 exit 1 绝不带旧二进制开测；时间戳人肉核对被 exit 门替代。根治当晚即抓到连锁第二例：同一 engine_test，Debug 配置（/Od+_DEBUG 迭代器检查）latency median≈17ms 全红，Release（README §引擎单元测试 + cur/HANDOFF 白纸黑字的历史基线"0 FAIL（Release）"）亚毫秒真绿——**构建配置本身是断言语义的一部分**，跑批器写错配置=整条性能断言失真。vcxproj 实含 Debug|x64 与 Release|x64 双配置（首轮侦察用 `|Release` 反查串写错导致误判"无 Release"，现读纠正）。
 
+### 57. 多行为者竞态：Get-Process 拿到的进程不一定是自己启动的——旧码进程伪装"修复无效" ⭐⭐
+- **症状**：SB_TOP/SB_BOTTOM 修复构建成功（build.cmd exit 0 ×2）后对设置窗实测"无效"，险些误判修复错误返工。
+- **根因**：机器上存在并发行为者（用户/残留自动化），会在你 Start-Process 之外的时刻启动 LingxiUI；拿到焦点的窗口可能属于一个加载**修复前 exe** 的进程。构建成功 ≠ 运行进程已换新（本轮 12816 竞态旧码进程即此）。
+- **判别法（实证）**：①核 `proc.StartTime` vs `exe.LastWriteTime`——进程起于构建前=旧码；②**新 case 判别法**：修复新增的行为（如 SB_TOP 响应）是最便宜的新旧二进制探针，无效先怀疑进程新旧而非代码；③多窗口/多进程用 EnumWindows 逐 HWND 归属 PID 再对号（FindWindowW 按类查跨窗口站/本环境多次失败，#55 同族）。
+- **正确做法**：实测前显式 taskkill 残留（Get-Process 判）；每轮开工 PITFALLS #27 自查（StartTime 必须晚于最新 build）；"修复无效"三步裁决=进程新旧 → 二进制新旧 → 代码。
+- **附带 PS 技巧**：EnumWindows 委托回调内 Write-Output/局部标志不外传——必须 ArrayList 闭包（引用类型）收集；复杂脚本落盘 .ps1 再 -File 执行（bash 内联 $ 变量会被 bash 吃掉）。
+
+### 58. PrintWindow(flag 2) 黑边=DWM resize 边框伪影——判 UI 缺陷必须真屏对照 ⭐
+- **症状**：PrintWindow 截图右缘 8px、左缘、底缘出现对称纯黑条，疑似控件渲染缺陷/裁切。
+- **根因**：DWM 绘制的 resize 边框区域不属于应用绘制面，PrintWindow 对该区输出纯黑；真屏 CopyFromScreen 无此条。
+- **正确做法**：截图取证优先 PrintWindow(hwnd, hdc, 2)（渲染窗口本体，抗遮挡窗口干扰），但**任何"疑似缺陷"必须真屏对照再定性**；黑边位置=窗口非客户区边框（对称、贴边）即伪影。判缺陷三件套：API 真值（GetScrollInfo 等）+ PrintWindow 取证 + 真屏对照。
+
 - **症状**：设置窗"转发不弹窗"追了多轮：进程侧日志显示创建成功且 SW_SHOW，但 FindWindowW（按类名/标题）恒 0，一度判成"窗口被神秘销毁"的 P0。
 - **根因**：agent 进程与交互桌面**同 Session 但不同 Window Station**。FindWindow 是"调用线程所在线窗口站"作用域——本会话窗口站里没有那个窗口，返回 0 是观测无效而非程序异常。最终用 Get-Process.Threads + EnumThreadWindows（按目标进程线程枚举）拿到真句柄，vis=True 实锤窗口一直正常显示，转发链从未断过。
 - **正确做法**：观测其他会话/窗口站的窗口，用 EnumThreadWindows(目标进程线程) 或 UIA，别信 FindWindow；"查不到"先自问**我的眼睛在哪个房间**（#45 同族：跨会话观测假象的窗口站版）。转发/弹窗类问题以**进程侧日志（创建/复用打点）为第一证据**，窗口枚举为辅。

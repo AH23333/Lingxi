@@ -8,6 +8,29 @@
 
 ## 0. 一句话现状
 
+## 📌 额度收口快照（2026-10-30 晚·待办1 视觉验证双收口，下一轮从这里开工）
+
+**现场**：HEAD=本轮 fix+docs 两笔（见 git log 现读）；工作区收口后干净。**待办1 两项 PASS 结案**：
+①设置页滚动条真值/底部裁切——GetScrollInfo(0/1076/641/0) + 真屏/PrintWindow 双截图 + SB_PAGEDOWN 到底
+尾部行完整渲染，**无裁切**（PrintWindow 黑条=DWM resize 边框伪影，真屏对照排除，PITFALLS #58）；
+②owner-draw 勾选 checked 态——现 UI 布尔项已全部是 mkToggle 药丸（BS_OWNERDRAW+外置 g_toggleOn），
+ON(#107C10 绿带)/OFF(灰 pill+深灰钮) 两态多页实测渲染正确，无黑块/错位/默认 Win32 样式。
+
+**顺带修复**：settingsui WM_VSCROLL 缺 SB_TOP/SB_BOTTOM case（程序化 Home/End 无效；滚轮/拖拽/
+PgUp/PgDn 用户路径不受影响）——补 case 后 build.cmd exit 0 ×2 + 对运行中设置窗实测 0→435→0 全对。
+
+**⚠️ 本轮未跑全量 regress**（改动仅设置 UI 两行 case + 机器重载 atrustagent 84% + 用户活跃窗口在场）：
+**下轮开工第一件事：`tools\regress.cmd` 补跑**，绿了才开新待办。
+
+**下一轮待办（按优先级）**：
+1. **regress.cmd 全量补跑**（本轮缓跑账）。
+2. 待办2：pf_shot 补 dark 态与 hover/点选流截图；联想态截图走查（cand 模式复用）。
+3. 待办3（GAP R6 长尾）：U 模式拆字、以词定字、候选注音；联想多段呈现优化（§3 外观尾巴）。
+
+**竞态纪律（本轮新坑，PITFALLS #57）**：机器有并发行为者会启动 LingxiUI（本轮 12816 竞态旧码进程
+伪装"修复无效"）——实测失败先核 proc.StartTime vs exe LastWriteTime + 新 case 判别法，别先怀疑代码。
+取证产物留档 tmp/verify/（gitignore，可复核后清理）。
+
 ## 📌 额度收口快照（2026-10-30 深夜·联想落地，下一轮从这里开工）
 
 **现场**：HEAD=`ee8e810`（联想 `04d589b` → 文档 `868b455` → build gate `ee8e810`），
