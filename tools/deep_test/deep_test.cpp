@@ -183,6 +183,12 @@ public:
     virtual ~TestStore() { if (_sink) _sink->Release(); }
 
     const std::wstring& Text() const { return _buf; }
+    // T19 光标契约断言用：只读选区（严格 store 下唯一能反映"DLL 是否显式
+    // SetSelection"的真值来源）
+    const TS_SELECTION_ACP& Sel() const { return _sel; }
+    // 宿主侧重置选区（真实 app 语义：全删后光标归零）。严格 store 的文本变更
+    // 不再顺手推光标，宿主侧操作必须显式管理自己的选区。
+    void ResetSelection() { _sel.acpStart = 0; _sel.acpEnd = 0; _sel.style.ase = (TsActiveSelEnd)TF_AE_NONE; _sel.style.fInterimChar = FALSE; }
 
     STDMETHODIMP QueryInterface(REFIID riid, void** ppv) override
     {
@@ -228,7 +234,11 @@ public:
     STDMETHODIMP GetSelection(ULONG ulIndex, ULONG ulCount, TS_SELECTION_ACP* pSelection, ULONG* pcFetched) override
     {
         if (ulIndex != TF_DEFAULT_SELECTION || ulCount == 0) return E_INVALIDARG;
-        pSelection[0] = _sel;
+        // 防御性夹取（真实 store 同款）：宿主侧删文本后选区绝不越文档尾
+        TS_SELECTION_ACP s = _sel;
+        if (s.acpStart > (LONG)_buf.size()) s.acpStart = (LONG)_buf.size();
+        if (s.acpEnd > (LONG)_buf.size()) s.acpEnd = (LONG)_buf.size();
+        pSelection[0] = s;
         *pcFetched = 1;
         return S_OK;
     }
@@ -272,7 +282,11 @@ public:
         if (acpEnd == -1) acpEnd = (LONG)_buf.size();
         _buf = _buf.substr(0, acpStart) + std::wstring(pchText, cch) + _buf.substr(acpEnd);
         if (pChange) { pChange->acpStart = acpStart; pChange->acpOldEnd = acpEnd; pChange->acpNewEnd = acpStart + (LONG)cch; }
-        _sel.acpStart = _sel.acpEnd = acpStart + (LONG)cch;
+        // 严格 store（2026-10-30 晚）：文本变更一律不动选区——模拟 Win11 记事本
+        //（WinUI CoreText 适配层）的真实行为。旧版"SetText 顺手推光标到文末"是
+        // 宽松宿主假设，掩盖了 DLL 不显式 SetSelection 的缺陷（上屏后光标停在
+        // 原位、后续输入插到旧光标处，用户真机报障）。光标前进从此只信 DLL 的
+        // 显式 SetSelection（T19 契约断言）。
         NotifyTextChange();
         return S_OK;
     }
@@ -287,12 +301,13 @@ public:
     STDMETHODIMP InsertTextAtSelection(DWORD, const WCHAR* pchText, ULONG cch, LONG* pacpStart, LONG* pacpEnd, TS_TEXTCHANGE* pChange) override
     {
         LONG pos = _sel.acpEnd;
+        if (pos > (LONG)_buf.size()) pos = (LONG)_buf.size(); // 同 GetSelection 防御性夹取
         _buf.insert((size_t)pos, pchText, cch);
         *pacpStart = pos;
         *pacpEnd = pos + (LONG)cch;
         if (pChange) { pChange->acpStart = pos; pChange->acpOldEnd = pos; pChange->acpNewEnd = pos + (LONG)cch; }
-        _sel.acpStart = pos;
-        _sel.acpEnd = pos + (LONG)cch;
+        // 严格 store：插入不动选区（同 SetText 注释——Win11 记事本行为）。
+        // DLL 必须显式 SetSelection 推光标，否则 T19/T14/T18 全线现形。
         NotifyTextChange();
         return S_OK;
     }
@@ -346,6 +361,9 @@ static void PumpMessages()
 }
 
 static TfClientId g_cid = 0;
+// 严格 store 全局指针：宿主侧操作（清空文本后重置选区）需要直达 store。
+// 模拟真实 app 的宿主职责——严格 store 不再"顺手"推光标，宿主必须自理。
+static TestStore* g_pStore = nullptr;
 static ITfInputProcessorProfiles* g_pIpp = nullptr;
 static HWND g_hwndHost = NULL;
 
@@ -458,6 +476,12 @@ static bool ClearFocusedText(ITfThreadMgr* pTm)
             pCtx->RequestEditSession(g_cid, pSession, TF_ES_ASYNCDONTCARE | TF_ES_READWRITE, &hrSession);
         pSession->Release();
         ok = SUCCEEDED(hrSession);
+        // 宿主侧选区自理（严格 store 语义，2026-10-30 晚）：全删后光标归零。
+        // 真实 app（如记事本）删除全部文本时由宿主把光标放到 0；旧宽松 store
+        // 由 SetText 顺手推光标，如今文本变更不动选区，这步成为宿主必做动作，
+        // 否则陈旧选区越界，下轮插入/读取行为失真。
+        if (ok && g_pStore)
+            g_pStore->ResetSelection();
         pCtx->Release();
     }
     pDoc->Release();
@@ -749,6 +773,7 @@ int wmain()
         Report(SUCCEEDED(hr), L"ThreadMgr::Activate");
 
         pStore = new TestStore();
+        g_pStore = pStore;
         hr = pTm->CreateDocumentMgr(&pDoc);
         Report(SUCCEEDED(hr), L"CreateDocumentMgr");
         TfEditCookie ecStore = 0;
@@ -1597,6 +1622,76 @@ int wmain()
                          iFirst, iSecond, iNoRaw, iType);
             Report(ok1st && ok2nd && noRawB && typeOkB,
                    L"T18b 联想期新组合精确接管", d18b);
+        }
+        // ---- T19 上屏光标契约（2026-10-30 晚用户真机报障：Win11 记事本上屏后
+        // 光标停留原位，后续输入插到旧光标处）----
+        // 本 harness 的 TestStore 自本版起严格化（模拟记事本/WinUI CoreText 适配层：
+        // 文本变更一律不动选区），光标前进只能来自 DLL 的显式 SetSelection：
+        // a) 首次上屏后：文本非空全汉字，且选区折叠于文本尾（滞留 0=报障现场镜像）；
+        // b) 不等联想窗口，紧接第二次上屏：新文本必须接在旧文本之后（顺序不乱，
+        //    旧文本是前缀），选区同步推到新文本尾——"光标停在原位"的直接判据。
+        // 不耦合字典首选字：N1/N2 均为泛化长度断言。
+        auto hex19 = [](const std::wstring& s) {
+            std::wstring h;
+            wchar_t buf[8];
+            for (wchar_t ch : s) { swprintf_s(buf, L"%04X,", (unsigned)ch); h += buf; }
+            return h;
+        };
+        {
+            EnsurePinyinMode(pKm);
+            ClearFocusedText(pTm);
+            const wchar_t* seqA = L"nihao";
+            bool typeOkA = true;
+            for (const wchar_t* q = seqA; *q; q++)
+            {
+                wchar_t s[2] = { *q, 0 };
+                if (!TypeLetters(pKm, s)) { typeOkA = false; break; }
+                Sleep(60);
+            }
+            PumpMessages();
+            Sleep(150);
+            TypeKey(pKm, VK_SPACE);   // 首次上屏
+            PumpMessages();
+            Sleep(300);
+            std::wstring t1 = ReadFocusedText(pTm);
+            const TS_SELECTION_ACP& s1 = g_pStore->Sel();
+            bool text1 = !t1.empty() && t1[0] >= 0x4E00 && t1[0] <= 0x9FFF;
+            bool caret1 = s1.acpStart == (LONG)t1.size() && s1.acpEnd == (LONG)t1.size();
+            wchar_t d19a[300];
+            _snwprintf_s(d19a, _TRUNCATE,
+                         L"t1[%u]=%s sel={%d,%d} text=%d caret=%d ok=%d",
+                         (unsigned)t1.size(), hex19(t1).c_str(),
+                         (int)s1.acpStart, (int)s1.acpEnd,
+                         (int)text1, (int)caret1, (int)typeOkA);
+            Report(text1 && caret1 && typeOkA, L"T19a 上屏后光标推至文本尾", d19a);
+
+            // b) 不留联想窗口（'h' 立即撤销联想，见 T18b），紧接第二次上屏
+            const wchar_t* seqB = L"hao";
+            bool typeOkB = true;
+            for (const wchar_t* q = seqB; *q; q++)
+            {
+                wchar_t s[2] = { *q, 0 };
+                if (!TypeLetters(pKm, s)) { typeOkB = false; break; }
+                Sleep(60);
+            }
+            PumpMessages();
+            Sleep(150);
+            TypeKey(pKm, VK_SPACE);   // 第二次上屏
+            PumpMessages();
+            Sleep(300);
+            std::wstring t2 = ReadFocusedText(pTm);
+            const TS_SELECTION_ACP& s2 = g_pStore->Sel();
+            bool prefix = t2.size() >= t1.size() && t2.compare(0, t1.size(), t1) == 0;
+            bool grew = t2.size() > t1.size();
+            bool caret2 = s2.acpStart == (LONG)t2.size() && s2.acpEnd == (LONG)t2.size();
+            wchar_t d19b[300];
+            _snwprintf_s(d19b, _TRUNCATE,
+                         L"t2[%u]=%s sel={%d,%d} prefix=%d grew=%d caret=%d ok=%d",
+                         (unsigned)t2.size(), hex19(t2).c_str(),
+                         (int)s2.acpStart, (int)s2.acpEnd,
+                         (int)prefix, (int)grew, (int)caret2, (int)typeOkB);
+            Report(prefix && grew && caret2 && typeOkB,
+                   L"T19b 连续上屏顺序与光标契约", d19b);
         }
 
     } while (false);

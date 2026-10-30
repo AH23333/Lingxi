@@ -789,6 +789,24 @@ static bool RunScenario()
             PumpMessages();
         }
         std::wstring t = ReadFocusedText(pTm);
+        // [DIAG] 失败也打印（原诊断块在 fail-fast 之后，失败时永远看不到现场）：
+        // store=宿主store直读 focused=焦点文档读 ourDoc/focusDoc=文档指针对照
+        // foreWnd/cls=前台窗口 hwndFocus=Win32焦点 —— 用于定位"插入成功但读回空"
+        // 的分叉点（焦点文档被换 or 插入丢失 or 读取走了镜像）。
+        {
+            ITfDocumentMgr* pFocDoc = nullptr;
+            ITfContext* pFocCtx = nullptr;
+            pTm->GetFocus(&pFocDoc);
+            if (pFocDoc) { pFocDoc->GetTop(&pFocCtx); }
+            HWND hwndFore = GetForegroundWindow();
+            wchar_t foreCls[64] = L"";
+            if (hwndFore) GetClassNameW(hwndFore, foreCls, 64);
+            wprintf(L"[DIAG] store='%ls' focused='%ls' ourDoc=%p focusDoc=%p ourCtx=%p focusCtx=%p foreWnd=%p(%ls) hwndFocus=%p\n",
+                    pStore->Text().c_str(), t.c_str(), (void*)pDoc, (void*)pFocDoc,
+                    (void*)pCtx, (void*)pFocCtx, (void*)hwndFore, foreCls, (void*)GetFocus());
+            if (pFocCtx) pFocCtx->Release();
+            if (pFocDoc) pFocDoc->Release();
+        }
         wprintf(L"[INFO] pass-through focused='%ls' (want 'mor')\n", t.c_str());
         bool passThroughOk = passThrough && t == L"mor";
         Report(passThroughOk, "typing pass-through", t.c_str());
