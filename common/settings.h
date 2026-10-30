@@ -5,6 +5,7 @@
 // 缺键 = 默认值。UI 保存、DLL/UI 各自读取。
 //
 #include <cstdint>
+#include <string>
 
 namespace lingxi {
 
@@ -24,9 +25,10 @@ struct Settings
                                   // Ctrl 3 CapsLock（KeyDown 即吞，不翻转大小写）
                                   // 4 仅 Ctrl。
                                   // 无拼音时单击切换中英文（临时英文）并弹"中/英"提示。
-                                  // 注册表双键兼容：ToggleMode（新，优先）+ ShiftToggle
-                                  // （旧 bool，仍写——旧版 UI/DLL 只读它，两边语义一致）。
-    bool vMode = true;            // v 模式：中文下首字母 v 直通英文
+                                   // 注册表双键兼容：ToggleMode（新，优先）+ ShiftToggle
+                                   // （旧 bool，仍写——旧版 UI/DLL 只读它，两边语义一致）。
+                                   // （v 模式设置已退役：v 临时英文现为全拼默认行为，
+                                   //   v 与普通字母一致走拼音组合，空格/回车原样上屏。）
     bool shuangpin = false;       // 小鹤双拼：每音节两键（声母键+韵母键）
     bool symbolHotkey = false;   // 全局热键 Ctrl+Shift+B 调出符号面板（独占该组合键）。
                                   // 默认关：全局独占会占用应用自身快捷键（Edge 插件等
@@ -40,13 +42,30 @@ struct Settings
     bool assocAfterPick = true;   // 选词联想（GAP §11）：中文全量上屏/联想点选上屏后自动弹联想
                                    // 候选（可空格连续输出，对标 MS）；任何无组合按键即撤销。默认开。
     uint32_t skinIndex = 0;        // 候选窗配色（ui/uistyle.h kSkins）：0 翠绿（默认）
+    uint32_t uiFont = 0;           // 界面字体族（ui/uistyle.h kUiFontFaces）：
+                                   // 0 微软雅黑（默认）1 宋体 2 等线 3 Segoe UI
     uint32_t candidateOpacity = 100; // 候选窗不透明度%（70/80/90/100），GAP §3 透明度定制
-                                   // 1 青碧 2 橙 3 红 4 金——全 UI 统一换肤
+                                   // 皮肤 0..6：1 青碧 2 橙 3 红 4 金 5 茶棕 6 玫粉
+                                   // ——全 UI 统一换肤
+    uint32_t candidatePinned = 0;  // 候选窗位置固定：0 跟随光标（默认） 1 固定在
+                                   // candidatePinX/Y（候选窗"固"按钮/拖拽回显行或工具条设置）
+    int candidatePinX = 0;         // 固定位置屏幕坐标（负值合法：多显示器左侧屏）
+    int candidatePinY = 0;
+    std::wstring recentSymbols;    // 符号面板"最近"页：\x1F 分隔、最新在前、≤12 项（面板维护）
+    uint32_t lastSettingsPage = 0; // 设置窗：上次查看页（重开直达；越界回首页）
+    uint32_t lastSymbolCat = 1;    // 符号面板：上次查看的静态分类标签（动态页不记忆）
+    int setWinX = -1;              // 设置窗上次位置/尺寸（-1=未记录，创建时回居中默认）
+    int setWinY = -1;
+    int setWinW = 0;
+    int setWinH = 0;
 };
 
 Settings LoadSettings();
 void SaveSettings(const Settings& s);
 // 只写与当前落盘值不同的键（防"整页回写"把未同步/未加载的控件状态覆盖全部设置）
 void SaveSettingsDiff(const Settings& s);
+// 恢复默认：删除当前（沙箱感知）键下全部设置值，LoadSettings 随即回默认。
+// 用户词典/热键短语在 APPDATA 文本文件，不受影响。
+void ResetSettingsToDefaults();
 
 } // namespace lingxi

@@ -502,7 +502,7 @@ static bool TypeKey(ITfKeystrokeMgr* pKm, WPARAM vk, bool expectEaten = true)
     return eaten != FALSE || !expectEaten;
 }
 
-// v 模式直通键：TestKeyDown 吃（保证 KeyDown 回访做状态迁移）→ KeyDown 放行
+// 放行键：TestKeyDown 吃（保证 KeyDown 回访做状态迁移）→ KeyDown 返回放行
 // （宿主自行上屏；本 harness 无宿主处理逻辑，放行键不落盘）
 static bool TypePassKey(ITfKeystrokeMgr* pKm, WPARAM vk)
 {
@@ -1292,114 +1292,78 @@ int wmain()
                 Report(backOk && escOk, L"T15 退格缩减(iu→i→一)+Esc取消无残留", d);
             }
 
-            // v 前缀语义（用户报"中文下 v 打不出/vlog 无法用"修复）：v 被吃（悬账
-            // _vDebt）、首个字母消费悬账并放行（TestKeyDown 吃+KeyDown 放行）、
-            // 空格退出放行——全程无文本落盘。悬账若未被 'k' 消费，空格会补写
-            // "v" 上屏，t 非空即失败
+            // v 组合语义（用户报"中文下 v 打不出/vlog 无法用"重设计修复）：
+            // v 与普通字母一致进拼音组合（"v" 非法拼音 → 0 候选 echo 回显），
+            // 空格 PinyinCommitRaw 原样上屏 "vk"。全程 DLL 编辑会话写文本，
+            // 零 pfEaten=FALSE 放行依赖（旧"悬账+放行"机制真机吞键=报障根因）
             {
                 EnsurePinyinMode(pKm);
                 ClearFocusedText(pTm);
-                bool vEaten = TypeKey(pKm, (WPARAM)L'v', true);
+                bool vEaten = TypeKey(pKm, (WPARAM)L'v', true);   // v 进组合（吃）
                 PumpMessages();
-                bool kPass = TypePassKey(pKm, (WPARAM)L'k');
+                bool kEaten = TypeKey(pKm, (WPARAM)L'k', true);   // 字母进组合（吃）
                 PumpMessages();
-                bool spPass = TypePassKey(pKm, VK_SPACE);
+                bool spEaten = TypeKey(pKm, VK_SPACE, true);      // 空格提交原文（吃）
                 PumpMessages();
-                Sleep(150);
+                Sleep(250);
                 std::wstring t = ReadFocusedText(pTm);
                 wchar_t d[240];
-                _snwprintf_s(d, _TRUNCATE, L"vEaten=%d kPass=%d spPass=%d t[%u]=%s",
-                             (int)vEaten, (int)kPass, (int)spPass,
+                _snwprintf_s(d, _TRUNCATE, L"vEaten=%d kEaten=%d spEaten=%d t[%u]=%s",
+                             (int)vEaten, (int)kEaten, (int)spEaten,
                              (unsigned)t.size(), hexOf15(t).c_str());
-                Report(vEaten && kPass && spPass && t.empty(),
-                       L"T15 v前缀：v吃、字母消费悬账放行、空格退出无补写", d);
+                Report(vEaten && kEaten && spEaten &&
+                       t.size() == 2 && t[0] == L'v' && t[1] == L'k',
+                       L"T15 v组合：v+k+空格原样上屏'vk'（vlog 语义）", d);
             }
 
-            // 裸 v 补账（核心修复："v"+空格 → "v"）：非字母键先补写悬账再放行
+            // 裸 v 上屏（"v"+空格 → "v"）
             {
                 EnsurePinyinMode(pKm);
                 ClearFocusedText(pTm);
                 bool vEaten = TypeKey(pKm, (WPARAM)L'v', true);
                 PumpMessages();
-                bool spPass = TypePassKey(pKm, VK_SPACE);
+                bool spEaten = TypeKey(pKm, VK_SPACE, true);
                 PumpMessages();
-                Sleep(200);
+                Sleep(250);
                 std::wstring t = ReadFocusedText(pTm);
                 wchar_t d[240];
-                _snwprintf_s(d, _TRUNCATE, L"vEaten=%d spPass=%d t[%u]=%s",
-                             (int)vEaten, (int)spPass,
+                _snwprintf_s(d, _TRUNCATE, L"vEaten=%d spEaten=%d t[%u]=%s",
+                             (int)vEaten, (int)spEaten,
                              (unsigned)t.size(), hexOf15(t).c_str());
-                Report(vEaten && spPass && t.size() == 1 && t[0] == L'v',
-                       L"T15 裸v：v+空格补写上屏'v'", d);
+                Report(vEaten && spEaten && t.size() == 1 && t[0] == L'v',
+                       L"T15 裸v：v+空格上屏'v'", d);
             }
 
-            // v+退格=撤销触发的 v（悬账态退格被吃，宿主无字母可删、无文本）
-            // + 词中退格=放行且保持 v 模式（'u' 仍直通；若模式已退，'u' 会进
-            // 拼音组合，空格上屏"无"，t 非空即失败）
+            // v 退格撤销 / Esc 取消（组合清空无残留），随后回正常拼音 i→一 / iu→有
             {
-                EnsurePinyinMode(pKm);
-                ClearFocusedText(pTm);
-                bool vEaten = TypeKey(pKm, (WPARAM)L'v', true);
-                PumpMessages();
-                bool bkEaten = TypeKey(pKm, VK_BACK, true); // 悬账退格：吃（撤销 v）
-                PumpMessages();
-                std::wstring t = ReadFocusedText(pTm);
-                bool undoOk = vEaten && bkEaten && t.empty();
-
-                EnsurePinyinMode(pKm);
-                ClearFocusedText(pTm);
-                TypeKey(pKm, (WPARAM)L'v', true);
-                PumpMessages();
-                bool bPass = TypePassKey(pKm, (WPARAM)L'b'); // 消费悬账
-                PumpMessages();
-                bool bkPass = TypePassKey(pKm, VK_BACK);     // 删字母，保持 v 模式
-                PumpMessages();
-                bool uPass = TypePassKey(pKm, (WPARAM)L'u'); // 仍 v 模式 → 直通
-                PumpMessages();
-                bool spPass = TypePassKey(pKm, VK_SPACE);    // 退出
-                PumpMessages();
-                Sleep(150);
-                std::wstring t2 = ReadFocusedText(pTm);
-                bool stayOk = bPass && bkPass && uPass && spPass && t2.empty();
-                wchar_t d[320];
-                _snwprintf_s(d, _TRUNCATE, L"vEaten=%d bkEaten=%d undo[%u]=%s | "
-                             L"bPass=%d bkPass=%d uPass=%d spPass=%d stay[%u]=%s",
-                             (int)vEaten, (int)bkEaten, (unsigned)t.size(), hexOf15(t).c_str(),
-                             (int)bPass, (int)bkPass, (int)uPass, (int)spPass,
-                             (unsigned)t2.size(), hexOf15(t2).c_str());
-                Report(undoOk && stayOk,
-                       L"T15 v退格：悬账撤销吃掉/词中退格放行保持模式", d);
-            }
-
-            // vMode 退出通路（用户报"v 后按键失灵"的反向验证）：
-            // Esc / 退格(悬账) 退出后回拼音组合，i→一 / iu→有
-            {
-                struct T15Exit { WPARAM exitKey; bool exitEaten; const wchar_t* keys; wchar_t expect; };
-                const T15Exit exits[] = {
-                    { VK_ESCAPE, false, L"i",  0x4E00 }, // Esc 放行退出 → 一
-                    { VK_BACK,   true,  L"iu", 0x6709 }, // 悬账退格吃掉（撤销 v）→ 有
+                struct T15Cancel { WPARAM cancelKey; const wchar_t* keys; wchar_t expect; };
+                const T15Cancel cancels[] = {
+                    { VK_BACK,   L"i",  0x4E00 }, // v→退格：组合缩减到空=取消 → 一
+                    { VK_ESCAPE, L"iu", 0x6709 }, // v→Esc：组合取消 → 有
                 };
-                for (const auto& ec : exits)
-            {
-                EnsurePinyinMode(pKm);
-                ClearFocusedText(pTm);
-                    TypeKey(pKm, (WPARAM)L'v', true);   // 进 vMode（悬账）
+                for (const auto& cc : cancels)
+                {
+                    EnsurePinyinMode(pKm);
+                    ClearFocusedText(pTm);
+                    bool vEaten = TypeKey(pKm, (WPARAM)L'v', true);
                     PumpMessages();
-                    bool exitOk = ec.exitEaten ? TypeKey(pKm, ec.exitKey, true)
-                                               : TypePassKey(pKm, ec.exitKey);
+                    bool cancelEaten = TypeKey(pKm, cc.cancelKey, true);
                     PumpMessages();
-                    TypeLetters(pKm, ec.keys);          // 应回拼音组合
+                    std::wstring t = ReadFocusedText(pTm);
+                    bool clean = vEaten && cancelEaten && t.empty();
+                    TypeLetters(pKm, cc.keys);    // 取消后回正常拼音组合
                     PumpMessages();
                     Sleep(400);
                     TypeKey(pKm, VK_SPACE);
                     PumpMessages();
                     Sleep(250);
-                    std::wstring t = ReadFocusedText(pTm);
+                    std::wstring t2 = ReadFocusedText(pTm);
                     wchar_t d[280];
-                    _snwprintf_s(d, _TRUNCATE, L"exit=%04X exitOk=%d keys='%ls' t[%u]=%s expect=%04X",
-                                 (unsigned)ec.exitKey, (int)exitOk, ec.keys,
-                                 (unsigned)t.size(), hexOf15(t).c_str(), (unsigned)ec.expect);
-                    Report(exitOk && t.size() == 1 && t[0] == ec.expect, L"T15 vMode退出后回拼音组合", d);
+                    _snwprintf_s(d, _TRUNCATE, L"cancel=%04X clean=%d keys='%ls' t2[%u]=%s expect=%04X",
+                                 (unsigned)cc.cancelKey, (int)clean, cc.keys,
+                                 (unsigned)t2.size(), hexOf15(t2).c_str(), (unsigned)cc.expect);
+                    Report(clean && t2.size() == 1 && t2[0] == cc.expect,
+                           L"T15 v取消：退格/Esc清组合无残留后回拼音", d);
                 }
             }
 

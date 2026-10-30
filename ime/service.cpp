@@ -378,13 +378,17 @@ void CTextService::OnCandidates(uint32_t ver, uint32_t replaceLen, std::vector<s
     EnterCriticalSection(&_cs);
     if (ver == _verSent)
     {
+        // 同版本二次帧（StartAsyncRerank 重排写回）= 同一批候选的重排，不是
+        // 新批——保持 _pageStart，否则用户翻页中弹回页 1（"翻页乱"）。新批
+        // （_verCands != ver，首帧）才归零回首页。
+        bool rerank = (_verCands == ver);
         _cands = std::move(cands);
         _candCover = std::move(cover);
         _verCands = ver;
         _assocShown = _assocReq;   // 只有联想请求的回包进入联想态（GAP §11）
         _assocReq = false;      // 联想周期闭合（点选连发另行判定 _assocShown）
         _replaceLen = replaceLen;
-        _pageStart = 0; // 新一批候选回到第一页
+        if (!rerank) _pageStart = 0; // 新一批候选回到第一页
         latest = true;
     }
     LeaveCriticalSection(&_cs);
@@ -689,8 +693,8 @@ STDMETHODIMP CTextService::OnSetFocus(BOOL fForeground)
 STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM lParam, BOOL* pfEaten)
 {
     // LINGXI_LOG=1 时的分发取证：是否被调到 + 关键内部态（PITFALLS #19 类问题定位）
-    LX_LOG(L"key", L"OnTestKeyDown vk=0x%02X py=%d tmpEn=%d v=%d fAct=%d",
-           (uint32_t)wParam, (int)_pinyinMode, (int)_tempEnglish, (int)_vMode, (int)_fActivated);
+    LX_LOG(L"key", L"OnTestKeyDown vk=0x%02X py=%d tmpEn=%d fAct=%d",
+           (uint32_t)wParam, (int)_pinyinMode, (int)_tempEnglish, (int)_fActivated);
     // 语言变化（若发生）→ 投递延迟检测；检测本身绝不在按键分发内执行（PITFALLS #18）
     MaybeRedetectPinyinMode();
 
@@ -752,8 +756,8 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LP
 
 STDMETHODIMP CTextService::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM lParam, BOOL* pfEaten)
 {
-    LX_LOG(L"key", L"OnKeyDown vk=0x%02X py=%d tmpEn=%d v=%d fAct=%d",
-           (uint32_t)wParam, (int)_pinyinMode, (int)_tempEnglish, (int)_vMode, (int)_fActivated);
+    LX_LOG(L"key", L"OnKeyDown vk=0x%02X py=%d tmpEn=%d fAct=%d",
+           (uint32_t)wParam, (int)_pinyinMode, (int)_tempEnglish, (int)_fActivated);
     MaybeRedetectPinyinMode(); // 个别应用不走 TestKeyDown
 
     // 中英切换键单击检测（toggleMode：1 Shift / 2 Shift 或 Ctrl / 3 CapsLock / 4 Ctrl）：

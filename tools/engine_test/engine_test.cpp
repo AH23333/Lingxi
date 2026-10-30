@@ -560,13 +560,16 @@ int wmain()
             //      末尾拖一个未打全的音节（残段）时，仍要产出覆盖该残段的候选。
             //      这正是 Prune 旧实现（完整/残段同池抢 K_POS 名额）被挤掉的路径：
             //      旧实现在 "nichifanlemawohenb" 上候选塌到 27 个（残段池被完整池
-            //      吃光配额），分池修复后回到上限 60。
+            //      吃光配额），分池修复后回到上限 60。碎切分拼接闸（tier>0 只出
+            //      词典词）落地后垃圾墙不再填充上限：健康基线 23（首选"你吃饭了
+            //      吗我很吧"，残段 b→吧/不/把/被/并/便/扁 全在，词全真实），
+            //      阈值 40 是垃圾墙时代的计数，按无垃圾基线校准为 20。
             {
                 struct LCase { const wchar_t* in; size_t minLen; size_t minCands; };
                 const LCase longs[] = {
                     { L"womenjintianxiangqugongyuanyiqidakaishui", 8, 5 },  // 12 音节长句
                     { L"zhegewentihenyijiandanwomenyijingtaolunduo", 7, 5 }, // 长句混排
-                    { L"nichifanlemawohenb", 4, 40 },                          // 长句 + 残段（HEAD 塌缩到 27）
+                    { L"nichifanlemawohenb", 4, 20 },                         // 长句 + 残段（垃圾墙清除后基线 23）
                 };
                 for (const auto& lc : longs)
                 {

@@ -209,9 +209,6 @@ private:
     // 空闲点执行（远离 CTF 激活回调与按键分发——见 PITFALLS #17/#18）
     bool _pinyinMode = false;
     bool _tempEnglish = false; // Shift 单击切换的临时英文模式
-    bool _vMode = false;       // v 模式：v 前缀临时英文——触发的 v 被吃，后续字母直通宿主上屏
-    bool _vDebt = false;       // v 模式悬账：触发的 v 的字面值。首个字母消费（v=前缀，"vbug"→"bug"）；
-                               // 非字母键先补写上屏再放行（裸 v："v"+空格→"v "）；退格撤销；Esc 丢弃
     // 中英切换键单击检测（toggleMode：1 Shift / 2 Shift 或 Ctrl / 4 Ctrl）：
     // KeyDown 置位、与其他键（含两个切换键交错，如 Ctrl+Shift 快捷键）组合则
     // 标记 used、KeyUp 按当前模式判定该键是否允许触发切换

@@ -52,6 +52,28 @@ void SetDword(HKEY hKey, const wchar_t* name, DWORD v)
     RegSetValueExW(hKey, name, 0, REG_DWORD, (const BYTE*)&v, sizeof(v));
 }
 
+// REG_SZ 读（上限 2KB 防异常大值；尾部 NUL 剥离）
+bool GetString(HKEY hKey, const wchar_t* name, std::wstring& out)
+{
+    DWORD cb = 0;
+    if (RegGetValueW(hKey, NULL, name, RRF_RT_REG_SZ, NULL, NULL, &cb) != ERROR_SUCCESS ||
+        cb == 0 || cb > 2048)
+        return false;
+    std::wstring buf(cb / sizeof(wchar_t), L'\0');
+    if (RegGetValueW(hKey, NULL, name, RRF_RT_REG_SZ, NULL,
+                     (LPBYTE)&buf[0], &cb) != ERROR_SUCCESS)
+        return false;
+    size_t len = wcslen(buf.c_str()); // 数据可能带 NUL 填充，按 C 串截
+    out = buf.substr(0, len);
+    return true;
+}
+
+void SetString(HKEY hKey, const wchar_t* name, const std::wstring& v)
+{
+    RegSetValueExW(hKey, name, 0, REG_SZ, (const BYTE*)v.c_str(),
+                   (DWORD)((v.size() + 1) * sizeof(wchar_t)));
+}
+
 } // namespace
 
 Settings LoadSettings()
@@ -78,15 +100,25 @@ Settings LoadSettings()
         s.toggleMode = tm;
     else if (GetDword(hKey, L"ShiftToggle", v))
         s.toggleMode = v != 0 ? 1 : 0;
-    if (GetDword(hKey, L"VMode", v)) s.vMode = v != 0;
     if (GetDword(hKey, L"Shuangpin", v)) s.shuangpin = v != 0;
     if (GetDword(hKey, L"SymbolHotkey", v)) s.symbolHotkey = v != 0;
     if (GetDword(hKey, L"Traditional", v)) s.traditionalOutput = v != 0;
     if (GetDword(hKey, L"LlmRerank", v)) s.llmRerank = v != 0;
     if (GetDword(hKey, L"LlmMultiPath", v)) s.llmMultiPath = v != 0;
-    if (GetDword(hKey, L"SkinIndex", v) && v <= 4) s.skinIndex = v;
+    if (GetDword(hKey, L"SkinIndex", v) && v <= 6) s.skinIndex = v;
+    if (GetDword(hKey, L"UiFont", v) && v <= 3) s.uiFont = v;
     if (GetDword(hKey, L"CandidateOpacity", v) && v >= 70 && v <= 100) s.candidateOpacity = v;
     if (GetDword(hKey, L"AssocAfterPick", v)) s.assocAfterPick = (v != 0);  // 缺键=结构默认(true)
+    if (GetDword(hKey, L"CandidatePinned", v)) s.candidatePinned = (v != 0 ? 1u : 0u);
+    if (GetDword(hKey, L"CandidatePinX", v)) s.candidatePinX = (int)v; // 负值经 DWORD 往返
+    if (GetDword(hKey, L"CandidatePinY", v)) s.candidatePinY = (int)v;
+    GetString(hKey, L"RecentSymbols", s.recentSymbols); // 缺键=空（"最近"页空态）
+    if (GetDword(hKey, L"LastSettingsPage", v)) s.lastSettingsPage = v; // 越界钳制在消费方（页数随版本变）
+    if (GetDword(hKey, L"LastSymbolCat", v)) s.lastSymbolCat = v;
+    if (GetDword(hKey, L"SetWinX", v)) s.setWinX = (int)v; // 负值经 DWORD 往返
+    if (GetDword(hKey, L"SetWinY", v)) s.setWinY = (int)v;
+    if (GetDword(hKey, L"SetWinW", v)) s.setWinW = (int)v;
+    if (GetDword(hKey, L"SetWinH", v)) s.setWinH = (int)v;
 
     RegCloseKey(hKey);
     return s;
@@ -112,15 +144,25 @@ void SaveSettings(const Settings& s)
     // 仍得正确的开/关语义（仅"Shift 或 Ctrl"细模式对旧版退化为"开"）
     SetDword(hKey, L"ShiftToggle", s.toggleMode != 0 ? 1 : 0);
     SetDword(hKey, L"ToggleMode", s.toggleMode);
-    SetDword(hKey, L"VMode", s.vMode ? 1 : 0);
     SetDword(hKey, L"Shuangpin", s.shuangpin ? 1 : 0);
     SetDword(hKey, L"SymbolHotkey", s.symbolHotkey ? 1 : 0);
     SetDword(hKey, L"Traditional", s.traditionalOutput ? 1 : 0);
     SetDword(hKey, L"LlmRerank", s.llmRerank ? 1 : 0);
     SetDword(hKey, L"LlmMultiPath", s.llmMultiPath ? 1 : 0);
     SetDword(hKey, L"SkinIndex", s.skinIndex);
+    SetDword(hKey, L"UiFont", s.uiFont);
     SetDword(hKey, L"CandidateOpacity", s.candidateOpacity);
     SetDword(hKey, L"AssocAfterPick", s.assocAfterPick ? 1u : 0u);
+    SetDword(hKey, L"CandidatePinned", s.candidatePinned);
+    SetDword(hKey, L"CandidatePinX", (DWORD)(uint32_t)s.candidatePinX);
+    SetDword(hKey, L"CandidatePinY", (DWORD)(uint32_t)s.candidatePinY);
+    SetString(hKey, L"RecentSymbols", s.recentSymbols);
+    SetDword(hKey, L"LastSettingsPage", s.lastSettingsPage);
+    SetDword(hKey, L"LastSymbolCat", s.lastSymbolCat);
+    SetDword(hKey, L"SetWinX", (DWORD)(uint32_t)s.setWinX);
+    SetDword(hKey, L"SetWinY", (DWORD)(uint32_t)s.setWinY);
+    SetDword(hKey, L"SetWinW", (DWORD)(uint32_t)s.setWinW);
+    SetDword(hKey, L"SetWinH", (DWORD)(uint32_t)s.setWinH);
 
     RegCloseKey(hKey);
 }
@@ -133,6 +175,13 @@ void PutDwordDiff(HKEY hKey, const wchar_t* name, DWORD want)
     DWORD cur = 0;
     if (GetDword(hKey, name, cur) && cur == want) return;
     SetDword(hKey, name, want);
+}
+
+void PutStringDiff(HKEY hKey, const wchar_t* name, const std::wstring& want)
+{
+    std::wstring cur;
+    if (GetString(hKey, name, cur) && cur == want) return;
+    SetString(hKey, name, want);
 }
 } // namespace
 
@@ -153,15 +202,32 @@ void SaveSettingsDiff(const Settings& s)
     PutDwordDiff(hKey, L"FuzzyGroups", s.fuzzyGroups);
     PutDwordDiff(hKey, L"ShiftToggle", s.toggleMode != 0 ? 1 : 0);
     PutDwordDiff(hKey, L"ToggleMode", s.toggleMode);
-    PutDwordDiff(hKey, L"VMode", s.vMode ? 1 : 0);
     PutDwordDiff(hKey, L"Shuangpin", s.shuangpin ? 1 : 0);
     PutDwordDiff(hKey, L"SymbolHotkey", s.symbolHotkey ? 1 : 0);
     PutDwordDiff(hKey, L"Traditional", s.traditionalOutput ? 1 : 0);
     PutDwordDiff(hKey, L"LlmRerank", s.llmRerank ? 1 : 0);
     PutDwordDiff(hKey, L"LlmMultiPath", s.llmMultiPath ? 1 : 0);
     PutDwordDiff(hKey, L"SkinIndex", s.skinIndex);
+    PutDwordDiff(hKey, L"UiFont", s.uiFont);
     PutDwordDiff(hKey, L"CandidateOpacity", s.candidateOpacity);
     PutDwordDiff(hKey, L"AssocAfterPick", s.assocAfterPick ? 1u : 0u);
+    PutDwordDiff(hKey, L"CandidatePinned", s.candidatePinned);
+    PutDwordDiff(hKey, L"CandidatePinX", (DWORD)(uint32_t)s.candidatePinX);
+    PutDwordDiff(hKey, L"CandidatePinY", (DWORD)(uint32_t)s.candidatePinY);
+    PutStringDiff(hKey, L"RecentSymbols", s.recentSymbols);
+    PutDwordDiff(hKey, L"LastSettingsPage", s.lastSettingsPage);
+    PutDwordDiff(hKey, L"LastSymbolCat", s.lastSymbolCat);
+    PutDwordDiff(hKey, L"SetWinX", (DWORD)(uint32_t)s.setWinX);
+    PutDwordDiff(hKey, L"SetWinY", (DWORD)(uint32_t)s.setWinY);
+    PutDwordDiff(hKey, L"SetWinW", (DWORD)(uint32_t)s.setWinW);
+    PutDwordDiff(hKey, L"SetWinH", (DWORD)(uint32_t)s.setWinH);
     RegCloseKey(hKey);
+}
+
+void ResetSettingsToDefaults()
+{
+    // RegDeleteTreeW 连键删除（比逐值枚举删除简单且原子）；下次保存时
+    // RegCreateKeyExW 自动重建，LoadSettings 走"键不存在=全默认"路径。
+    RegDeleteTreeW(HKEY_CURRENT_USER, ActiveKey());
 }
 } // namespace lingxi

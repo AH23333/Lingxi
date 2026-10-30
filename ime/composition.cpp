@@ -206,12 +206,10 @@ void CTextService::DetectPinyinMode()
     if (py != _pinyinMode)
         LX_LOG(L"ime", L"拼音模式: %d", (int)py); // 仅变化时记录
     _pinyinMode = py;
-    // 离开中文 profile：复位临时英文与 v 模式，避免跨应用残留
+    // 离开中文 profile：复位临时英文，避免跨应用残留
     if (!py)
     {
         _tempEnglish = false;
-        _vMode = false;
-        _vDebt = false;
     }
 
     // ---- 激活竞态自愈 ----
@@ -720,10 +718,6 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
     // 此前只看 wParam 字母值，Ctrl+C 在中文模式下被当拼音 'c' 吃掉——用户实测
     // 报告"输入法无法使用快捷键"的根因。Shift/Caps 保留混排语义，不受此闸影响。
     if (CtrlOrAltDown()) return false;
-    // v 模式：键的决断（悬账消费/补写/撤销/退出）全在 HandlePinyinKey（KeyDown
-    // 侧）。放行会让宿主直接消化、KeyDown 未必回访，状态迁移无法保证——故
-    // TestKeyDown 一律吃下（VK_SHIFT 纯修饰除外），由 KeyDown 按键语义放行。
-    if (_vMode) return wParam != VK_SHIFT;
     // 中英混排：Shift 按下或 CapsLock 开启时，字母直通（输入大写/英文）
     bool shiftOrCaps = (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 1) != 0;
     if (PinyinActive())
@@ -893,51 +887,6 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         return;
     }
 
-    // v 模式（v 前缀临时英文）：触发的 v 被吃、其字面悬账记于 _vDebt，由下一
-    // 键决断——首个字母消费悬账（v=前缀，"vbug"→"bug"）；非字母键先补写悬账
-    // 再放行（裸 v 语义："v"+空格→"v "）；退格有悬账=撤销刚触发的 v（吃掉），
-    // 无悬账=删已上屏字母（放行且保持 v 模式，词中改错不打断）；Esc 取消。
-    // 必须先于 Shift/Caps 分支：v 模式中 Shift+字母（"v"+"VIP"）也要消费悬账，
-    // 否则悬账残留会在后续非字母键处补写出多余的 "v"。
-    if (_vMode)
-    {
-        if (IsLetterKey(wParam))
-        {
-            _vDebt = false;   // 首个字母：v 作为前缀被消费
-            *pfEaten = FALSE; // 宿主按 Shift/Caps 状态上屏该字母
-            return;
-        }
-        if (wParam == VK_BACK)
-        {
-            _lastBackspaceTick = GetTickCount64();
-            if (!_vDebt)
-            {
-                *pfEaten = FALSE; // 删已上屏字母，保持 v 模式（词中改错）
-                return;
-            }
-            _vDebt = false;      // 退格撤销刚触发的 v（宿主尚无字母可删，吃掉）
-            _vMode = false;
-            return;
-        }
-        if (wParam == VK_ESCAPE)
-        {
-            _vDebt = false;      // 取消：丢悬账（已上屏字母已是宿主文本，保留）
-            _vMode = false;
-            *pfEaten = FALSE;
-            return;
-        }
-        if (_vDebt)
-        {
-            _vDebt = false;      // 裸 v：补写字面 v 再放行后续键
-            _fSelfInsert = TRUE;
-            InsertTextAtSelection(L"v");
-            _fSelfInsert = FALSE;
-        }
-        _vMode = false;          // 空格/回车/标点等：退出 v 模式，键交宿主（英文语义）
-        *pfEaten = FALSE;
-        return;
-    }
-
     // 中英混排：Shift/CapsLock + 字母 → 提交当前拼音（保留字母原文），大写字母放行
     bool shiftOrCaps = (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 1) != 0;
     if (shiftOrCaps && IsLetterKey(wParam))
@@ -984,19 +933,12 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
             return;
         }
         wchar_t ch0 = (wchar_t)((wParam >= L'A' && wParam <= L'Z') ? (wParam + 32) : wParam);
-        // 小写 v（无 Shift/Caps）进入 v 模式（设置关闭时 v 走普通拼音）：触发的
-        // v 被吃、字面悬账记于 _vDebt——首个后续字母消费悬账（"vbug"→"bug"），
-        // 非字母键先补写悬账（裸 v："v"+空格→"v "）。修复：旧实现直接丢弃 v，
-        // 裸 v 与 v 开头词（vlog/VIP 需双写 v）永远打不出。
-        if (ch0 == L'v' && !shiftOrCaps && LoadSettings().vMode)
-        {
-            _vMode = true;
-            _vDebt = true;
-            ClearCandidates();
-            SendHide();
-            *pfEaten = TRUE;
-            return;
-        }
+        // v 与普通字母一致走 PinyinStart 组合（"v" 非法拼音 → 引擎 0 候选，
+        // 候选窗 echo 回显；空格/回车 PinyinCommitRaw 原样上屏 "v"/"vlog"，
+        // 退格 PinyinShrink、Esc PinyinCancel、中文标点 CommitChinesePunct
+        // 合并上屏 "v，"）。v 临时英文由此成为全拼默认行为，不再依赖
+        // "悬账+pfEaten=FALSE 放行"——真机 TSF 分发 Test 已吃 → KeyDown 的
+        // FALSE 不保证回传宿主，旧机制字母全被吞（用户报"v 键无输出"根因）。
         PinyinStart(ch0);
         return;
     }

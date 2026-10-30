@@ -42,7 +42,11 @@ STDMETHODIMP CReadSession::DoEditSession(TfEditCookie ec)
         {
             BOOL clipped = FALSE;
             RECT rcText{};
-            if (SUCCEEDED(pView->GetTextExt(ec, pBack, &rcText, &clipped)) &&
+            // 矩形取**插入点选区**（pRange，通常退化在光标处），不是上下文范围
+            // pBack——后者是 [光标-kCtxMaxChars, 光标) 整段的包围盒：长上下文
+            // 下补全窗锚到段首/多行 bbox 左上，表现为"补全窗漂移"（用户报障）。
+            // pRange 与 ec 同会话，是最安全的位置查询对象（SafeGetTextExt 同法）。
+            if (SUCCEEDED(pView->GetTextExt(ec, pRange, &rcText, &clipped)) &&
                 (rcText.right > rcText.left || rcText.bottom > rcText.top))
             {
                 rc = rcText;

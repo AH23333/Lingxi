@@ -53,6 +53,17 @@ inline void AppendToFile(const wchar_t* line)
     if (GetTempPathW(MAX_PATH, temp) > 0)
     {
         _snwprintf_s(path, _TRUNCATE, L"%slingxi-ime.log", temp);
+        // 轮转：超 1MB 改名 .old 留档重开——长期开着 LINGXI_LOG=1 诊断时防
+        // 无界增长吃满 %TEMP% 配额；失败不阻塞追加（继续写当前文件）。
+        WIN32_FILE_ATTRIBUTE_DATA fa{};
+        if (GetFileAttributesExW(path, GetFileExInfoStandard, &fa) &&
+            fa.nFileSizeLow > 1024u * 1024u)
+        {
+            wchar_t oldPath[MAX_PATH];
+            _snwprintf_s(oldPath, _TRUNCATE, L"%s.old", path);
+            DeleteFileW(oldPath);
+            MoveFileW(path, oldPath);
+        }
         HANDLE h = CreateFileW(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE,
                                NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         if (h != INVALID_HANDLE_VALUE)

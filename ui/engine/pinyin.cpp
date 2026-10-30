@@ -868,7 +868,8 @@ private:
 // （i→yi、in→yin、iu→you、u→wu、ui→wei、uo→wo…）。词典与音节表均无
 // i/u 打头的写法，不补这层时首键 i/u 起的组合永远空候选——即用户报的
 // "输入 i/u 特殊拼音后按键像失灵"根因（数字被吞、候选空）。仅在切分
-// 起点查表，不改 mid-string 拼写；v 打头不映射（DLL 侧 vMode 英语直通）。
+// 起点查表，不改 mid-string 拼写；v 不在表内（v 非拼音——DLL 侧 v 走拼音
+// 组合，引擎 0 候选，空格/回车 CommitRaw 原样上屏 "v"/"vlog"，即 v 临时英文）。
 static const char* ZeroInitialShorthand(const std::string& s)
 {
     static const std::pair<const char*, const char*> kMap[] = {
@@ -949,8 +950,13 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 if (t)
                     Extend(dp, i, i + L, SyllUnit{ SyllUnit::FULL, t, L }, 2);
             }
-            // 单字母简拼
-            if (in[i] >= 'a' && in[i] <= 'z')
+            // 单字母简拼。v 例外（#1 v 重设计）：v 非声母（词典无 v 起音节，
+            // nv/lv 走全音节表），若作简拼 INITIAL 会造出 [v][k-PARTIAL] 这类
+            // 死头路径——v 单元永无词可配，但残段池照常发射 k 声母字（vk→可/
+            // 会/看，vlog→个/过/给），空格选字上屏，CommitRaw 永不触发，
+            // "vlog 语义"落空。排除后 v 起串无任何路径→0 候选→回显+空格
+            // CommitRaw 原样上屏，即设计意图（见 ZeroInitialShorthand 注释）。
+            if (in[i] >= 'a' && in[i] <= 'z' && in[i] != 'v')
                 Extend(dp, i, i + 1, SyllUnit{ SyllUnit::INITIAL, std::string(1, in[i]) }, 4);
         }
 
@@ -1722,22 +1728,22 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
 
             bool trailingPartial = units.back().kind == SyllUnit::PARTIAL;
             int tier = (path.cost <= minPathCost) ? 0 : 1;
-            // 纯声母简拼路径（如 dh、xyzxyz）：简拼价值在于命中整词（dh→电话）。
-            // 长串纯声母若只能逐字单字硬拼（xyzxyz），视为英文/误触，不产出中文。
+            // 纯声母简拼路径（如 dh、gylgl）：简拼价值在于命中整词（dh→电话、
+            // gylgl→供应链管理）。长串纯声母不再整条丢弃——真简翻译词常 4~6
+            // 声母，整丢=用户报"打到第 4 个声母词框消失"根因；但全跨度 span<n
+            // 发射会出 x/y/z 单字垃圾墙（xyzxyz 误触），故长纯声母改走
+            // "近全跨度"受限发射（见下方 longAllInit 块，与 tier 闸同构）。
             bool allInit = true;
             for (const auto& u : units)
                 if (u.kind != SyllUnit::INITIAL) { allInit = false; break; }
-
-            // 纯声母简拼过长（≥4 个声母，或残段前缀≥3 个声母）几乎必为英文/误触，
-            // 即使能撞上罕见长词也整条丢弃（同时省掉该路径的 DP）。
-            if (allInit && n >= 4) continue;
+            bool longAllInit = allInit && n >= 4;
             int initHead = trailingPartial ? n - 1 : n;
             if (trailingPartial)
             {
                 bool prefixAllInit = true;
                 for (int k = 0; k < n - 1; k++)
                     if (units[k].kind != SyllUnit::INITIAL) { prefixAllInit = false; break; }
-                if (prefixAllInit && initHead >= 3) continue;
+                if (prefixAllInit && initHead >= 3) longAllInit = true;
             }
 
             // 逐单元回放在 in 上的消耗终点：撇号空转移跳过、单元文本按长度
@@ -1821,6 +1827,58 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 }
                 return s;
             };
+
+            // 长纯声母简拼（≥4 声母或残段前缀≥3 声母）：只做近全跨度（span≥n-1）
+            // 与整词（span==n）词典发射；①②④ 与远跨度单字全部关闭——
+            // gylg→供应链、gylgl→供应链管理（span==n 整词，用户主诉场景）；
+            // xyzxyz 误触在 span 5/6 无词=零产出，不重建垃圾墙。
+            // 旧实现在此整条 continue 丢弃：gylg/gylgl 一律 0 候选，
+            // 词框消失（"打到第 4 个声母词框没了"根因）。
+            if (longAllInit)
+            {
+                for (int span = n - 1; span <= n && span <= 6; span++)
+                {
+                    const std::vector<WordMatch>& ws = getMatches(0, span);
+                    int added = 0;
+                    int limit = (span == n) ? (int)kPredictMaxCandidates : 4;
+                    for (const auto& w : ws)
+                    {
+                        if (added >= limit) break;
+                        double uncovered = (double)(n - span) * 8.0;
+                        double c = WordCost(w.idx) + w.penalty + kWordCountCost + uncovered;
+                        add(_entries[w.idx].word, c, span, 1, coverOf(span));
+                        added++;
+                    }
+                }
+                continue;
+            }
+
+            // 碎切分路径（tier>0）只允许 ③词典词发射：①整句链/②首词变体/④残段
+            // 拼接三类**跨单元字符拼接**依赖散字母单元（a→啊、n→嗯、o→哦）与
+            // 前缀匹配自由组合，产出非词典垃圾（"西啊年/西安嗯/无哦/五嗯"），
+            // tier 降层只压排序不阻产出，60 上限尾部仍成垃圾墙——用户报
+            // "翻页大量无逻辑三字候选"实证（probe：xian 尾部西啊嗯系、un 尾部
+            // 无嗯系、uo 尾部无哦系）。tier 0（自然切分）全段保留；tier 1 的
+            // 真实词典词（[u][n]→"五年"类 span==n 整词）不受影响。
+            if (tier != 0)
+            {
+                for (int span = 1; span <= 4 && span <= n; span++)
+                {
+                    if (allInit && n - span > 1) continue;
+                    const std::vector<WordMatch>& ws = getMatches(0, span);
+                    int added = 0;
+                    int limit = (span == n) ? (int)kPredictMaxCandidates : 4;
+                    for (const auto& w : ws)
+                    {
+                        if (added >= limit) break;
+                        double uncovered = (double)(n - span) * 8.0;
+                        double c = WordCost(w.idx) + w.penalty + kWordCountCost + uncovered;
+                        add(_entries[w.idx].word, c, span, 1, coverOf(span));
+                        added++;
+                    }
+                }
+                continue; // ①②④ 拼接段对碎切分整体关闭
+            }
 
             std::vector<Node> dp = computeDp(n);
 
