@@ -300,6 +300,7 @@ constexpr int IDC_CHK_LLMRERANK = 116;
 constexpr int IDC_CHK_LLMMULTIPATH = 119; // LLM 多路采样（R3 §3，默认关）
 constexpr int IDC_BTN_HOTPHRASES = 118; // 快捷短语管理入口
 constexpr int IDC_BTN_PHRASES = 120;    // R2 自定义短语管理入口
+constexpr int IDC_CMB_OPACITY = 126;    // 候选窗不透明度
 
 HWND g_hMain = nullptr;    // 隐藏消息窗口（托盘宿主）
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
@@ -311,6 +312,7 @@ HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
      g_hChkShuangpin = nullptr, g_hChkSymbolHotkey = nullptr, g_hChkTraditional = nullptr,
       g_hChkLlmRerank = nullptr, g_hChkLlmMultiPath = nullptr;
 HWND g_hChkFz[5] = { nullptr, nullptr, nullptr, nullptr, nullptr }; // 模糊音组细分开关
+HWND g_hCmbOpacity = nullptr;
 HFONT g_hFont = nullptr;        // 12px：通用控件（用户词典窗沿用）
 HFONT g_hFontLabel = nullptr;   // 设置行标题 14px
 HFONT g_hFontDesc = nullptr;    // 设置行描述 12px（次级色）
@@ -358,6 +360,9 @@ void LoadToControls()
     SetToggle(g_hChkSymbolHotkey, s.symbolHotkey);
     SetToggle(g_hChkTraditional, s.traditionalOutput);
     SetToggle(g_hChkLlmRerank, s.llmRerank);
+    { const uint32_t kOps[] = {100, 90, 80, 70}; int oi = 0;
+      for (int z = 0; z < 4; z++) if (s.candidateOpacity == kOps[z]) oi = z;
+      if (g_hCmbOpacity) ComboBox_SetCurSel(g_hCmbOpacity, oi); }
     SetToggle(g_hChkLlmMultiPath, s.llmMultiPath);
     wchar_t buf[16];
     _snwprintf_s(buf, _TRUNCATE, L"%u", s.candidateCount);
@@ -392,6 +397,8 @@ void SaveFromControls()
     s.symbolHotkey = ToggleOn(g_hChkSymbolHotkey);
     s.traditionalOutput = ToggleOn(g_hChkTraditional);
     s.llmRerank = ToggleOn(g_hChkLlmRerank);
+    { const uint32_t kOps[] = {100, 90, 80, 70}; int oi = g_hCmbOpacity ? ComboBox_GetCurSel(g_hCmbOpacity) : 0;
+      s.candidateOpacity = kOps[oi >= 0 && oi < 4 ? oi : 0]; }
     s.llmMultiPath = ToggleOn(g_hChkLlmMultiPath);
     wchar_t buf[16] = L"";
     Edit_GetText(g_hEdtCount, buf, 16);
@@ -1170,6 +1177,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CHK_SYMBOLHOTKEY:
         case IDC_CHK_TRADITIONAL:
         case IDC_CHK_LLMRERANK:
+        case IDC_CMB_OPACITY:
         case IDC_CHK_LLMMULTIPATH:
             // owner-draw 无自动勾选：先翻外置状态再回写（翻转即失效重绘药丸）
             if (HIWORD(wParam) == BN_CLICKED)
@@ -1574,6 +1582,12 @@ void CreateSettingsWindow(HINSTANCE hInst)
         for (const wchar_t* s : { L"翠绿", L"青碧", L"橙色", L"红色", L"金色" })
             ComboBox_AddString(h, s);
     };
+    auto fillOpacity = [](HWND h) {
+        for (const wchar_t* s : { L"不透明", L"90%", L"80%", L"70%" })
+            ComboBox_AddString(h, s);
+    };
+    g_hCmbOpacity = mkCombo(IDC_CMB_OPACITY, fillOpacity);
+    mkRow(L"不透明度", L"候选窗整体透明度（半透明可避免遮挡底下内容）", g_hCmbOpacity, CK_COMBO, 100);
     g_hCmbSkin = mkCombo(IDC_CMB_SKIN, fillSkin);
     mkRow(L"界面配色", L"高亮与强调色皮肤", g_hCmbSkin, CK_COMBO, 100);
 

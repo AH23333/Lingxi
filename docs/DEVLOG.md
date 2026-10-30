@@ -562,3 +562,9 @@ R2-R4 收口后用户要求继续低难度功能、40 分钟内收口——选 R
 - R3 遗留压测做完：pf_ux 三轮 63 样本，p50=62ms / p95=187ms / p99=453ms（冷缓存尾），打字 CPU 4%、零抖动——数字入 GAP §10，"真机 p50/p95"待办销账。
 - GAP R6 长尾项开工：**模糊音组细分开关**（`ef28cda`）——fuzzyGroups 位掩码（缺键=全组历史无感）、ComputeFuzzy 组门控、Predict 热载自动重建索引、设置页 5 行子勾选（一组未勾=退回全组防误操作）、engine_test P8b 门控 4 断言；regress 一次 ALL PASS（engine 218/0）。
 - 过程小坑：多行补丁脚本 CRLF/LF 锚点错位一次（改行级 splice 修复）；settingsui 全局声明误插逗号列表中间（重定位）。均编译门禁捕获，未逃逸。
+
+## 2026-10-30 午后·续（Loomy：候选窗透明度定制）
+
+- GAP §3 透明度 ❌→✅：candidateOpacity 设置（70–100 四档，缺键=100 与历史一致）→ CandWindow 创建加 WS_EX_LAYERED、Show 时 ApplyOpacity 按 % 去重应用 LWA_ALPHA → 设置页「外观」页不透明度下拉（复用 combo 模式）。
+- 验证：全链构建绿；regress 一次 ALL PASS（engine 218/0+deep+e2e，tmp/regress-257628887）；**程序化实测** GetLayeredWindowAttributes 返回 ok=True flags=0x2(LWA_ALPHA) alpha=255（100% 档正确输出，通道打通实锤——桌面多 agent 争用中，截图不可信时改用窗口属性取证，#55 方法论延伸）。
+- 过程：沙盒 NS 实例设 80% 触发候选窗验证时实例被宿主重启换岗（读到的是真实 NS 实例 255）——不影响链路结论，档位映射是同一 MulDiv 纯计算。

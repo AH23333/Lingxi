@@ -38,7 +38,8 @@ bool CandWindow::Init(HINSTANCE hInst)
     }
 
     // WS_EX_NOACTIVATE：鼠标点击候选时宿主应用保持焦点
-    _hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE,
+    // WS_EX_LAYERED：候选窗透明度定制需要分层窗口（LWA_ALPHA）；默认 100% 不透明
+    _hwnd = CreateWindowExW(WS_EX_TOPMOST | WS_EX_TOOLWINDOW | WS_EX_NOACTIVATE | WS_EX_LAYERED,
                             kCandWndClass, L"", WS_POPUP,
                             _lastX, _lastY, 240, 120, NULL, NULL, hInst, NULL);
     if (!_hwnd)
@@ -208,6 +209,7 @@ void CandWindow::LayoutAndPosition()
     SetWindowPos(_hwnd, HWND_TOPMOST, x, y, _width, _height,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
     UiApplyRoundCorners(_hwnd, _width, _height); // RGN 回退路径需随尺寸重设
+    ApplyOpacity(); // 透明度设置实时生效（内部按 % 去重，无变化零成本）
     // 移动/缩放后**同步**补画一帧：异步 WM_PAINT 会让新位置先闪露上一帧旧像素
     //（"残留屏幕"残影根因；CS_DROPSHADOW 方影已在 Init 移除，黑描边另一半）。
     RedrawWindow(_hwnd, NULL, NULL, RDW_INVALIDATE | RDW_UPDATENOW | RDW_ERASE);
@@ -292,6 +294,16 @@ void CandWindow::Hide()
     _composing.clear();
     _pageStart = 0;
     LeaveCriticalSection(&_cs);
+}
+
+void CandWindow::ApplyOpacity()
+{
+    if (!_hwnd) return;
+    unsigned op = lingxi::LoadSettings().candidateOpacity;
+    if (op < 70) op = 70; if (op > 100) op = 100;
+    if ((int)op == _opacityApplied) return;
+    _opacityApplied = (int)op;
+    SetLayeredWindowAttributes(_hwnd, 0, MulDiv(op, 255, 100), LWA_ALPHA);
 }
 
 void CandWindow::OnPaint()
