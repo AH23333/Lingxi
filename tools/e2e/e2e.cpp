@@ -572,6 +572,23 @@ static bool ReassertFocus()
     return true;
 }
 
+// 抢前台：Windows 前台锁下，无前台权的进程调 SetForegroundWindow 会静默
+// 失败（TSF AssociateFocus 随之不绑定 → focusDoc=NULL → 断言全空）。
+// 无人值守跑 e2e 时宿主 console 由 IDE/终端拉起、无前台权，必须先
+// AttachThreadInput 挂到当前前台线程再设置（经典前台抢回手法）。
+static void ForceForeground(HWND hwnd)
+{
+    HWND hFore = GetForegroundWindow();
+    DWORD forePid = 0;
+    DWORD foreTid = hFore ? GetWindowThreadProcessId(hFore, &forePid) : 0;
+    DWORD myTid = GetCurrentThreadId();
+    bool attached = foreTid != 0 && foreTid != myTid;
+    if (attached) AttachThreadInput(myTid, foreTid, TRUE);
+    SetForegroundWindow(hwnd);
+    SetFocus(hwnd);
+    if (attached) AttachThreadInput(myTid, foreTid, FALSE);
+}
+
 // 模式探测：TestKeyDown('q') eaten=1 → 拼音模式；eaten=0 → 直通模式。
 // 探测不改变状态（KeyDown 才会）；模式不对就重新断言对应语言+profile。
 static bool WaitForMode(ITfKeystrokeMgr* pKm, bool wantPinyin, int tries = 15)
@@ -669,8 +686,7 @@ static bool RunScenario()
                                  60, 60, 420, 320, NULL, NULL, hInst, NULL);
         if (!hwndHost) { Report(false, "Create host window"); break; }
         ShowWindow(hwndHost, SW_SHOW);
-        SetForegroundWindow(hwndHost);
-        SetFocus(hwndHost);
+        ForceForeground(hwndHost);
         PumpMessages();
         // 直通用例要求当前输入语言是 en-US（拼音模式下字母会被组合拦截）。
         // 系统默认语言是 zh-CN，必须像真实用户一样先切到英文。
