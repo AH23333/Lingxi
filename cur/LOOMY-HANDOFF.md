@@ -10,7 +10,8 @@
 
 ## 📌 额度收口快照（2026-10-30 深夜·联想落地，下一轮从这里开工）
 
-**现场**：HEAD=`04d589b` 工作区干净；deep attempt1 **33/33**（tmp/regress-2937629603 ALL
+**现场**：HEAD=`ee8e810`（联想 `04d589b` → 文档 `868b455` → build gate `ee8e810`），
+工作区干净；终验 regress-100829655 ALL PASS（engine=Release 基线随批真重建）；deep attempt1 **33/33**（tmp/regress-2937629603 ALL
 PASS：engine+fix_readings+deep+e2e 全绿）；用户真实环境 UI 已恢复（收口重启）。
 engine_test 220/0；透明度 `ef0e61d` / 模糊音 8 组 `7569b31` / 联想 `04d589b` 同日三连。
 
@@ -21,7 +22,7 @@ engine_test 220/0；透明度 `ef0e61d` / 模糊音 8 组 `7569b31` / 联想 `04
 1. 两项待验证（桌面空闲时）：设置页滚动条真值/底部裁切；owner-draw 勾选 checked 截图。
 2. 视觉走查自转：pf_shot 补 dark 态与 hover/点选流；联想态截图态走查（cand 模式复用）。
 3. GAP R6 长尾：U 模式拆字、以词定字、候选注音；联想多段呈现优化（§3 外观尾巴）。
-4. 工程债：deep_test.vcxproj 考虑进 sln 或 regress 自带编译步骤（#56-B 根治候选）。
+4. ~~工程债：deep/engine 出 sln 假绿~~ ✅ **已根治（`ee8e810`）**——regress build gate 三工程自编译，配置基线（deep=Debug/engine=Release）写入 PITFALLS #56-B 根治注记。
 
 <!-- 以下为 2026-10-29 历史快照（保留供追溯，生效待办以本节上方最新快照为准） -->
 

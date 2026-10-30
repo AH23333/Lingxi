@@ -323,6 +323,7 @@
 - **根因 B（旧 exe 假绿）**：**仓库的测试资产不在一个构建入口**——sln 只含 common/ImeCore/LingxiUI/e2e，deep_test/engine_test 各有独立工程文件。改 deep_test.cpp 后 build.cmd"零错误 ALL PASS"完全可以是旧二进制复读。**防假绿唯一硬证=目标 exe 的 LastWriteTime 晚于源码修改**；新工具工程进回归前必须先补它的构建入口。
 - **根因 C（作用域顺手坑）**：既有 suite 把 hexOf15 之类 helper 定义在块内 lambda，新用例块放外层编译报 C3861——照抄名字直接再定义一份本地副本（hex18），别抬到文件域重构旧代码。
 - **纪律固化**：T18 绿灯链=改 deep → 跑 tools/deep_test 独立构建 → 核 exe 时间戳 → regress。跳过任一环都可能把"没跑"读成"通过"。
+- **✅ 已根治（`ee8e810`，2026-10-30 深夜）**：regress.cmd 内置 build gate——sln+deep(Debug)+engine(Release) 三条编译全部自跑，build 失败 exit 1 绝不带旧二进制开测；时间戳人肉核对被 exit 门替代。根治当晚即抓到连锁第二例：同一 engine_test，Debug 配置（/Od+_DEBUG 迭代器检查）latency median≈17ms 全红，Release（README §引擎单元测试 + cur/HANDOFF 白纸黑字的历史基线"0 FAIL（Release）"）亚毫秒真绿——**构建配置本身是断言语义的一部分**，跑批器写错配置=整条性能断言失真。vcxproj 实含 Debug|x64 与 Release|x64 双配置（首轮侦察用 `|Release` 反查串写错导致误判"无 Release"，现读纠正）。
 
 - **症状**：设置窗"转发不弹窗"追了多轮：进程侧日志显示创建成功且 SW_SHOW，但 FindWindowW（按类名/标题）恒 0，一度判成"窗口被神秘销毁"的 P0。
 - **根因**：agent 进程与交互桌面**同 Session 但不同 Window Station**。FindWindow 是"调用线程所在线窗口站"作用域——本会话窗口站里没有那个窗口，返回 0 是观测无效而非程序异常。最终用 Get-Process.Threads + EnumThreadWindows（按目标进程线程枚举）拿到真句柄，vis=True 实锤窗口一直正常显示，转发链从未断过。

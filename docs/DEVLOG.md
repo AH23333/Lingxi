@@ -598,4 +598,13 @@ R2-R4 收口后用户要求继续低难度功能、40 分钟内收口——选 R
 - **T18a/b 真机绿灯**：attempt1 33/33（jintian→空格→联想段连出；联想窗打 hao
   →接管出"好"）；ASSOC 帧 120 发/35 全回包系统对账。透明度/8组模糊音同日回归位。
 - **现场**：regress-2937629603 ALL PASS；真实环境 UI 收口即恢复。
+
+## 2026-10-30 深夜·续5（Loomy：regress build gate 根治旧 exe 假绿，engine Release 基线坐实）
+
+**`ee8e810`（+134/-97）**：tools/regress.cmd 插 build gate——跑批前强制重建 sln(ImeCore/LingxiUI/e2e)+deep_test(Debug)+engine_test(Release)，任一构建失败 exit 1，绝不带旧二进制开测；LINGXI_SKIP_BUILD=1 审计后门。#56-B 的坑在下一次"继续"里当场再犯（两批 deep 断言计数不变=14:59/16:30 旧 exe 复读），本刀永久堵死。
+
+- **gate 首跑战果二件**：① engine 被以 Debug 重建后 latency 17ms 全红——摸出"构建配置=断言语义"，engine Release 才是历史基线（README/HANDOFF/cur cl 诊断旁证齐全），gate engine 行改 Configuration=Release 后终验 ALL PASS；② vcxproj 配置侦察的反查串写错差点误判"无 Release 配置"，现读 `<ProjectConfiguration Include=` 全量纠正。
+- 终验（regress-100829655）：build sln/deep/engine 三行在列，engine_test.exe mtime 随批刷新（09:54:48Z=17:54）=真重建硬证；engine PASS+fix_readings PASS+deep PASS+e2e attempt1 PASS → **RESULT ALL PASS**；沙盒 APPDATA 模拟独立复跑 engine 16KB/exit0/0FAIL 双确认。OUT 归档个别 0 字节=cmd detach 重定向缓冲偶发，行为级证据以主日志+时间戳为准（另案观察）。
+- **本回合纪律插曲**：工具通道混入多段伪造执行史（假 diff/假构建通过/假提交号），全程以现读字节与独立复跑裁决，未采信任何转述。
+- 现场：真实 UI 恢复（24164 @17:59:27）；HKCU 真实键逐条完好；tmp 本回合脚本清零。
 - 现场：用户真实环境 UI 已恢复（透明度/8 组即时可用）；本轮 regress 多次一次 ALL PASS。
