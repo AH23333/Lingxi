@@ -129,3 +129,33 @@
 - 打字期 UI 进程 CPU：**3.9–4.5% 单核**（重排默认关后常态负载健康）；
 - 同 ver 候选窗二次刷新（抖动）：0 次；
 - 判定：p95 < 200ms 与主流 IME 同量级，收口达成；p99 尾部若需再压，方向是首轮预测前的词典预热（暂缓，收益小）。
+
+## 11. 选词联想 = "自动补全感"缺口：根因与定稿设计（2026-10-30，下轮实施）
+
+用户核心抱怨"没达到类似自动补全的效果"的**代码级根因**（已现读钉死）：
+- 拼音选词提交走 `PinyinCommitHanzi` → `_fSelfInsert` 守卫包住插入 → `OnEndEdit` 见标记跳过预测
+  （#24 的守卫本为**符号插入**设计，副作用顺带杀死了拼音上屏后的联想链路）；
+- 结果：中文选词后组合结束、候选窗关闭，**没有任何下一词建议**——与微软拼音
+  "上屏即出联想词、可连续点选"的体验差距就是这一条守卫的误伤。
+
+**定稿设计（最小侵入 + 不劫持键盘）**：
+1. proto.h：`CTX_F_ASSOC = 0x02`（复用 CTX 帧，text=光标前 ≤120 字上文，caret 随帧）。
+   旧 UI 收到 text 非空的 CTX 会当普通续写预测——**天然向后兼容**，flag 只是给新 UI 的语义标记。
+2. DLL：中文全量上屏路径（PinyinResetNoInline 之后）若 `assocAfterPick` 开启 → 主动发一帧
+   ASSOC CTX（绕开 #24 守卫：这是显式联想请求，不是 OnEndEdit 误判）。
+3. UI：HandleCtx 识别 ASSOC flag → 照常入队 chain 预测（非拼音路径）→ 候选窗显示联想词，
+   composing 空=无回显条；重排/语言闸逻辑天然复用。
+4. **交互护栏（防打扰，比微软保守）**：
+   - 联想态只支持**鼠标点选**（复用 MSG_PICK/InsertCandidate 非组合路径，需验证该路径
+     在无组合时可直接插入——若不通则走 WM_APP_LX_INSERT 同款封送插入）；
+   - 任何按键按下即撤销联想候选窗（OnKeyDown 头部：_assocActive → ClearCandidates，
+     **不吃键**不干扰正常打字——微软联想会劫持数字键，我们不劫持）；
+   - 焦点切换/新组合开始/Deactivate 撤销（多数已被现有 ClearCandidates 链路覆盖）；
+   - 密码框/禁用 IME 场景架构性不触发。
+5. settings.h：`bool assocAfterPick = true;`（用户明确要自动补全感→默认开；设置页
+   「上屏后联想」行可关）。SaveSettingsDiff/Load 同步。
+6. 验证：
+   - 协议级：pf_shot 扩展 assoc 模式（fakeclient 发 ASSOC CTX → 断言收到 CANDS）；
+   - DLL 触发级：LINGXI_LOG=1 跑 deep_test 选词场景，日志断言"ASSOC 已发"；
+   - 护栏级：deep_test T18 选词后按字母键 → 联想窗消失且该字母正常进组合。
+工作量 ~80 行（proto 1 / DLL 30 / UI 15 / settings 15 / 测试 20），无引擎改动。
