@@ -316,6 +316,14 @@
 - **正确做法**：需要 UI 侧日志时先让 env 实例占住单例（taskkill 后立即以 env 拉起，抢在 orphan 宿主 respawn 之前；或先杀掉持有 DLL 的宿主）。**规约：单例程序被外部 respawn 时，"谁先占坑"取决于宿主环境而非启动者意图——带环境变量调试单例服务，先清占坑者。**
 
 ### 55. FindWindowW 跨 window station 恒返回 NULL——同 Session 不等于同窗口站，观测通道要选对 ⭐
+## 56. Test 三面门与选词键词表不同步=空格静默黑洞；外加 deep 旧 exe 假绿双坑 ⭐
+- **症状**：联想候选窗（空组合）可见时按空格——既不上屏词、也不写入空格字符，键凭空蒸发；T18a 连续三轮 FAIL 却看不出窗口有无候选。且期间两次 regress "ALL PASS" 的断言计数与 T18 插桩前一致——**跑的一直是旧 deep_test.exe**（deep_test.vcxproj 不在 sln，tools/build.cmd 不编它），"新用例没执行"伪装成"新用例通过"。
+- **根因 A（空格黑洞）**：TSF 分发律=Test 声明 eaten 的键才有 OnKeyDown（#46 同源）。OnTestKeyDown 三面门 `visible && IsSelectionKey(wParam)` 的选词键词表只含 Tab/1-9/Esc 不含 VK_SPACE（当年为护英文补全 ghost"空格=入字"裁决）；空组合下 PinyinKeyEaten 的 `case VK_SPACE` 仅在组合中被吃。两层都放行 → 宿主侧深测 text store 又不吃空格消息 → 零输出。**跨 Test/KeyDown/handler 三层的键语义必须同闸同步**：新增"候选态可提交键"时要同时审三面门词表 + OnKeyDown 处理道 + 宿主直通假设。
+- **修复 A**：三面门只对 `_assocShown`（联想态）额外认领空格（英文 ghost 行为冻结不动）；HandlePinyinKey 空组合分支新增联想选词道复用点选路 InsertCandidate（replaceLen/自学习/连发语义零复制），数字键经既有三面门走同一条道。
+- **根因 B（旧 exe 假绿）**：**仓库的测试资产不在一个构建入口**——sln 只含 common/ImeCore/LingxiUI/e2e，deep_test/engine_test 各有独立工程文件。改 deep_test.cpp 后 build.cmd"零错误 ALL PASS"完全可以是旧二进制复读。**防假绿唯一硬证=目标 exe 的 LastWriteTime 晚于源码修改**；新工具工程进回归前必须先补它的构建入口。
+- **根因 C（作用域顺手坑）**：既有 suite 把 hexOf15 之类 helper 定义在块内 lambda，新用例块放外层编译报 C3861——照抄名字直接再定义一份本地副本（hex18），别抬到文件域重构旧代码。
+- **纪律固化**：T18 绿灯链=改 deep → 跑 tools/deep_test 独立构建 → 核 exe 时间戳 → regress。跳过任一环都可能把"没跑"读成"通过"。
+
 - **症状**：设置窗"转发不弹窗"追了多轮：进程侧日志显示创建成功且 SW_SHOW，但 FindWindowW（按类名/标题）恒 0，一度判成"窗口被神秘销毁"的 P0。
 - **根因**：agent 进程与交互桌面**同 Session 但不同 Window Station**。FindWindow 是"调用线程所在线窗口站"作用域——本会话窗口站里没有那个窗口，返回 0 是观测无效而非程序异常。最终用 Get-Process.Threads + EnumThreadWindows（按目标进程线程枚举）拿到真句柄，vis=True 实锤窗口一直正常显示，转发链从未断过。
 - **正确做法**：观测其他会话/窗口站的窗口，用 EnumThreadWindows(目标进程线程) 或 UIA，别信 FindWindow；"查不到"先自问**我的眼睛在哪个房间**（#45 同族：跨会话观测假象的窗口站版）。转发/弹窗类问题以**进程侧日志（创建/复用打点）为第一证据**，窗口枚举为辅。
