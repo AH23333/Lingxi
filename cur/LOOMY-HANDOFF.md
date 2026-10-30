@@ -176,3 +176,18 @@ tools\regress.cmd    :: 全绿才提交
 ```
 
 —— Loomy，2026-10-28 15:xx（本轮额度见顶，状态全部固化于此文件，无口口相传的暗知识）
+
+## 6. 深夜增量快照（2026-10-30 · 记事本光标停滞修复轮）
+
+本轮主题：用户报障"记事本上屏后光标停原位"→ 根因修复 + 全项目深度分析。细节见 docs/HANDOFF.md 顶部速报、docs/DEVLOG.md 当日条目、docs/PITFALLS.md #59/#60、docs/DEEP-ANALYSIS.md。
+
+新增关键纪律（旧节未覆盖部分）：
+- **TSF 零承诺建模**：凡规范不保证的宿主行为，DLL 显式做掉（本轮=上屏后显式 SetSelection）；测试宿主按最严格宿主（Win11 记事本）建模，宽松作第二风味。deep=严格 store、e2e=宽松 store，**有意分叉**——改任一 store 须检查另一处是否需要跟进（两处注释已互链）。
+- **严格 store 连带必做**：store 不自推选区后，宿主侧操作必须自理（ClearFocusedText 清空后重置选区，防陈旧选区越界 _buf.insert 崩溃）。
+- **同源二进制"确定性分叉"先证伪**（#60）：Get-FileHash 定身份（build.cmd 的 .prev 轮转保留源 mtime，勿信文件名）→ 逐字节 diff（PE 元数据 7 字节差=功能等价=行为分叉物理不可能）→ 安静环境复跑金标准。负载噪声窗口可连杀 e2e 3 attempt 且症状同一，伪装确定性缺陷。
+- **报障取证 SOP**：LINGXI_LOG 默认关=零 in-vivo 证据；报障先开 LINGXI_LOG=1 复现一次（%TEMP%\lingxi-ime.log，UTF-16LE 读），否则只能 in-vitro 复现（本轮成本 ~40 分钟）。
+- e2e.cpp 的 [DIAG] 失败现场诊断已挪到 fail-fast 判定之前——失败时 store/focused/文档指针对照永久可见。
+
+下一轮开工：仍按 §5；优先级建议见 docs/DEEP-ANALYSIS.md §5（内联死代码删除专项 → 用户字典双写复查 → GAP R6 长尾）。
+
+—— Loomy，2026-10-30 深夜

@@ -630,3 +630,28 @@ R2-R4 收口后用户要求继续低难度功能、40 分钟内收口——选 R
 **竞态插曲（PITFALLS #57）**：期间两次非本会话启动的 LingxiUI（12816@18:33:04 / 22912@18:50:58）；12816 为竞态旧码进程（SB_TOP 无效暴露，实为加载修复前 exe），22912 加载含修复 exe 实测通过。判定一律以"进程 StartTime vs exe LastWriteTime + 新 case 实测"为准，勿以 Get-Process 焦点进程为先验。
 - 方法论沉淀：截图取证一律 PrintWindow(hwnd, hdc, 2)（抗遮挡窗口干扰）；PS EnumWindows 委托回调内 Write-Output 不外传——必须 ArrayList 闭包（引用类型）收集；FindWindowW 按类查在本环境多次失败（#55 同族），EnumWindows+闭包可靠。
 - 取证产物：tmp/verify/（脚本群 + settings-print/bottom/screen/smart/final.png）留档供复核，gitignore 内不入库。
+
+## 2026-10-30 深夜（Loomy：记事本光标停滞根因修复 + 全项目深度分析）
+
+**用户报障**：Win11 记事本中上屏文字后光标停留原位，后续输入插到旧光标处。
+
+**根因（PITFALLS #59）**：TSF 规范对 `InsertTextAtSelection` 后的选区位置零承诺；DLL 从不 SetSelection；全部测试宿主宽松（插入自推选区）掩盖缺陷；Win11 记事本（WinUI CoreText 适配层）严格不动选区 → 光标停滞。replaceLen 污染排查排除（中文路径恒 0，仅英文补全 ngram.cpp:147 用 prefix.size()）。
+
+**修复（ime/editsession.cpp）**：
+- CInsertSession：InsertTextAtSelection 成功后 `Collapse(TF_ANCHOR_END)` + 显式 `SetSelection`（TF_AE_NONE，失败仅日志）——宽松宿主同位幂等，严格宿主补上前进。
+- CReplaceSession：SetText 成功后同法推光标（英文补全 Tab 路径）。
+- 内联组合死代码路径不动（`_inlineComp` 恒 false，最小爆炸半径）。
+
+**测试建模（tools/deep_test/deep_test.cpp）**：
+- TestStore 严格化（模拟记事本）：SetText/InsertTextAtSelection 不再动选区；GetSelection 防御性夹取；插入点夹取。
+- 宿主侧自理：文件级 g_pStore + ResetSelection()；ClearFocusedText 清空后重置选区 (0,0)（防陈旧选区越界 _buf.insert out_of_range）。
+- 新增 T19 光标契约：T19a 上屏后选区折叠于文本尾（sel={2,2}）；T19b 连续上屏顺序+前缀+选区三元断言（sel={3,3}）；本地 hex19 lambda 副本（#56-C 纪律）。
+- e2e 保持宽松宿主（第二风味覆盖）；e2e.cpp [DIAG] 诊断挪到 fail-fast 前，失败现场（store/focused/文档指针）永久可见。
+
+**证据链**：A/B in-vitro 复现三轮确定——A（旧 DLL+严格 store）T14/T18a/T18b/T19a/T19b 五红（"好你"顺序错乱/联想作废读空上下文/sel={0,0}）；B（新 DLL）35/35 全绿。提交路径无旁路确认（CInsertSession/CReplaceSession 仅 service.cpp:615/:632 两构造点）。
+
+**regress**：一次 ALL PASS（tmp/regress-494731470：build gate 三构建 + engine + fix_readings + deep(严格面含 T19) + e2e attempt1）。
+
+**e2e 假红事件（PITFALLS #60）**：19:47-58 负载噪声窗口 e2e 六连假红（pass-through 读空，3 attempt × 2 轮全同症状）；A/B/A 交替实验制造"二进制相关"假象；逐字节 diff 两版 DLL 仅 7 字节 PE 元数据差异（物理矛盾即证伪）；安静环境复跑同二进制直接绿。方法论：同源二进制"确定性分叉"先假设环境噪声，Get-FileHash+字节 diff+安静复现三步裁决。
+
+**全项目深度分析**：docs/DEEP-ANALYSIS.md（同类风险面/测试矩阵/架构债/取证方法论）。要点：选区契约面闭环；残留同类风险仅内联死代码（建议下轮删除专项）；P2 LINGXI_LOG 默认关致零 in-vivo 证据；P3 用户字典双写/路径双实现待复查；记事本人工抽测 SOP 建议。

@@ -66,3 +66,4 @@
 - **选词联想 ✅（`04d589b`，GAP §11 主线一 P0 收官）**：上屏后语境联想+空格连续输出，
   deep_test T18a/b 真机 33/33（tmp/regress-2937629603）；assocAfterPick 默认开可关。
 - **待办1 两项视觉验证 ✅（10-29 遗留结案）**：①设置页滚动条/底部裁切——GetScrollInfo 真值 + 真屏/PrintWindow 双截图证底部无裁切（黑条=DWM 边框伪影，PITFALLS #58）；②owner-draw 勾选（现 UI 实为 mkToggle 药丸）ON/OFF 两态多页实测渲染正确。顺带修 settingsui WM_VSCROLL 缺 SB_TOP/SB_BOTTOM case（程序化 Home/End 无效），构建+运行进程实测生效；收口后全量 regress 补跑一次 ALL PASS（regress-2538823020）。
+- **记事本光标停滞根因修复 ✅（10-30 深夜）**：用户报障"上屏后光标停留原位"——TSF `InsertTextAtSelection` 选区零承诺 + 测试宿主全宽松掩盖 + Win11 记事本严格不动选区（PITFALLS #59）。修复=editsession.cpp 两 session 上屏后显式 SetSelection；deep TestStore 严格化建模记事本 + T19 光标契约用例（顺序+前缀+选区三元断言）；A/B in-vitro 复现（五红→35/35 全绿）+ regress 一次 ALL PASS（regress-494731470）。e2e 假红事件（负载噪声窗口+A/B/A 陷阱）入 PITFALLS #60。全项目深度分析落 docs/DEEP-ANALYSIS.md。

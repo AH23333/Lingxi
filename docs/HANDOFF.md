@@ -1,5 +1,16 @@
 # 交接文档（HANDOFF）
 
+## ⚡ 最新状态速报（2026-10-30 深夜·Loomy：记事本光标停滞根因修复 + 全项目深度分析）
+
+- **用户报障收口**："Win11 记事本上屏文字后光标停留原位，后续输入插到旧光标处"。根因=TSF 规范对 `InsertTextAtSelection` 后的选区位置**零承诺**（PITFALLS #59）——DLL 从不 SetSelection，全部测试宿主宽松（插入自推选区）掩盖缺陷，Win11 记事本（WinUI CoreText 适配层）严格不动选区 → 光标停滞。
+- **修复**（ime/editsession.cpp）：CInsertSession/CReplaceSession 上屏后显式 `Collapse(TF_ANCHOR_END)`+`SetSelection` 推光标（宽松宿主同位幂等、严格宿主补上前进）；内联组合死代码不动。
+- **测试建模**：deep TestStore **严格化**（模拟记事本：文本变更不动选区+GetSelection 钳制+宿主侧清空后重置选区防越界崩溃）+ **T19 光标契约用例**（顺序+前缀+选区三元断言）；e2e 保持宽松宿主=双风味覆盖。A/B 证据：旧 DLL 五红（"好你"顺序错乱/联想作废/sel={0,0}）→ 新 DLL 35/35 全绿。
+- **regress 一次 ALL PASS**（regress-494731470：build gate 三构建+engine+fix_readings+deep 严格面含 T19+e2e attempt1）。
+- **e2e 假红事件入 PITFALLS #60**：负载噪声窗口六连假红（症状同一伪装确定性）+ A/B/A 三样本陷阱；裁决法=Get-FileHash 身份 + 逐字节 diff（同源二进制仅 7 字节 PE 元数据差=物理矛盾即证伪）+ 安静环境复跑金标准。
+- **全项目深度分析**落 docs/DEEP-ANALYSIS.md：选区契约面已闭环；残留同类风险仅内联死代码（建议下轮删除专项）；P2 LINGXI_LOG 默认关=零 in-vivo 证据（本轮被迫 in-vitro 复现）；P3 用户字典双写/UserDictPath 双实现待复查；记事本人工抽测 SOP 建议。
+- **下一轮候选**：①内联组合死代码删除专项（先 regress 零差再删）②用户字典双写闭环复查 ③GAP R6 长尾。
+
+（以下为历史速报。）
 ## ⚡ 最新状态速报（2026-10-30 晚·Loomy：10-29 待验证两项收口 PASS + 设置窗 SB_TOP/SB_BOTTOM 补缺）
 
 - **待验证两项（10-29 遗留，下方速报所列）全部结案 PASS**：①设置页底部裁切/滚动条真值——GetScrollInfo(0/1076/641/0) + 真屏/PrintWindow 双截图 + SB_PAGEDOWN 到底尾部行完整渲染，**无裁切**（PrintWindow 黑条=DWM resize 边框伪影，真屏对照排除，PITFALLS #58）；②owner-draw 勾选 checked 态——现 UI 布尔项已全部是 mkToggle 药丸（BS_OWNERDRAW+外置 g_toggleOn，settingsui DrawToggle），ON(#107C10 绿带)/OFF(灰 pill+深灰钮) 两态多页实测渲染正确，无黑块/错位/默认 Win32 样式。
