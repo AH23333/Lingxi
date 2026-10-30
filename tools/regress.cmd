@@ -25,6 +25,43 @@ mkdir "%APPDATA%" 2>nul
 
 set FAIL=0
 
+rem ---- build gate (PITFALLS #56-B): deep_test and engine_test are NOT in
+rem the sln. A bare tools\build.cmd silently leaves those exes stale, so
+rem regress used to replay OLD binaries and still print PASS. Now regress
+rem builds everything itself: sln (common/ImeCore/LingxiUI/e2e) first, then
+rem the two out-of-sln suites. Build failure aborts before any test runs.
+rem Audited escape hatch: set LINGXI_SKIP_BUILD=1 to replay prebuilt exes.
+if "%LINGXI_SKIP_BUILD%"=="1" goto :skipbuild
+echo [regress] build: sln (Debug)...
+call "%ROOT%\tools\build.cmd" Debug > "%OUT%\build-sln.txt" 2>&1
+if errorlevel 1 (
+    echo [regress] BUILD FAILED - sln, see "%OUT%\build-sln.txt"
+    exit /b 1
+)
+set "VSVARS=C:\Program Files\Microsoft Visual Studio\2022\Community\VC\Auxiliary\Build\vcvars64.bat"
+if not exist "%VSVARS%" (
+    echo [regress] vcvars64.bat not found - cannot build out-of-sln suites
+    exit /b 1
+)
+call "%VSVARS%" >nul
+if errorlevel 1 (
+    echo [regress] vcvars64 init failed
+    exit /b 1
+)
+echo [regress] build: deep_test...
+msbuild "%ROOT%\tools\deep_test\deep_test.vcxproj" /m /nologo /v:m /p:Configuration=Debug /p:Platform=x64 > "%OUT%\build-deep.txt" 2>&1
+if errorlevel 1 (
+    echo [regress] BUILD FAILED - deep_test, see "%OUT%\build-deep.txt"
+    exit /b 1
+)
+echo [regress] build: engine_test...
+msbuild "%ROOT%\tools\engine_test\engine_test.vcxproj" /m /nologo /v:m /p:Configuration=Release /p:Platform=x64 "/p:SolutionDir=%ROOT%\\" > "%OUT%\build-engine.txt" 2>&1
+if errorlevel 1 (
+    echo [regress] BUILD FAILED - engine_test, see "%OUT%\build-engine.txt"
+    exit /b 1
+)
+:skipbuild
+
 echo [regress] engine_test...
 "%ROOT%\bin\enginetest\engine_test.exe" > "%OUT%\engine_test.txt" 2>&1
 if errorlevel 1 (
