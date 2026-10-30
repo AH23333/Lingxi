@@ -393,3 +393,9 @@
 - **根因**：explorer/terminal 等 7 进程加载 ImeCore.dll，其管道客户端断连后自动 EnsureUIRunning 重拉 LingxiUI（pipeclient.cpp）——taskkill 后 DLL 重生实例**先占单实例 Mutex**（无 LINGXI_LOG 环境）；我 Start-Process 的带日志实例 ERROR_ALREADY_EXISTS → 静默转发退出。看到的宿主从来不是"我的"实例。
 - **正确做法**：宿主侧诊断**别依赖进程环境变量注入的日志**——优先行为探针（窗口枚举/注册表/文件产物，本轮实证 15/15 项全部免日志可验）；要日志走 OutputDebugStringW（DBWIN 捕获，无需环境变量）。重启宿主后先核 Get-Process StartTime 归属再推断；跨进程文本用 SendMessage(WM_GETTEXT)（GetWindowTextW 跨进程子控件不可靠）。
 - **规约**：常驻进程的"重生者"不只你的脚本——系统里任何持客户端重连逻辑的组件（此处是 7 个进程里的 IME DLL）都是竞争者；"我启动的进程"是未经验证的假设，PID+StartTime 才是证据。
+
+### 67. Windows 前台锁：IDE 内拉起的 e2e 宿主 SetForegroundWindow 静默失败——focusDoc=NULL 三连败 ⭐
+- **症状**：P3 门禁 e2e 三 attempt 全红同型（store='mor' 但 focused=''、focusDoc=0000000000000000）——插入成功而线程焦点文档为 NULL；前夜同命令曾全绿，代码 diff 仅回调归并（不触焦点链）。
+- **根因**：SetForegroundWindow 有前台锁——仅前台进程/最近收输入的进程有权设置前台；e2e 由 IDE（ZCode）内隐藏 console 拉起，无前台权 → 调用**静默失败** → TSF AssociateFocus 不绑定（CTF 键盘路由依赖真实 Win32 焦点）→ GetFocus 恒 NULL。前夜恰逢其他窗口持前台时侥幸通过。诊断关键：foreWnd 类名 Chrome_WidgetWin_1 一度误导向 Chrome——Electron/CEF 应用全用此类名，按窗口 PID 反查才知是 IDE 本尊。
+- **正确做法**：无人值守测试宿主抢前台一律 AttachThreadInput(myTid, foreTid, TRUE) → SetForegroundWindow/SetFocus → detach（tools/e2e/e2e.cpp ForceForeground，`20b9f9f`）；修后同环境 e2e attempt 1 直绿。窗口类名 ≠ 进程名——Chrome_WidgetWin_1 也属于 Edge/Electron IDE，先 GetWindowThreadProcessId 反查再下结论。
+- **规约**：涉及真实焦点路由（TSF/键盘前台）的自动化，"前台权"是环境输入的一部分——跨会话结果突变先查谁持前台（GetForegroundWindow+PID 归属），再疑代码。

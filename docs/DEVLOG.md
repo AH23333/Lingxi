@@ -832,3 +832,30 @@ R2-R4 收口后用户要求继续低难度功能、40 分钟内收口——选 R
 4. **排障收获（PITFALLS #65/#66）**：smoke 首跑 12 项 FAIL 逐层剥洋葱——①`FindWindowW(cls, $null)` 的 `$null` 被 PS 封送成空串（#37 同族，改 EnumWindows+GetClassNameW 按类枚举）；②无 BOM .ps1 中文字面串静默乱码（#12 静默变体，FindWindow 中文标题/Contains 全部假失败——加 UTF-8 BOM 后全绿）；③taskkill 宿主后 7 进程内的 ImeCore DLL 管道客户端 1 秒内重生宿主（无 LINGXI_LOG），带日志实例静默出局——"宿主没日志"假象根因；④跨进程子控件文本 GetWindowTextW 不可靠，改 SendMessage(WM_GETTEXT)。**转发链/设置窗/统计窗代码本身零缺陷**，前几轮"设置窗未创建"结论全部为工装误判。
 5. **残留核查**：usage.txt/lingxi-diag*/SetWin* 测试值全清；用户词典 440 条完好（10-30 21:38 后未触碰）。
 6. **分批提交**：26 文件（24 改+2 新）按 core→ui→docs 三批（文件在交互六~十间大量重叠无法按交互切分；ImeCore 依赖 pinyin.cpp 必须随 core 同批）。
+
+## 2026-10-31 夜（用户睡眠期授权自主重构：P1→P2→P3 三段落地）
+
+依据 docs/ARCH-ASSESSMENT.md §5 路线推进；纪律：**纯代码搬移、公共 API 不变、每段 build+regress+真机 smoke 三门禁全绿才提交**，三段独立提交保持回滚粒度。
+
+### P1 拆分 settingsui.cpp（`eda3083`）
+- 2868 行 → 6 文件：settingsui.cpp（设置窗 1796）/ tray.cpp（托盘+主窗 384）/ userdictwnd.cpp（用户词典窗+词典存储 748）/ helpwnd.cpp（帮助窗 288）/ statswnd.cpp（统计窗 221）/ settingsbackup.cpp（设置备份 155）。
+- 新增 ui/uiinternal.h = 拆分后内部共享面（跨文件符号声明；各文件私有状态留匿名命名空间）——只限拆分文件族使用不外泄。
+- 门禁：build Debug 零错；regress ALL PASS 一次过（tmp\regress-53168902）；真机 smoke1 15/15 + smoke2 8/8。
+
+### P2 拆分 window.cpp（`9e3d411`）
+- 1542 行 → 3 文件 + 1 内部头：candwnd_core.cpp（生命周期/状态翻页/固钉/toast/LayoutAndPosition/WndProc 分发壳 427）、candwnd_render.cpp（kBuildStamp/RebuildFonts/ApplySkin/LayoutMetrics/ToolbarHeight/ShowTip/HideTip/s_TipWndProc/OnPaint 407）、candwnd_interact.cpp（TipTextFor/CopyTextToClipboard/OpenWebSearch/HitTestButton + 10 个 On* 手势 744）、candwnd_internal.h（Dpi/Scale96/CalcToolbarRects，static→inline）。
+- WndProc 十个鼠标 case 体逐字提取为私有 On* 方法（window.h 仅增 10 条私有声明，公共 API 零改动）；OnMouseLeave/OnMouseHover 补 hwnd 参数（方法体内 InvalidateRect/tme.hwndTrack 需要）。
+- 核验：tmp/verify-p2.ps1 大括号匹配提取器对照 git show HEAD 原文 **40 块逐字 PASS**（唯一预期差异：OnSetCursor 尾 break→return FALSE）。
+- 门禁：build 零错；regress ALL PASS；smoke1 15/15 + smoke2 8/8。
+
+### P3 回调收口 UiHooks（`4118113` + e2e 加固 `20b9f9f`）
+- 6 组"文件级全局 + SetXxxCallback"归并为 uiinternal.h `struct UiHooks` + `g_hooks` 单结构（定义 settingsui.cpp；**唯一写点=main.cpp 装配段一次性填充**，消费点统一读 g_hooks.xxx）：reloadUserDict/showSymbols/settingsChanged/pinToggle（原 settingsui.cpp:825-828 四全局）+ phrasesChanged（原 g_phChanged/phraseui.cpp:32）+ hotPhrasesChanged（原 g_hpChanged/hotphraseui.cpp:35）。
+- 6 个 setter 全退役（settingsui.h×4、phraseui.h、hotphraseui.h 声明与各自 cpp 定义删除）；BuildDiagnosticsText 声明由 settingsui.h 全局命名空间迁 uiinternal.h lingxi 命名空间（main.cpp 定义加 lingxi:: 限定，statswnd.cpp 调用点零改动、settingsui.h include 顺手移除）。
+- 顺带去重：phraseui/hotphraseui 匿名 ns 私有 ReadFileBytes/WriteFileBytes 与 userdictwnd.cpp 共享实现逐字等价（原子 .tmp+MoveFileEx）——include uiinternal.h 后重载歧义 C2668 暴露，删私有副本转共享实现。
+- **e2e 门禁三连红→真修**：foreWnd=Chrome_WidgetWin_1 实为 IDE（ZCode）持前台，无前台权的 e2e 宿主 SetForegroundWindow 静默失败 → AssociateFocus 不绑定 → focusDoc=NULL（PITFALLS #67）。修 tools/e2e/e2e.cpp ForceForeground（AttachThreadInput 抢前台），修后同环境 attempt 1 直绿。独立提交 20b9f9f。
+- 门禁：build 零错；regress ALL PASS（tmp\regress-1102421052）；smoke1 15/15 + smoke2 8/8。
+- 收尾：宿主恢复运行态（bin\Debug P3 新二进制 + 真实设置 ToggleMode=4/CandidateCount=9/DarkMode=1/FuzzyGroups=0xff 完好无污染）；usage.txt 为 smoke1 播种→清零口径残留（既有测试行为，与前两段门禁一致）。
+
+### 备注
+- 工装沉淀：tmp/verify-p2.ps1（括号匹配逐块核验器，可复用后续拆分段）、tmp/smoke1.ps1（15 项）/tmp/smoke2.ps1（8 项）继续作为真机门禁。
+- 三段净效果：ui 层最大文件 2868→1796（settingsui.cpp）、1542 行 window.cpp 消失（3 文件均 <744）、9+ 散装 setter 收敛为 1 结构体 1 写点；公共头（window.h/settingsui.h）与 DLL/引擎零改动。
