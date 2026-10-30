@@ -304,6 +304,7 @@ constexpr int IDC_CHK_LLMMULTIPATH = 119; // LLM 多路采样（R3 §3，默认�
 constexpr int IDC_BTN_HOTPHRASES = 118; // 快捷短语管理入口
 constexpr int IDC_BTN_PHRASES = 120;    // R2 自定义短语管理入口
 constexpr int IDC_CMB_OPACITY = 126;    // 候选窗不透明度
+constexpr int IDC_CHK_ASSOCPICK = 130;  // 选词联想开关（GAP §11)
 
 HWND g_hMain = nullptr;    // 隐藏消息窗口（托盘宿主）
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
@@ -313,7 +314,7 @@ HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
      g_hChkCnPunct = nullptr, g_hChkFuzzy = nullptr,
      g_hChkVMode = nullptr,
      g_hChkShuangpin = nullptr, g_hChkSymbolHotkey = nullptr, g_hChkTraditional = nullptr,
-      g_hChkLlmRerank = nullptr, g_hChkLlmMultiPath = nullptr;
+      g_hChkLlmRerank = nullptr, g_hChkLlmMultiPath = nullptr, g_hChkAssocPick = nullptr;
 HWND g_hChkFz[8] = {}; // 模糊音组细分开关（8 组）
 HWND g_hCmbOpacity = nullptr;
 HFONT g_hFont = nullptr;        // 12px：通用控件（用户词典窗沿用）
@@ -367,6 +368,7 @@ void LoadToControls()
       for (int z = 0; z < 4; z++) if (s.candidateOpacity == kOps[z]) oi = z;
       if (g_hCmbOpacity) ComboBox_SetCurSel(g_hCmbOpacity, oi); }
     SetToggle(g_hChkLlmMultiPath, s.llmMultiPath);
+    SetToggle(g_hChkAssocPick, s.assocAfterPick);
     wchar_t buf[16];
     _snwprintf_s(buf, _TRUNCATE, L"%u", s.candidateCount);
     Edit_SetText(g_hEdtCount, buf);
@@ -403,6 +405,7 @@ void SaveFromControls()
     { const uint32_t kOps[] = {100, 90, 80, 70}; int oi = g_hCmbOpacity ? ComboBox_GetCurSel(g_hCmbOpacity) : 0;
       s.candidateOpacity = kOps[oi >= 0 && oi < 4 ? oi : 0]; }
     s.llmMultiPath = ToggleOn(g_hChkLlmMultiPath);
+    s.assocAfterPick = ToggleOn(g_hChkAssocPick);
     wchar_t buf[16] = L"";
     Edit_GetText(g_hEdtCount, buf, 16);
     int n = _wtoi(buf);
@@ -1616,6 +1619,9 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_hChkLlmMultiPath = mkToggle(IDC_CHK_LLMMULTIPATH);
     mkRow(L"LLM 多路采样", L"实验：贪心+采样两路投票，重排更稳定，进一步增加 CPU 占用",
           g_hChkLlmMultiPath, CK_TOGGLE, 44);
+    g_hChkAssocPick = mkToggle(IDC_CHK_ASSOCPICK);
+    mkRow(L"选词联想", L"中文上屏后自动弹出联想候选，可点选或空格连续输出；其他按键即撤销",
+          g_hChkAssocPick, CK_TOGGLE, 44);
 
     EnumChildWindows(g_hSettings, [](HWND h, LPARAM lp) -> BOOL {
         SendMessageW(h, WM_SETFONT, (WPARAM)lp, TRUE);

@@ -95,6 +95,8 @@ public:
     // ---- 键盘选词 / 状态 ----
     bool CandidatesVisible();
     void InsertCandidate(uint32_t index);
+    void SendAssocCtx();           // 选词联想（GAP §11）：读光标前文+caret 发 CTX_F_ASSOC 帧
+    bool AssocEligible() const;     // 联想资格闸：中文模式+开关联动+激活（上屏两处/点选连发共用）
     void ClearCandidates();
     void SendHide();
     // 提交键专用（空格/Tab/数字/标点首选）：最新版本的候选尚未回包时有界等待
@@ -185,6 +187,10 @@ private:
     std::vector<std::wstring> _cands;
     std::vector<uint32_t> _candCover; // 与 _cands 平行：各候选消耗的拼音前缀字符数（B1）
     uint32_t _verSent = 0;     // 最近发出的上下文版本
+    // 选词联想态账（GAP §11）：_assocReq=联想帧已发出等回包（防双发+回包认账）；
+    // _assocShown=联想候选已显示（无组合非选词按键即撤销；点选时即"来自联想窗"）。
+    bool _assocReq = false;
+    bool _assocShown = false;
     uint32_t _verCands = 0;    // 候选对应的版本
     uint32_t _replaceLen = 0;  // 上屏前需删除的光标前字符数
     uint32_t _pageStart = 0;   // 拼音候选当前页首个候选的全局索引（0/9/18...）

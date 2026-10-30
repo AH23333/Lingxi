@@ -1509,6 +1509,96 @@ int wmain()
                        L"T17 隔音符xi'an空格提交西安", d17c);
             }
         }
+        // ---- T18 选词联想（GAP §11 真机行为验证）----
+        // a) 上屏联想候选后 sleep 再按空格：应连出下一个联想词（候选由 '今' 上屏
+        //    后主动发的 CTX_F_ASSOC 帧生成；无联想时空格只会直写空格）。
+        // b) 联想在途期继续打全新拼音（ming 上屏后打 hao）：新组合必须精确接管，
+        //    空格提交的是"明好"而非旧联想候选（撤销护栏 + 旧帧对号失效双重证明）。
+        auto hex18 = [](const std::wstring& s) {
+            std::wstring h;
+            wchar_t buf[8];
+            for (wchar_t ch : s) { swprintf_s(buf, L"%04X,", (unsigned)ch); h += buf; }
+            return h;
+        };
+        {
+            EnsurePinyinMode(pKm);
+            ClearFocusedText(pTm);
+            const wchar_t* seqA = L"jintian";
+            bool typeOkA = true;
+            for (const wchar_t* q = seqA; *q; q++)
+            {
+                wchar_t s[2] = { *q, 0 };
+                if (!TypeLetters(pKm, s)) { typeOkA = false; break; }
+                Sleep(60);
+            }
+            PumpMessages();
+            Sleep(150);
+            TypeKey(pKm, VK_SPACE);   // 提交"今…"首选
+            PumpMessages();
+            Sleep(2600);              // 联想帧往返：debounce 400 + 预测 + CANDS 回包
+            std::wstring t1 = ReadFocusedText(pTm);
+            TypeKey(pKm, VK_SPACE);   // 联想候选已显示 → 提交其首选
+            PumpMessages();
+            Sleep(200);
+            std::wstring t2 = ReadFocusedText(pTm);
+            // 联想生效判据：文本变长且新增首字符是汉字非空格（无联想时空格=直写" "）
+            bool grewHanzi = t2.size() > t1.size() && t2[t1.size()] != L' ' &&
+                t2[t1.size()] >= 0x4E00 && t2[t1.size()] <= 0x9FFF;
+            bool noRawA = t2.find(L"jintian") == std::wstring::npos;
+            wchar_t d18a[260];
+            _snwprintf_s(d18a, _TRUNCATE, L"t1[%u]=%s t2[%u]=%s grew=%d noRaw=%d ok=%d",
+                         (unsigned)t1.size(), hex18(t1).c_str(),
+                         (unsigned)t2.size(), hex18(t2).c_str(),
+                         (int)grewHanzi, (int)noRawA, (int)typeOkA);
+            Report(grewHanzi && noRawA && typeOkA, L"T18a 上屏后空格连出联想候选", d18a);
+        }
+        {
+            EnsurePinyinMode(pKm);
+            ClearFocusedText(pTm);
+            const wchar_t* seqB = L"ming";
+            bool typeOkB = true;
+            for (const wchar_t* q = seqB; *q; q++)
+            {
+                wchar_t s[2] = { *q, 0 };
+                if (!TypeLetters(pKm, s)) { typeOkB = false; break; }
+                Sleep(60);
+            }
+            PumpMessages();
+            Sleep(150);
+            TypeKey(pKm, VK_SPACE);   // 提交"明"
+            PumpMessages();
+            Sleep(2600);              // 联想窗口期
+            const wchar_t* seqC = L"hao";
+            for (const wchar_t* q = seqC; *q; q++)
+            {
+                wchar_t s[2] = { *q, 0 };
+                TypeLetters(pKm, s);   // h 触发联想撤销 + 新组合
+                Sleep(60);
+            }
+            PumpMessages();
+            Sleep(200);
+            TypeKey(pKm, VK_SPACE);   // 提交新组合 hao 的首选（期望"好"）
+            PumpMessages();
+            Sleep(200);
+            std::wstring t = ReadFocusedText(pTm);
+            // 期望恰为两字且第二字="好"（新组合首选，非旧联想词）；
+            // 首选不锁"明"——ming 的字典首选现为"名"（频率序），任何汉字即可
+            bool ok2nd = t.size() == 2 && t[1] == 0x597D;
+            bool ok1st = t.size() == 2 && t[0] >= 0x4E00 && t[0] <= 0x9FFF;
+            bool noRawB = t.find(L"ming") == std::wstring::npos
+                       && t.find(L"hao") == std::wstring::npos;
+            wchar_t d18b[240];
+            const int iFirst = (int)ok1st;
+            const int iSecond = (int)ok2nd;
+            const int iNoRaw = (int)noRawB;
+            const int iType = (int)typeOkB;
+            _snwprintf_s(d18b, _TRUNCATE, L"t[%u]=%s first=%d second=%d noRaw=%d ok=%d",
+                         (unsigned)t.size(), hex18(t).c_str(),
+                         iFirst, iSecond, iNoRaw, iType);
+            Report(ok1st && ok2nd && noRawB && typeOkB,
+                   L"T18b 联想期新组合精确接管", d18b);
+        }
+
     } while (false);
 
     // ---- 清理 ----

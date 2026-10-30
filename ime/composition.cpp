@@ -251,6 +251,108 @@ void CTextService::DetectPinyinMode()
 
 // ==================== 组合编辑原语 ====================
 
+// ==================== 选词联想（GAP §11 主线一） ====================
+// 根因：中文选词上屏 → _fSelfInsert 守卫（原为符号插入设计，PITFALL #24）抑制
+// OnEndEdit 上下文预测 → 联想永远不触发。修复=上屏路径显式发起：复用现成的
+// "读前文+caret 发无组合 CTX 帧"通道——UI 侧把该帧当普通续写做链预测（LLM 优先，
+// n-gram 兜底），候选窗弹出；点其候选=上屏+连发下一轮；空格/数字在联想窗可见
+// 时是既有选词键（对标 MS 空格连出）；其他任何无组合按键立即撤销（OnTestKeyDown）。
+bool CTextService::AssocEligible() const
+{
+    // ⚠️ LoadSettings() 每次现读（50ms 级设置页语义，同 _inlineComp 消费点），
+    // 用户拨开关无需重启输入法即时生效。
+    return _pinyinMode && !_tempEnglish && _fActivated &&
+           LoadSettings().assocAfterPick;
+}
+
+void CTextService::SendAssocCtx()
+{
+    if (!AssocEligible()) return;
+    {
+        EnterCriticalSection(&_cs);   // 防双发：已有联想在途即跳过
+        if (_assocReq) { LeaveCriticalSection(&_cs); return; }
+        _assocReq = true;
+        LeaveCriticalSection(&_cs);
+    }
+    ITfContext* pCtx = nullptr;
+    if (!GetFocusContext(_pThreadMgr, &pCtx))
+    {
+        EnterCriticalSection(&_cs); _assocReq = false; LeaveCriticalSection(&_cs);
+        return;
+    }
+    ITfContext* pCtxSession = pCtx;
+    auto task = [this, pCtxSession](TfEditCookie ec) -> HRESULT
+    {
+        // inline 组合异常残留（上屏会话未跑完）时读到的位置不可靠：放弃本轮。
+        if (_compRange)
+        {
+            EnterCriticalSection(&_cs); _assocReq = false; LeaveCriticalSection(&_cs);
+            return S_OK;
+        }
+        // 本会话排在提交会话之后（TSF 同 context FIFO）→ 读到的是上屏后的新语境。
+        RECT rc{};
+        bool hasRect = false;
+        ITfContextView* pView = nullptr;
+        if (SUCCEEDED(pCtxSession->GetActiveView(&pView)) && pView)
+        {
+            RECT rcText{};
+            if (SUCCEEDED(SafeGetTextExt(pView, pCtxSession, ec, nullptr, &rcText)))
+            { rc = rcText; hasRect = true; }
+            pView->Release();
+        }
+        if (!hasRect)
+        {
+            GUITHREADINFO gti{ sizeof(gti) };
+            if (GetGUIThreadInfo(GetCurrentThreadId(), &gti) && gti.hwndCaret)
+            {
+                POINT pt = { gti.rcCaret.left, gti.rcCaret.bottom };
+                ClientToScreen(gti.hwndCaret, &pt);
+                rc = { pt.x, pt.y, pt.x, pt.y };
+                hasRect = true;
+            }
+        }
+        std::wstring pre;
+        TF_SELECTION sel{};
+        ULONG fetched = 0;
+        if (SUCCEEDED(pCtxSession->GetSelection(ec, TF_DEFAULT_SELECTION, 1, &sel, &fetched)) &&
+            fetched == 1 && sel.range)
+        {
+            ITfRange* pBack = nullptr;
+            if (SUCCEEDED(sel.range->Clone(&pBack)) && pBack)
+            {
+                pBack->Collapse(ec, TF_ANCHOR_END);
+                LONG moved = 0;
+                pBack->ShiftStart(ec, -kCtxMaxChars, &moved, NULL);
+                wchar_t buf[kCtxMaxChars + 1] = L"";
+                ULONG cch = 0;
+                if (SUCCEEDED(pBack->GetText(ec, 0, buf, kCtxMaxChars, &cch)) && cch > 0)
+                    pre.assign(buf, cch);
+                pBack->Release();
+            }
+            sel.range->Release();
+        }
+        EnterCriticalSection(&_cs);
+        const bool carry = PinyinActive() || _compRange;   // 期间已开新组合：作废本轮
+        if (carry || pre.empty() || !hasRect) _assocReq = false;
+        LeaveCriticalSection(&_cs);
+        if (carry || pre.empty() || !hasRect)
+        {
+            LX_LOG(L"ime", L"联想作废 carry=%d preLen=%u rect=%d",
+                   (int)carry, (unsigned)pre.size(), (int)hasRect);
+            return S_OK;   // 文档头/拿不到位置：不弹（下次上屏再说）
+        }
+        LX_LOG(L"ime", L"联想发出 preLen=%u caret=(%d,%d)",
+               (unsigned)pre.size(), rc.left, rc.top);
+        // _assocReq 保持到 CANDS 对号（OnCandidates 认账转 _assocShown）
+        SendCtx(pre, rc, CTX_F_ASSOC, L"");
+        return S_OK;
+    };
+    auto* pSession = new CPinyinEditSession(this, pCtx, task);
+    RequestSessionEx(pCtx, _tfClientId, pSession, TF_ES_READ);
+    pSession->Release();
+    pCtx->Release();
+}
+
 void CTextService::PinyinStart(wchar_t ch)
 {
     // 去激活/模式切换过渡期绝不启组合（此时文档栈可能正被 CTF 重建）
@@ -479,6 +581,7 @@ void CTextService::PinyinCommitHanzi(const std::wstring& hanzi, uint32_t cover)
             return;
         }
         PinyinResetNoInline();
+        SendAssocCtx();   // 选词联想：全量上屏后主动发联想帧（GAP §11）
         return;
     }
     ITfContext* pCtx = nullptr;
@@ -504,6 +607,7 @@ void CTextService::PinyinCommitHanzi(const std::wstring& hanzi, uint32_t cover)
     }
     ClearCandidates();
     SendHide();
+    SendAssocCtx();   // inline 全量上屏后同样联想（GAP §11）
 }
 
 void CTextService::PinyinCommitRaw()
@@ -856,6 +960,25 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         {
             if (wParam == VK_BACK)
                 _lastBackspaceTick = GetTickCount64(); // 退格删除：抑制随之而来的补全预测
+            // 联想窗选词道（GAP §11）：_assocShown 时空格/数字复用点选路
+            // InsertCandidate（含 replaceLen 替换、自学习、上屏连发下一轮联想）。
+            if (_assocShown &&
+                (wParam == VK_SPACE || (wParam >= L'1' && wParam <= L'9')))
+            {
+                uint32_t idx;
+                uint32_t count;
+                EnterCriticalSection(&_cs);
+                idx = _pageStart + (wParam == VK_SPACE ? 0u
+                                     : (uint32_t)(wParam - L'1'));
+                count = (uint32_t)_cands.size();
+                LeaveCriticalSection(&_cs);
+                if (idx < count && _verCands == _verSent)
+                {
+                    *pfEaten = TRUE;
+                    InsertCandidate(idx);   // 提交+清窗+（命中联想态）连发下一轮
+                    return;
+                }
+            }
             if (CommitChinesePunct(wParam)) return;    // 中文标点（已上屏，吃掉）
             *pfEaten = FALSE;
             return;

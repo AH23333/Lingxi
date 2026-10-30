@@ -381,6 +381,8 @@ void CTextService::OnCandidates(uint32_t ver, uint32_t replaceLen, std::vector<s
         _cands = std::move(cands);
         _candCover = std::move(cover);
         _verCands = ver;
+        _assocShown = _assocReq;   // 只有联想请求的回包进入联想态（GAP §11）
+        _assocReq = false;      // 联想周期闭合（点选连发另行判定 _assocShown）
         _replaceLen = replaceLen;
         _pageStart = 0; // 新一批候选回到第一页
         latest = true;
@@ -579,6 +581,9 @@ void CTextService::InsertCandidate(uint32_t index)
     // ASYNCDONTCARE 在宿主 UI 线程的按键路径上实际为同步执行；
     // _fSelfInsert 覆盖整个调用窗口以过滤自激发的 OnEndEdit。
     _fSelfInsert = TRUE;
+    // 从联想窗点选（_assocShown 为真）：上屏后连发下一轮联想（GAP §11）。
+    // 同 UI 线程读写（OnCandidates/OnTestKeyDown/本函数皆在宿主 UI 线程），无锁可。
+    const bool assocHit = _assocShown;
     bool ok = false;
     {
         EnterCriticalSection(&_cs);
@@ -591,7 +596,9 @@ void CTextService::InsertCandidate(uint32_t index)
     _fSelfInsert = FALSE;
 
     ClearCandidates();
+    _assocShown = false;
     if (ok) SendHide();
+    if (ok && assocHit) SendAssocCtx();
 }
 
 bool CTextService::InsertTextAtSelection(const std::wstring& text)
@@ -696,6 +703,27 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LP
         if (_capsDown) _capsUsed = true;
     }
 
+    // 选词联想撤销（GAP §11）：联想候选显示中，任何非选词键立即撤销并放行。
+    // 选词键保留（空格/Tab/回车/数字/减号句号=提交、方向键=翻页移动）——对标
+    // MS"可空格连续输出"；字母键走新组合自然替换（PinyinStart 清候选），此处
+    // 不拦字母（PinyinKeyEaten 在组合中被调用时字母本就被吃）。
+    if (_assocShown && !PinyinActive())
+    {
+        // 只有"选词键"保留联想（空格=首选已在 Test 三面门认领；数字=第 n 词）；
+        // Tab/回车/方向/翻页键的提交道只在组合中成立，空组合下放行并撤销，
+        // 防候选留在屏上语义漂变。
+        const bool keepAssoc =
+            wParam == VK_SPACE ||
+            (wParam >= L'1' && wParam <= L'9');
+        if (!keepAssoc)
+        {
+            LX_LOG(L"ime", L"联想撤销 vk=0x%02X", (uint32_t)wParam);
+            _assocShown = false;
+            _assocReq = false;    // 同步作废在途联想请求：迟到 CANDS 认账即假（防复活）
+            ClearCandidates();
+            SendHide();
+        }
+    }
     // 拼音模式优先（字母进组合、组合态拦截编辑键）
     if (PinyinKeyEaten(wParam))
     {
@@ -714,7 +742,11 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LP
     bool visible = CandidatesVisible();
     if (visible) // 逐键日志只记录候选交互期，避免真实使用时刷屏
         LX_LOG(L"key", L"OnTestKeyDown vk=%u visible=1", (uint32_t)wParam);
-    *pfEaten = (visible && !CtrlOrAltDown() && IsSelectionKey(wParam)) ? TRUE : FALSE;
+    // 联想窗（_assocShown）空格也认领（GAP §11 可空格连续输出）：IsSelectionKey
+    // 为防误伤英文补全 ghost（空格应入正文）本不含空格，联想态单独加闸；
+    // 真正提交在 HandlePinyinKey 空组合联想选词道（复用 InsertCandidate）。
+    *pfEaten = (visible && !CtrlOrAltDown() &&
+              (IsSelectionKey(wParam) || (_assocShown && wParam == VK_SPACE))) ? TRUE : FALSE;
     return S_OK;
 }
 

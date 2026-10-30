@@ -86,6 +86,7 @@ Settings LoadSettings()
     if (GetDword(hKey, L"LlmMultiPath", v)) s.llmMultiPath = v != 0;
     if (GetDword(hKey, L"SkinIndex", v) && v <= 4) s.skinIndex = v;
     if (GetDword(hKey, L"CandidateOpacity", v) && v >= 70 && v <= 100) s.candidateOpacity = v;
+    if (GetDword(hKey, L"AssocAfterPick", v)) s.assocAfterPick = (v != 0);  // 缺键=结构默认(true)
 
     RegCloseKey(hKey);
     return s;
@@ -119,6 +120,7 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"LlmMultiPath", s.llmMultiPath ? 1 : 0);
     SetDword(hKey, L"SkinIndex", s.skinIndex);
     SetDword(hKey, L"CandidateOpacity", s.candidateOpacity);
+    SetDword(hKey, L"AssocAfterPick", s.assocAfterPick ? 1u : 0u);
 
     RegCloseKey(hKey);
 }
@@ -159,6 +161,7 @@ void SaveSettingsDiff(const Settings& s)
     PutDwordDiff(hKey, L"LlmMultiPath", s.llmMultiPath ? 1 : 0);
     PutDwordDiff(hKey, L"SkinIndex", s.skinIndex);
     PutDwordDiff(hKey, L"CandidateOpacity", s.candidateOpacity);
+    PutDwordDiff(hKey, L"AssocAfterPick", s.assocAfterPick ? 1u : 0u);
     RegCloseKey(hKey);
 }
 } // namespace lingxi

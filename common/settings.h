@@ -37,6 +37,8 @@ struct Settings
     bool llmMultiPath = false;     // LLM 多路采样（R3 §3）：贪心路跑完再采样路投票/合并候选。
                                    // 默认关：每次 LLM 调用约 +150ms CPU；seed=hash(prompt) 固定
                                    // 防候选闪烁；拼音重排只做 Borda 投票，top-1 不一致回退原序
+    bool assocAfterPick = true;   // 选词联想（GAP §11）：中文全量上屏/联想点选上屏后自动弹联想
+                                   // 候选（可空格连续输出，对标 MS）；任何无组合按键即撤销。默认开。
     uint32_t skinIndex = 0;        // 候选窗配色（ui/uistyle.h kSkins）：0 翠绿（默认）
     uint32_t candidateOpacity = 100; // 候选窗不透明度%（70/80/90/100），GAP §3 透明度定制
                                    // 1 青碧 2 橙 3 红 4 金——全 UI 统一换肤

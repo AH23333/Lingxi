@@ -79,6 +79,10 @@ struct MsgCtx
 // MsgCtx.flags 位定义
 constexpr uint8_t CTX_F_PINYIN = 0x01;
 constexpr uint8_t CTX_F_CTX_PREFIX = 0x02;
+// CTX_F_ASSOC（GAP §11 选词联想）：上屏后 DLL 主动发起的联想帧——text=光标前文
+// （非空）、不带 PINYIN 位。旧 UI 把它当普通续写帧照常链预测（天然向后兼容）；
+// 新 UI 侧行为同续写，标志只在 DLL 侧用于联想态记账（撤销/防双发/连发）。
+constexpr uint8_t CTX_F_ASSOC = 0x04;
 
 // 旧版 MsgCtx（无 ctxChars）：宿主进程里驻留的上一版 DLL 仍按此格式发帧
 // （能改名不能覆盖，重建后老 DLL 继续跑到进程退出），接收端必须兼容。
