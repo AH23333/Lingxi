@@ -315,3 +315,8 @@
 - **取证手法**：日志文件本身是 **UTF-16 无 BOM**——Select-String 直接搜会漏/乱，必须 `[System.IO.File]::ReadAllLines($p, [System.Text.Encoding]::Unicode)` 读；两实例竞争与否看日志里 [py] 行有无即可判定（DLL 与 UI 同文件追加写）。
 - **正确做法**：需要 UI 侧日志时先让 env 实例占住单例（taskkill 后立即以 env 拉起，抢在 orphan 宿主 respawn 之前；或先杀掉持有 DLL 的宿主）。**规约：单例程序被外部 respawn 时，"谁先占坑"取决于宿主环境而非启动者意图——带环境变量调试单例服务，先清占坑者。**
 
+### 55. FindWindowW 跨 window station 恒返回 NULL——同 Session 不等于同窗口站，观测通道要选对 ⭐
+- **症状**：设置窗"转发不弹窗"追了多轮：进程侧日志显示创建成功且 SW_SHOW，但 FindWindowW（按类名/标题）恒 0，一度判成"窗口被神秘销毁"的 P0。
+- **根因**：agent 进程与交互桌面**同 Session 但不同 Window Station**。FindWindow 是"调用线程所在线窗口站"作用域——本会话窗口站里没有那个窗口，返回 0 是观测无效而非程序异常。最终用 Get-Process.Threads + EnumThreadWindows（按目标进程线程枚举）拿到真句柄，vis=True 实锤窗口一直正常显示，转发链从未断过。
+- **正确做法**：观测其他会话/窗口站的窗口，用 EnumThreadWindows(目标进程线程) 或 UIA，别信 FindWindow；"查不到"先自问**我的眼睛在哪个房间**（#45 同族：跨会话观测假象的窗口站版）。转发/弹窗类问题以**进程侧日志（创建/复用打点）为第一证据**，窗口枚举为辅。
+

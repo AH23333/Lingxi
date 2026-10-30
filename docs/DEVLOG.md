@@ -553,6 +553,6 @@ R2-R4 收口后用户要求继续低难度功能、40 分钟内收口——选 R
 
 ## 2026-10-30 午后（Loomy 续：转发疑云彻底结案——观测坑第二层）
 
-- 「--settings 转发不弹窗」真结案：窗口**一直正常创建并显示**（EnumThreadWindows 实锤 LingxiSettingsWnd vis=True）；此前所有"查无窗口"都是 **FindWindowW 跨 window station 观测假象**（PITFALLS #46，#45 同族第二层）。转发链无 bug。
+- 「--settings 转发不弹窗」真结案：窗口**一直正常创建并显示**（EnumThreadWindows 实锤 LingxiSettingsWnd vis=True）；此前所有"查无窗口"都是 **FindWindowW 跨 window station 观测假象**（PITFALLS #55，#45 同族第二层）。转发链无 bug。
 - 排查中捞到的真实防御缺口已修：CreateSettingsWindow 复用路径不校验句柄存活——若窗口曾被销毁，转发将永远静默空转。改为 `g_hSettings && IsWindow()` + 失效句柄置空重建（带日志）。
 - 遗留两项视觉验证（设置页滚动真值/勾选 checked 渲染）：桌面被并行会话 StarMark 活跃占用，遮挡不可靠取证——移交下轮桌面空闲时做（窗口枚举方法已改用 EnumThreadWindows）。
