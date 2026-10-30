@@ -57,3 +57,9 @@
 - `tools/e2e/e2e.cpp`：端到端测试宿主（合成 ITextStoreACP + 模拟按键）
 - `tools/build_dict.py`：词表加工（g10k + jieba → en/zh 词表）
 - `deps/win-classic-samples`：官方 TSF 样本参照（step01-06 + tsfapp）
+
+## 2026-10-30 增量（Loomy 自主推进轮）
+
+- **模糊音组细分开关 ✅（`ef28cda`）**：fuzzyGroups 位掩码 5 组独立勾选（zh/z、ch/c、sh/s、n/l、前后鼻音），缺键=全组与历史一致；组变更热重建模糊索引；设置页 5 行子勾选；engine_test P8b 4 断言，regress 一次全绿（engine 218/0）。
+- **R3 压测收口 ✅**：真机 63 样本 p50=62 / p90=140 / p95=187 / p99=453ms，打字 CPU 4%（单核），抖动 0——数据入 GAP §10。
+- 进行中：候选窗透明度定制（GAP §3 透明度行）。

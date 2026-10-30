@@ -556,3 +556,9 @@ R2-R4 收口后用户要求继续低难度功能、40 分钟内收口——选 R
 - 「--settings 转发不弹窗」真结案：窗口**一直正常创建并显示**（EnumThreadWindows 实锤 LingxiSettingsWnd vis=True）；此前所有"查无窗口"都是 **FindWindowW 跨 window station 观测假象**（PITFALLS #55，#45 同族第二层）。转发链无 bug。
 - 排查中捞到的真实防御缺口已修：CreateSettingsWindow 复用路径不校验句柄存活——若窗口曾被销毁，转发将永远静默空转。改为 `g_hSettings && IsWindow()` + 失效句柄置空重建（带日志）。
 - 遗留两项视觉验证（设置页滚动真值/勾选 checked 渲染）：桌面被并行会话 StarMark 活跃占用，遮挡不可靠取证——移交下轮桌面空闲时做（窗口枚举方法已改用 EnumThreadWindows）。
+
+## 2026-10-30 午后（Loomy 自主推进：R3 压测收口 + 模糊音组细分）
+
+- R3 遗留压测做完：pf_ux 三轮 63 样本，p50=62ms / p95=187ms / p99=453ms（冷缓存尾），打字 CPU 4%、零抖动——数字入 GAP §10，"真机 p50/p95"待办销账。
+- GAP R6 长尾项开工：**模糊音组细分开关**（`ef28cda`）——fuzzyGroups 位掩码（缺键=全组历史无感）、ComputeFuzzy 组门控、Predict 热载自动重建索引、设置页 5 行子勾选（一组未勾=退回全组防误操作）、engine_test P8b 门控 4 断言；regress 一次 ALL PASS（engine 218/0）。
+- 过程小坑：多行补丁脚本 CRLF/LF 锚点错位一次（改行级 splice 修复）；settingsui 全局声明误插逗号列表中间（重定位）。均编译门禁捕获，未逃逸。
