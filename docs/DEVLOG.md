@@ -655,3 +655,180 @@ R2-R4 收口后用户要求继续低难度功能、40 分钟内收口——选 R
 **e2e 假红事件（PITFALLS #60）**：19:47-58 负载噪声窗口 e2e 六连假红（pass-through 读空，3 attempt × 2 轮全同症状）；A/B/A 交替实验制造"二进制相关"假象；逐字节 diff 两版 DLL 仅 7 字节 PE 元数据差异（物理矛盾即证伪）；安静环境复跑同二进制直接绿。方法论：同源二进制"确定性分叉"先假设环境噪声，Get-FileHash+字节 diff+安静复现三步裁决。
 
 **全项目深度分析**：docs/DEEP-ANALYSIS.md（同类风险面/测试矩阵/架构债/取证方法论）。要点：选区契约面闭环；残留同类风险仅内联死代码（建议下轮删除专项）；P2 LINGXI_LOG 默认关致零 in-vivo 证据；P3 用户字典双写/路径双实现待复查；记事本人工抽测 SOP 建议。
+
+## 2026-10-30 夜二（Loomy：六项报障修复 + 引擎垃圾墙/长简拼双根因收口）
+
+**用户报障六项**：#1 v 键无输出、#2 toast 期间打字候选不弹、#3 补全窗漂移、#4 右键菜单异常、#5 垃圾候选+翻页、#6 符号面板关不掉。外加 probe 复测暴露的 gylgl 长简拼全灭（用户主诉"这后面会影响一堆问题"）。
+
+**六修复**：
+- **#1 vMode 退役**：settings vMode/settingsui 勾选/service `_vMode` 全删；v 走 PinyinStart 普通组合（"v" 非法拼音→引擎 0 候选→echo 回显；空格 CommitRaw 原样上屏 "v"/"vlog"）。真机 TSF 分发"Test 已吃→KeyDown FALSE 不保证回传"是旧悬账机制失灵根因（composition.cpp:936 注释）。
+- **#2 toast 定时器吞候选**：ShowModeToast 设 1s 自动消隐 timer(1)，WM_TIMER 到点整窗 SW_HIDE；toast 后紧随打字的候选帧被吞。修=Show()/SetPage() 入口 KillTimer(1)。
+- **#3 补全窗漂移**：CReadSession GetTextExt 用上下文范围 pBack（kCtxMaxChars 段 bbox）定位，长上下文锚到段首。修=改用插入点选区 pRange（editsession.cpp:45-54，职责分离：pBack 只管读文本）。
+- **#4 右键**：候选窗 WM_RBUTTONUP 补菜单，不加 SetForegroundWindow（保持 NOACTIVATE）。
+- **#5 垃圾候选+翻页**：垃圾墙根因=残段池+逐字硬拼（"嗯西啊"类三字拼接）。修=Generate 单一 tier 闸（tier!=0 路径仅发词典词，allInit 且 n-span>1 跳过；span==n 放宽 kPredictMaxCandidates、前缀碎词限 4）+候选数设置化（CandidateCount=9）+OnCandidates rerank 保页。probe 实证：un=59（嗯系绝迹、五年保留）、xian=60（西安居首、西啊嗯绝迹）。
+- **#6 面板三出口**：热键重按切替关闭（旧实现只置顶纹丝不动）+头部 × 显式出口（NOACTIVATE 收不到 Esc）+右键关闭。
+
+**引擎双修（PITFALLS #61/#62）**：
+- **v-INITIAL 排除**：单字母简拼把 v 当合法声母→[v][k-PARTIAL] 死头路径残段池发 k 声母字（vk→可）。修=简拼条件 `in[i] != 'v'`。T15 v+k+space='vk' 恢复；jv/qv/xv 降级 CommitRaw（边角记录）。
+- **longAllInit 近全跨度发射**：HEAD 遗留 `allInit && n>=4` / `prefixAllInit && initHead>=3` 两处整条 continue 杀掉一切 ≥4 声母纯简拼（gylg 0 候选→echo 小窗被感知"消失"；gylgl 无供应链管理）。修=longAllInit 标志+tier 闸前受限发射（span n-1..min(6,n)，span==n limit 60、span<n limit 4、uncovered 罚 8/音节）。probe 实证：gylg→[供应链|供应量|郭云龙|感应炉]、gylgl→[供应链管理]、xyzxyz→0、gyl=28 不回归。
+- **engine_test P4c 阈值 40→20**（PITFALLS #63）：40 是垃圾墙时代基线，健康基线 23，取 20 留余量。
+
+**验证状态**：probe 全基线 7 输入对照通过（nichifanlemawohenb=23/v/vk/vlog/gyl/gylg/gylgl/xyzxyz）；engine_test 重建单跑 0 FAIL（tmp/engine_test_manual.txt）；deep_test PASS + e2e attempt2 PASS（tmp/regress-2404128378）。**三套件全绿 regress 留待用户停机后**：现役宿主 PID 24504 是 21:52 二进制（无 22:16 longAllInit）且带 test-NS split-brain（PITFALLS #64），须重启后跑。
+
+**静态审计（用户用机期间，无交互测试）**：tier-0 ①②③④ 全段（④ all-init 头部闸与 longAllInit 顺序正确，拼接垃圾不复活）；EnqueuePredict 每客户端最新+全局有界；SendPinyinCtx 无长度截断；键分发 Shift/CapsLock 放行语义；SendHide 六处调用点语义（PinyinResetNoInline/部分提交收尾/失焦/空帧均正确）；symbolpanel 三出口+网格边界守卫；editsession #3 复核；WM_TIMER 仅 toast 定时器。**无新缺陷**。遗留疑点：0 候选 echo 窗"消失"感待真机定性（gylg 场景已根治，v/vk 场景停机后看）。
+
+**git 状态**：15 文件 dirty（HEAD=16e3e6c），待停机后全量回归绿再分批提交。
+
+## 2026-10-30 夜三（Loomy：候选窗工具条大版本——左键右键/按钮/拖拽全上）
+
+**用户需求**：继续优化 UI 与候选词框，尽可能多加功能，左键右键都用上，加按钮也行。
+
+**底部工具条**（window.cpp，替代原 +18 静态页码条）：
+- **‹ 页码 › 翻页按钮**：可点翻页（首/末页灰化），与滚轮/键盘翻页同夹取语义；页码居中显示。
+- **固/符/设 三按钮**（右组）：固=位置固定开关（生效中强调色点亮）、符=符号面板（与托盘/热键同 g_reqSymbols 路）、设=设置（g_reqSettings 路）。
+- **按钮 tooltip**：悬停 400ms 自绘小浮窗（懒建常驻隐藏复用，跨线程只 ShowWindow 不 DestroyWindow——避开跨线程销毁陷阱）；含用法提示（如"设置（右键换肤）"）。换按钮时重挂 TME_HOVER（一次性事件，不重挂则 tooltip 只出第一次）。
+- **光标反馈**：按钮手型（IDC_HAND）、拖拽手柄四向箭头（SIZEALL）——WM_SETCURSOR 全客户区分区。
+
+**拖拽移动 + 位置固定**：
+- 拼音回显行/工具条空白=拖拽手柄，按住移动窗口（SetCapture+光标偏移），松手即把当前位置写入固定设置（注册表持久化，重启宿主仍生效）。
+- 固定模式（candidatePinned=1）LayoutAndPosition 不再跟随光标，钳制到所在显示器工作区（拔显示器/改分辨率不丢窗）。
+- 固左键=切换、固右键=解除；toast 期间禁拖拽（防把固定坐标写到 toast 小窗位置）。
+
+**右键菜单增强**（候选行）：新增"复制该词"（CF_UNICODETEXT 剪贴板，失败静默）、"联网搜索该词"（Bing，UTF-8+百分号编码中文安全进 URL）。**设右键=循环换肤**（5 皮肤即时生效，免进设置页）。
+
+**设置新增**（settings.h/cpp 三字段三处读写）：CandidatePinned/CandidatePinX/CandidatePinY（int 负值经 DWORD 往返——多显示器左侧屏）。SaveFromControls 从 LoadSettings 起+diff 落盘，新字段不被设置页保存冲刷 ✓。
+
+**接线**（main.cpp）：wnd.SetButtonHandler → g_reqSymbols/g_reqSettings（Btn 枚举 Symbols/Settings 转发，翻页/固钉窗口内部自理）。
+
+**构建**：build.cmd 全绿（初版 drawBtn lambda const RECT* 编译错，按值传 RECT 修复）；--probe-pinyin 冒烟全基线不回归（gylg=4 候/gylgl=供应链管理/v 系 0/nichifanlemawohenb=23/xian=60 西安居首）。**视觉验证待宿主重启后**（现役宿主仍是旧二进制）。
+
+### 交互二（同夜续：功率键批）
+
+用户要求继续自主加功能，选纯增量可静态验证批：
+
+- **中键点击候选 = 置顶该词**（WM_MBUTTONUP；免开右键菜单，与菜单"置顶"同 ApplyCandidateDictOp(Pin) 路；toast 期间守卫）。
+- **Ctrl+左键候选 = 联网搜索、Shift+左键候选 = 复制**（WM_LBUTTONUP 修饰键分支，默认左键选词语义不变；word 在同一锁内解析，剪贴板/浏览器操作在锁外）。
+- **截断候选行悬停 tooltip 显示完整词条**：行宽 = `_width-2*pad`、文本 = `"N␣␣词"` 与 OnPaint 同口径测宽，超出才弹（复用按钮 tooltip 常驻窗）。**换行重挂 TME_HOVER**（每行独立 400ms 停留，与按钮 hover 同型）——否则 tooltip 只出首行。
+- **右键拼音回显行 = 复制拼音串**（词空 + pt 在回显行判定；回显行本无词典菜单，补上专属动作）。
+- **托盘菜单新增"固定候选窗位置"勾选项**（ID 2007）：勾选态读 candidatePinned；切换走新回调 SetPinToggleCallback → main 绑 `wnd.TogglePin()`（按窗口实际位置写入，settingsui 无位置信息的解法）。CandWindow::TogglePin 与"固"按钮左键同语义。
+- 接线：settingsui.h/.cpp（g_reqPinToggle + setter + 菜单项 + case）、main.cpp（绑定）、window.h/.cpp（TogglePin + 四个交互点）。
+- 构建全绿；probe 冒烟基线不回归（gylg/gylgl/xian/nichifanlemawohenb 全保持）。
+
+### 交互三（同夜续：托盘/滚轮批）
+
+- **开机自启动**：托盘菜单"开机自动启动"勾选项（ID 2008）。状态**以 HKCU\Run\LingxiIme 键为唯一真源**（不另存设置，杜绝双源漂移）；开=写引号包裹的 GetModuleFileNameW（带空格路径必需），关=删值。**发现**：该键已存在（早期 setup 写入 `tools\..` 路径形式）——同名同目标，IsAutoStartEnabled 正确识别为已开启，开关行为兼容；重开会改写为干净路径。
+- **托盘悬停文字状态化**：暂停时 tip 变"灵犀输入法（已暂停）"（AddTrayIcon 建立时按设置定、托盘"暂停预测"切换后 NIM_MODIFY 刷新 UpdateTrayTip）。设置页无暂停开关（托盘是唯一路径，无需额外挂钩）。
+- **Ctrl+滚轮=候选字号 ±1**（12–32 钳制）：先于翻页判定占位（Ctrl 按住时滚轮不翻页）；即时 RebuildFonts+LayoutAndPosition+写设置。设置页字号控件开着时不同步（g_updating 既有护栏，重开页即读新值；与设右键换肤同已知限制）。
+- **鼠标侧键翻页**：WM_XBUTTONUP 后退/前进键=上/下一页（DoPageStep 同夹取），return TRUE 防重复导航语义。
+- 构建全绿；probe 基线不回归。
+
+### 交互四（同夜续：帮助窗 + 符号"最近"页）
+
+- **使用帮助窗**（托盘菜单 2009）：只读多行 EDIT 速查页，集中列出全部交互（候选窗手势/修饰键/工具条/符号面板/托盘/词典）——功能越加越多后的可发现性兜底。WM_CTLCOLORSTATIC 修只读 EDIT 灰字；字体 static 复用防反复开关泄漏；重复打开复用已开窗。
+- **符号面板"最近"页**：
+  - settings 三件套加 `recentSymbols`（std::wstring，\x1F 分隔、最新在前、≤12 项）：GetString/SetString（REG_SZ，2KB 上限、NUL 填充剥离）+ Load/Save/Diff 三处；settings.h 首次引入 <string>（DLL 共用无碍）。
+  - symbolpanel：`CatAt(i)` 访问器（0=动态"最近"，1..N=静态分类）、`kTabCount=kCatCount+1` 全部触点改造（标签命中/绘制循环/宽度/×按钮区/网格）；点击符号 AddRecent（去重前移+SaveSettingsDiff+正在看"最近"页即时刷新）；空态提示"暂无最近使用"（PanelHeight 保一行高）；打开时 LoadRecents+智能默认标签（有记录开"最近"，空则开"常用"）。
+  - 指针稳定性：g_recentStore（wstring）存活期内 g_recentPtrs（c_str）稳定，每次变异后 RebuildRecentPtrs 再重绘。
+- **坑**：初版 RegGetValueW 传 8 参（正确 7：hkey/subkey/value/flags/type/data/cb）——编译期抓出；PS 5.1 嵌套引号调 vcvars+msbuild 解析失败，改写 tmp\build_engine.cmd 脚本文件执行。
+- **验证**：构建全绿；engine_test 单跑 **220 PASS / 0 FAIL**（test-NS 沙盒，settings.cpp 字符串路径过全套）；probe 基线不回归。
+
+### 交互五（同夜续：滚轮换页 + 帮助快照 + 设置备份）
+
+- **符号面板滚轮换分类**：WM_MOUSEWHEEL 上滚=左一页（11 页横向点击不便的快捷手势；取模环绕、随页重设尺寸/圆角/重绘——与标签点击同路径）。
+- **帮助窗实时配置快照**：帮助文本尾部追加"【当前生效配置】"段（切换键/皮肤/候选数/字号/透明度/模糊音/双拼/繁体/补全/标点/联想/热键/LLM/固定/自启动/暂停——打开时刻快照，只读）。数组索引取自 Load 钳制后的值（toggleMode≤4、skinIndex≤4）不越界。
+- **托盘设置备份导出/导入**（2010/2011）：reg.exe export/import 整个 HKCU\Software\LingxiIme 键（全部设置+热短语；用户词典在 APPDATA 不含——词典窗自带导入/导出）。CreateProcessW 隐藏窗口 15s 超时取退出码；导入后 g_settingsChanged（热键重注册）+ UpdateTrayTip；导入确认弹窗防误覆盖。**reg export 命令语义 headless 实证通过**（1360B 备份文件）。
+- 词典标记（候选词前用户词典小圆点）评估后放弃：UserDictHasWord 每调用整读+解析词典文件，paint 内 9 行×每帧 hover 重绘 = 每次悬停 9 次文件 IO，成本不成比例。
+- 构建全绿；probe 基线不回归。
+
+### 交互六（同夜续：皮肤扩充 + 备份完整化 + 剪贴板可靠）
+
+- **皮肤 +2**：茶棕（112,76,44）/玫粉（186,26,79）——白字对比度足够（亮度 ~83/~80）；触点全改：uistyle.h kSkins、settings.cpp 载入钳制 4→6、settingsui 组合框填充+bound 4→6+帮助窗名字表、settings.h 注释。
+- **备份完整化**：导出默认文件名带日期（LingxiIme-设置备份-YYYYMMDD.reg）；**用户词典随行**（同 basename"-用户词典.txt"，词典在 APPDATA 文本文件、注册表备份外）；导入检测随行词典→确认恢复→引擎 reload。备份从此单文件迁移完整。
+- **剪贴板占用重试**：OpenClipboard 被其他进程短暂占用（剪贴板锁）时 3×30ms 重试——复制是用户主动点击，偶发占用不该静默失败。
+- **评估放弃**：托盘快捷短语子菜单（点托盘时焦点已离开宿主文本框，SendInsertText 无处落地——热键路径焦点不动所以可行，托盘路径语义错误）；词典窗条目计数（已存在"已学习词条：N"）。
+- **验证**：构建全绿；engine_test 单跑 **220 PASS / 0 FAIL**；probe 基线不回归。
+
+### 交互七（10-31 零点半：11 项微功能批）
+
+1. **Shift+滚轮**：候选窗不透明度 ±5%（70–100 钳制即时生效+写设置；与 Ctrl+滚轮字号同款"修饰键占位滚轮"）。
+2. **右键工具条空白 = 皮肤直选子菜单**：7 款勾选直选（设右键循环换肤保留为盲切快捷；同款不抢前台）。
+3. **符号面板网格悬停高亮 + 手型光标**：HitItem 三路复用（点击/hover/SETCURSOR），TME_LEAVE 清态，换页清高亮。
+4. **符号面板"日期"页（第 12 标签）**：日期/年月日/时间/时分秒/星期/组合 6 项，开面板与切页现算（时间保鲜）；cellW 210×2 列（"2026年10月31日"≈200px）；不进"最近"（随开随算+长串挤坏 38px 格）。
+5. **托盘"暂停 30 分钟后自动恢复"**：SetTimer id=2 到期恢复预测；手动切换暂停态（2004）KillTimer 防止陈旧定时误恢复。
+6. **托盘"重新加载用户词典"**：g_reloadUserDict 直调（外部编辑词典文件后免重启）。
+7. **托盘"打开数据文件夹"**：取 UserDictPathW 父目录（与实际数据位置恒一致），CreateDirectory 兜底 + explorer 打开。
+8. **托盘中键 = 使用帮助**：左键设置/右键菜单已占，中键空闲常驻。
+9. **托盘"恢复默认设置..."**：ResetSettingsToDefaults（RegDeleteTreeW 删键，LoadSettings 走"键不存在=全默认"；沙箱感知 ActiveKey）→ 热键重注册+tip+控件同步；词典/短语在 APPDATA 不受影响。
+10. **词典操作浮窗反馈**：右键菜单四操作与中键置顶成功后 1.5s 浮窗"已置顶：×××"（复用 tooltip 窗 + 独立定时器 id=2——与 toast 的 id=1 分离，到期只关浮窗不藏候选窗；失败仅日志）。
+11. **--version**：三级输出（重定向管道→UTF-16LE 直写；父有控制台→AttachConsole+显开 CONOUT$——AttachConsole 不更新 std 句柄，直接 WriteConsoleW(hOut) 在重定向场景写管道必败；双击→弹窗）。
+- **验证**：--version 重定向路径实证（exit=0 + UTF-16 输出正确）；构建全绿；engine_test 220 PASS / 0 FAIL；probe 基线不回归。
+- **遗留**：12 项全部为 UI/托盘侧，真机交互验证（hover 高亮观感/日期页换页刷新/30 分钟定时恢复）待 12:00 后统一走查。
+
+### 交互八（10-31 凌晨：20 项功能批）
+
+用户继续要求自主加功能，选 20 项纯增量批（候选窗手势 / 符号面板扩容 / 托盘状态 / 命令行 / 帮助窗三件套）：
+
+1. **候选行手型光标**：WM_SETCURSOR 行区返回 IDC_HAND（点选语义可发现性；按钮/拖拽区分区不变）。
+2. **右键菜单"查该词拼音"**（id 7）：InferWordPinyin 从 settingsui 导出（settingsui.h 声明 + 底部 InferPinyinKey 包装），浮窗 2.5s 显示结果。
+3. **Ctrl+Shift+左键 = 删除该词条**：与菜单"删除"同 ApplyCandidateDictOp(Remove) 路；浮窗反馈（keyHint 传 L""——WM_LBUTTONUP 处无 composing 变量，编译错修复点）。
+4. **中键修饰键功率组合**：默认=置顶 / Shift=降频 / Ctrl=删除（mop/mfb 变量分发，原裸中键置顶升级为三合一）。
+5-8. **符号面板 4 新静态分类**：注音（31 个 ㄅ-ㄩ+声调）/ 希腊（48 个 α-Ω）/ 框线（38 个 ─┌┐└┘├┤┬┴┼╬ 等）/ 序号（32 个 ①-⑳Ⅰ-Ⅻ）——插在 ^_^ 前，kCats 现 14 项（kCatCount=14、kTabCount=16 自动驱动面板宽度）。
+9. **右键"最近"标签 = 清空记录**：WM_RBUTTONDOWN y<kCatH 判定，仅"最近"页清空（其余标签右键仍关闭面板——关闭语义不回归）。
+10. **记忆上次静态分类**（lastSymbolCat uint32_t 三处读写）：WM_DESTROY 落盘 [1..kCatCount]（动态页 0 最近/日期不记忆，各有更优默认），开面板恢复否则智能默认。
+11. **托盘 tip 状态摘要**：BuildTrayTip 统一构造——暂停/拼音关/双拼/繁体逐项追加后缀，AddTrayIcon 与切换点全走同一函数。
+12. **备份含热键短语随行**：导出同 basename"-热键短语.txt"；导入检测→询问→恢复→NotifyHotPhrasesChanged 重注册。hotphraseui.h 新导出 HotPhraseDataPath/NotifyHotPhrasesChanged（SaveHotPhrases 自动触发回调，外部改文件后须手动 Notify——不能直调 SetHotPhrasesChangedCallback 换回调）。
+13. **--help**：kHelpText 命令行清单（--version/--help/--diagnostics/--probe-*）。
+14. **--diagnostics**：BuildDiagnosticsText——OS build/UBR/DPI/exe 路径/设置摘要/词典行数/短语条数（先清 LINGXI_SETTINGS_NS 防沙箱污染）。
+15. **日志轮转**（log.h AppendToFile）：>1MB 先 DeleteFileW(.old) 再 MoveFileW 改名留档重开——长期开 LINGXI_LOG=1 防无界增长；wchar_t 数组拼路径（log.h 不含 <string>，避免引入依赖）。
+16. **设置页记忆**（lastSettingsPage uint32_t 三处读写）：导航点击 SaveSettingsDiff 落盘；CreateSettingsWindow LoadToControls 后恢复（越界回首页——页数随版本变）。
+17. **Ctrl+Alt+P 全局热键切暂停**：kTrayHotkeyPause=3（settingsui.cpp，按窗隔离不与 main.cpp 的 id 冲突），InitTrayAndSettings 注册、MainWndProc WM_HOTKEY 处理、WM_DESTROY 注销。
+18. **帮助窗 WS_EX_TOPMOST**：速查窗不应被候选窗压住。
+19. **设置窗居中打开**：CreateWindowEx 后按鼠标所在显示器工作区 SetWindowPos 居中（CW_USEDEFAULT 级联位观感差）。
+20. **帮助窗 Ctrl+滚轮字号 12–28**：g_helpFont/g_helpFontH 提升文件级（原 static 局部），HelpWndProc WM_MOUSEWHEEL 重建字体。
+- **EmitCliText 共享输出**（main.cpp）：--version/--help/--diagnostics 共用四级输出——①控制台句柄（GetConsoleMode 判定）WriteConsoleW；②管道 WriteFile UTF-16LE；③AttachConsole 后显开 CONOUT$（AttachConsole 不自动更新 std 句柄）；④MessageBox 兜底。
+- **kHelpText 全量同步**：中键修饰键/Ctrl+Shift 删除/4 新分类/Ctrl+Alt+P/帮助窗 Ctrl+滚轮/命令行清单（settingsui.cpp 与 main.cpp 两个 kHelpText 常量分别同步）。
+- **核查确认已存在/刻意不加**：候选行 hover 高亮（window.cpp 758-763 已有）、‹/› 禁用态（drawBtn disabled 参数已有）、CS_DROPSHADOW（Win11 方角投影残影根因，142 行注释刻意）。
+- **验证**：构建全绿（修一处编译错：WM_LBUTTONUP 无 composing 变量）；--help/--diagnostics 重定向实证 exit=0（诊断输出 OS 26300.9711 26H2/词典 441 条）；engine_test 单跑 **220 PASS / 0 FAIL**；probe 基线不回归；**日志轮转实证通过**（seed 1,200,000B → --probe-pinyin exit=0 → .old 恰 1,200,000B + 新日志重开，tmp\test_rotation.ps1）。
+- **遗留**：真机交互验证（手势/新分类/热键/字号缩放）随交互六/七一并待 12:00 后统一走查。
+
+### 交互九（10-31 凌晨：11 项功能批）
+
+用户继续要求自主加功能。核查排除已存在项（darkMode 三态设置/加载/使用全链路早已完整——候选清单先查代码再动手）。
+
+1. **托盘"暂停 1 小时后自动恢复"**（ID 2016）：与"30 分钟"（2012）共用 SetTimer id=2 同一到点恢复路径，写作/演示临时静音加长档。
+2. **Ctrl+Alt+H 全局热键打开使用帮助**（kTrayHotkeyHelp=4）：注册/WM_HOTKEY/WM_DESTROY 注销三触点，与 Ctrl+Alt+P 同型同容错（被占用仅记日志）。
+3. **帮助窗底部"复制全部文本"按钮**：HelpCopyAll——正文（含实时配置快照）一键进剪贴板（CF_UNICODETEXT，剪贴板被占 3×30ms 重试）；按钮文字反馈"已复制/复制失败"，WM_TIMER id=3 1.5s 复位。
+4. **帮助窗 Esc 关闭**：窗口本体 WM_KEYDOWN 处理 + **正文 EDIT 子类化**（GWLP_WNDPROC 存旧proc、CallWindowProcW 转发——焦点在 EDIT 时按键不冒泡到父窗，必须子类化；沿用 hotphraseui 热键录制框同款模式）。
+5. **设置窗 Esc 隐藏**：与 WM_CLOSE 同语义（先存矩形再隐藏）。
+6. **界面字体族选择**（uiFont 0-3：微软雅黑/宋体/等线/Segoe UI）：uistyle.h 新增 kUiFontFaces/kUiFontNames；window.cpp RebuildFonts 按设置取 face（小字默认 Segoe UI，非默认族跟随保持观感一致）；Show() 族变化即时重建（与字号/皮肤同款"读设置去重"路径）；设置页外观页"字体"下拉。
+7. **设置窗位置/尺寸记忆**（settings setWinX/Y/W/H 四 int，负值经 DWORD 往返）：隐藏三路径落盘（WM_CLOSE / Esc / 托盘左键切换）+ WM_DESTROY 兜底，IsIconic 最小化守卫；创建时恢复，MonitorFromRect+IntersectRect 校验（显示器拔了/分辨率变了回退居中默认）——与"重开回 900×680 居中"的旧观感告别。
+8. **用户词典窗搜索过滤框**（IDC_UD_SEARCH）：列表上方 EDIT，EN_CHANGE 实时过滤（词条/拼音键子串命中，不区分大小写）；计数行过滤态显示"匹配 N / M 条"。删除/升降频按内容匹配不受过滤影响。
+9. **--diagnostics 设置摘要补字体字段**（字体=%u）。
+10. **帮助快照补两行**（界面字体/明暗——darkMode 此前一直缺席快照）；**cfg 缓冲 1600→4096**：kHelpText 历次增补后已逼近截断线（_TRUNCATE 静默截尾风险），本轮一并扩容。
+11. **kHelpText 全量同步**：暂停 1 小时 / Ctrl+Alt+H / 【帮助窗/设置窗】节（Esc、复制、矩形记忆）/ 词典搜索行。
+- **验证**：构建全绿一次过；engine_test 单跑 **220 PASS / 0 FAIL**（test-NS）；probe 基线不回归（gylg=4 候/gylgl=供应链管理/xian/nichifanlemawohenb 全保持）；--diagnostics 重定向实证 exit=0（输出含新 字体= 字段，用户实况 字号12/不透明度70% 正确呈现）。
+- **遗留**：真机走查（复制按钮/搜索过滤/热键/矩形恢复/字体切换观感）待 12:00 后与交互六/七/八一并。
+
+### 交互十（10-31 凌晨续：打字统计批，6 项）
+
+先探查后动手：--version/恢复默认（2015）/数据文件夹（2014）/词典导入导出（304/305）/模糊音分组 UI/翻页/rq-sj 日期直出 均已存在，排除；**打字统计为真缺口**。
+
+1. **打字统计核心**（新文件 ui/usagestats.h/.cpp，进 LingxiUI.vcxproj）：今日/累计选词次数、上屏汉字数（CJK 基本区+扩展A+兼容表意）、活跃天数、连续使用天数（纯 YYYYMMDD 日期回退算连续，无时区问题）；计数点=PipeServer::ApplyLearn（UI 点选与 IME 数字键选词的公共落点，cover 调整前计数）；懒加载；每 20 次选词节流落盘 + 退出（消息循环后）+ WM_ENDSESSION 补写，崩溃最多丢 20 次。
+2. **沙箱自动停用**：LINGXI_SETTINGS_NS 非空（deep_test/e2e 拉起的测试宿主）→ 全部读写停用，回归跑分不污染真实统计；--diagnostics 路径 main.cpp 先清 NS 再读，统计恒真实。
+3. **打字统计窗**（托盘 2017 / 设置·词典页"打字统计"按钮行）：只读 EDIT 正文 + 底部按钮条（刷新/清零（确认框，不可恢复）/导出诊断报告）；Esc 关闭（窗口+正文 EDIT 子类化，同帮助窗双路）；TOPMOST、工作区居中、字体进程内复用。
+4. **导出诊断报告**：诊断全文（\n→\r\n）+ 统计正文 → APPDATA\LingxiIme\lingxi-diag-YYYYMMDD-HHMMSS.txt（UTF-8 带 BOM 记事本直开），成功/失败 MessageBox 反馈 + 日志。BuildDiagnosticsText 由 main.cpp 自由函数改经 settingsui.h 全局声明供统计窗复用。
+5. **帮助/诊断同步**：BuildHelpText 快照 + "打字"行（BuildStatsBrief）；--diagnostics + "打字统计"行；kHelpText（settingsui 版）托盘菜单列表补"打字统计" + 新增【打字统计】节。
+6. **vcxproj**：usagestats.cpp/.h 挂入 LingxiUI 工程（无 .filters 文件，直接主工程）。
+- **验证**：构建全绿（修一处警告：BuildHelpText 变参 BuildStatsBrief 缺 .c_str()）；**播种实证**——手写 usage.txt（12/34/5600/21000/45）→ --diagnostics 重定向 exit=0 输出"打字统计：今日选词 12 次/34 字，累计 5600 次/21000 字，活跃 45 天"精确回读（懒加载+容错解析+摘要格式全链路），验后播种文件已删；probe 基线不回归（gylg=4 候/gylgl=1 候/xian/nichifanlemawohenb）；engine_test **220 PASS / 0 FAIL**。
+- **遗留**：真机走查（统计窗观感/清零确认/导出文件/选词计数累计）待 12:00 后与交互六/七/八/九一并。
+
+### 12:00 收口（10-31 午：全量回归 + 真机走查 + 分批提交）
+
+用户停用电脑，执行 tmp/plan_1200.md 收口。
+
+1. **全量回归 ALL PASS**：cmd /c tools/regress.cmd 一次通过（engine_test 220 / fix_readings / deep_test / e2e；regress-1439217053）。
+2. **真机走查 smoke1（15/15）**：就绪门（Local\LingxiUI_ShowSettings 事件可开=托盘/热键/转发链全就位，替代固定 Sleep——冷启动 LLM 加载 8.5~27s 波动）；--settings 转发开设置窗；设置页 IDC_BTN_STATS=132 开统计窗；播种值（5600/21000/45）经 WM_GETTEXT 回读；清零确认框（GetDlgItem IDOK）+ 复位；导出诊断报告（文件+含"打字统计"节，验后删）；Esc 关统计窗；词典窗 111 开+搜索过滤（440→2）+计数行"匹配"；Ctrl+Alt+H keybd_event 注入开帮助窗+Esc 关闭。
+3. **真机走查 smoke2（8/8）**：设置窗矩形记忆——移动+缩放（587,315,870x660）→WM_CLOSE 隐藏落盘 HKCU SetWin* 四键精确回读→taskkill 重启宿主→--settings→GetWindowRect 精确恢复→清理基线。
+4. **排障收获（PITFALLS #65/#66）**：smoke 首跑 12 项 FAIL 逐层剥洋葱——①`FindWindowW(cls, $null)` 的 `$null` 被 PS 封送成空串（#37 同族，改 EnumWindows+GetClassNameW 按类枚举）；②无 BOM .ps1 中文字面串静默乱码（#12 静默变体，FindWindow 中文标题/Contains 全部假失败——加 UTF-8 BOM 后全绿）；③taskkill 宿主后 7 进程内的 ImeCore DLL 管道客户端 1 秒内重生宿主（无 LINGXI_LOG），带日志实例静默出局——"宿主没日志"假象根因；④跨进程子控件文本 GetWindowTextW 不可靠，改 SendMessage(WM_GETTEXT)。**转发链/设置窗/统计窗代码本身零缺陷**，前几轮"设置窗未创建"结论全部为工装误判。
+5. **残留核查**：usage.txt/lingxi-diag*/SetWin* 测试值全清；用户词典 440 条完好（10-30 21:38 后未触碰）。
+6. **分批提交**：26 文件（24 改+2 新）按 core→ui→docs 三批（文件在交互六~十间大量重叠无法按交互切分；ImeCore 依赖 pinyin.cpp 必须随 core 同批）。

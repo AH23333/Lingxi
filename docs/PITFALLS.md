@@ -356,3 +356,40 @@
 - **终结手法（本轮实证链）**：①`Get-FileHash` 判身份——`.prev` 轮转备份用 mtime+hash 定身份勿信文件名（build.cmd 的 PowerShell copy 保留源 mtime）；②逐字节 diff 两版二进制——本轮仅 7 字节且全在 PE 头/.rdata 时间戳区 → "功能等价却行为分叉"=物理矛盾 → 必有第三方变量（环境）；③安静环境复跑噪声期二进制是金标准裁决。
 - **规约**：同源二进制（同 obj 重链，仅链接时间戳/GUID 差）出现"确定性"行为分叉时，先假设环境噪声并安静环境复现，再动代码；regress 失败先看时间窗（本机是否刚跑过重负载套件），不要直接回滚代码。
 - **附带**：e2e 的 [DIAG] 诊断已挪到 fail-fast 判定之前（e2e.cpp），失败现场（store/focused/文档指针对照）从此永久可见。
+
+### 61. ≥4 声母纯简拼整条丢弃——"词框消失"类用户报障的引擎层根因 ⭐⭐
+- **症状**：用户报"gylgl（供应链管理）打到 gylg 时候选框直接消失"；probe 实证 gylg 0 候选（仅 echo 回显小窗，用户感知为"消失"）、gylgl 打不出目标词。
+- **根因**：Generate 两处 HEAD 遗留硬丢弃 `if (allInit && n >= 4) continue;` / `if (prefixAllInit && initHead >= 3) continue;`——一切 ≥4 声母纯简拼路径整条跳过。启发式本意是防逐字硬拼垃圾（xyzxyz 类），副作用是杀掉真简拼长串（供应链管理/中国人民类）。UI 链无辜：Show echo 条件 `!pred.cands.empty() || e.pinyin` 恒真。
+- **修法**：`longAllInit` 标志替代丢弃；tier 闸前受限发射块：span 从 n-1 到 min(6,n)，span==n limit kPredictMaxCandidates、span<n limit 4、uncovered 罚 8/音节。真词命中（gylgl→供应链管理）、误触零产出（xyzxyz→0）、垃圾墙不复活（probe 7 输入对照全过）。
+- **规约**：引擎"整条 continue"级丢弃启发式必须配常驻 probe 取证输入（本例无 gyl 系 probe 输入则用户报障只能猜）；启发式本意与副作用边界必须注释写明；改启发式前后 probe 基线对照。
+
+### 62. v 被当 INITIAL 的死头路径——vk/vlog 候选污染 ⭐⭐
+- **症状**：deep_test T15 v+k+space 期望 'vk' 实得 可(53EF)；probe vk→可|会|看|开|快|口、vlog→个|过|给。
+- **根因**：单字母简拼守卫 `in[i] >= 'a' && in[i] <= 'z'` 把 v 也当合法声母；[v][k-PARTIAL] 成死头路径（拼音无 v 声母音节），残段池发射 k 声母字。v 的三重身份：ü 简写（nv/lv 全音节表，不经过简拼路径）、双拼 zh（SpInitial，shuangpin 设置门）、纯英文串（应 0 候选→CommitRaw）——唯独不是普通声母。
+- **修法**：简拼条件加 `in[i] != 'v'`；jv/qv/xv 俗写随之降级 0 候选→CommitRaw（旧为 j-words 错配，本就无测试覆盖，记录边角不修）。
+- **规约**：字符集守卫（a-z 类范围判断）先问"集合里每个字符在该子系统都合法吗"——系统性例外字符（v）必须显式排除；probe 输入覆盖身份冲突字符（v/vk/vlog）。
+
+### 63. 活基线阈值随启发式修复失效 + SKIP_BUILD 陈旧 exe——双重假红 ⭐
+- **症状**：tier 闸修复后 engine_test P4c FAIL（cands=23 < 阈值 40）；随后改阈值 40→20 重跑仍 FAIL。
+- **根因 A（活基线漂移）**：阈值 40 是垃圾墙时代基线（候选含垃圾），无垃圾健康基线 23——断言阈值是历史快照，启发式变更改变分布后未重校准。
+- **根因 B（陈旧 exe）**：regress SKIP_BUILD=1 时改了 engine_test.cpp 源码但执行的是陈旧 exe（阈值 40 仍编在里面），"改了阈值还红"双重误导。
+- **正确做法**：阈值断言=活基线，启发式变更后用 --probe-pinyin 实证重校准（23→取 20 留余量+注释）；**改测试源码必须重建测试 exe**（vcvars msbuild，PS 无 msbuild；输出 UTF-8 无 BOM 读取用 -Encoding UTF8）。
+- **规约**：regress 假红三源清单（接 #60）：①环境噪声窗口；②陈旧 exe（SKIP_BUILD+已改源码）；③活基线漂移。裁决顺序：exe mtime vs 源码 mtime → 基线校准 → 才疑代码。
+
+### 64. e2e 拉起的宿主进程携带 test 设置命名空间——用户实测环境 split-brain ⭐
+- **症状**：现役 LingxiUI 宿主（e2e spawn 后存活）运行于 LINGXI_SETTINGS_NS=test 沙盒下；用户真机实测经此宿主读 test-NS 设置，而用户应用内 DLL 读真实 HKCU 设置——两侧设置可能不一致。
+- **根因**：e2e/regress 用 LINGXI_SETTINGS_NS=test 防污染真实设置；e2e 结束后其 spawn 的宿主进程存活并继承环境变量。测试沙盒的边界是进程边界，不是脚本边界。
+- **正确做法**：实测用户场景前核宿主进程（StartTime/exe mtime/环境变量来源）；e2e 拉起的宿主必须 taskkill 重启消除；regress 收尾清理 spawn 进程。
+- **规约**：带环境变量沙盒的测试框架，其 spawn 的一切长命进程都是用户环境"污染源"；"修复无效"裁决链（#57）增加一环：宿主进程环境 ≠ 用户环境。
+
+### 65. 无 BOM .ps1 的中文字面串【静默】乱码——不报解析错，全量检查假失败 ⭐
+- **症状**：真机走查脚本 12 项 FAIL（对话框找不到/Contains 恒假），代码逻辑人审全对；同脚本改带 BOM 后 15/15 全绿。
+- **根因**：#12 的静默变体——powershell -File 对无 BOM 文件按 ANSI 读，若中文字符串恰在注释里（解析无害）而**字符串字面量**里也有中文（FindWindowW('#32770','清零统计')、Contains('匹配')），不产生解析错误，字面量悄悄变乱码——匹配永远失败，误判"功能没做出来"。比 #12 的"解析爆炸"更阴险：错误被吞，只剩红。
+- **正确做法**：含中文的 .ps1 一律 UTF-8 带 BOM（写入后 $c=[IO.File]::ReadAllText(); [IO.File]::WriteAllText(,,(New-Object Text.UTF8Encoding True))）；走查脚本第一跑全红时先核编码再疑代码；对话框匹配用 GetDlgItem(dlg, IDOK=1) 按控件 ID，绕开中文标题串。
+- **规约**：PowerShell 测试工装三查——BOM/$null 封送（#37）/窗口站作用域（#55/#62），三者任一都能造出"程序坏了"的完美假象。
+
+### 66. taskkill 宿主后 IME DLL 1 秒内抢先重生——带环境变量的重启实例静默出局 ⭐
+- **症状**：LINGXI_LOG=1 重启宿主后日志文件死活不出现；probe（同法启动）却正常写日志，一度怀疑宿主启动路径丢了 InitLogging。
+- **根因**：explorer/terminal 等 7 进程加载 ImeCore.dll，其管道客户端断连后自动 EnsureUIRunning 重拉 LingxiUI（pipeclient.cpp）——taskkill 后 DLL 重生实例**先占单实例 Mutex**（无 LINGXI_LOG 环境）；我 Start-Process 的带日志实例 ERROR_ALREADY_EXISTS → 静默转发退出。看到的宿主从来不是"我的"实例。
+- **正确做法**：宿主侧诊断**别依赖进程环境变量注入的日志**——优先行为探针（窗口枚举/注册表/文件产物，本轮实证 15/15 项全部免日志可验）；要日志走 OutputDebugStringW（DBWIN 捕获，无需环境变量）。重启宿主后先核 Get-Process StartTime 归属再推断；跨进程文本用 SendMessage(WM_GETTEXT)（GetWindowTextW 跨进程子控件不可靠）。
+- **规约**：常驻进程的"重生者"不只你的脚本——系统里任何持客户端重连逻辑的组件（此处是 7 个进程里的 IME DLL）都是竞争者；"我启动的进程"是未经验证的假设，PID+StartTime 才是证据。
