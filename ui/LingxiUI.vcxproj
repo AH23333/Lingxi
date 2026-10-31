@@ -72,6 +72,7 @@
     <ClCompile Include="usagestats.cpp" />
     <ClCompile Include="hotphraseui.cpp" />
     <ClCompile Include="phraseui.cpp" />
+    <ClCompile Include="blockedui.cpp" />
     <ClCompile Include="symbolpanel.cpp" />
     <ClCompile Include="engine\ngram.cpp" />
     <ClCompile Include="engine\llm.cpp" />
@@ -86,6 +87,7 @@
     <ClInclude Include="usagestats.h" />
     <ClInclude Include="hotphraseui.h" />
     <ClInclude Include="phraseui.h" />
+    <ClInclude Include="blockedui.h" />
     <ClInclude Include="symbolpanel.h" />
     <ClInclude Include="uistyle.h" />
     <ClInclude Include="engine\predictor.h" />

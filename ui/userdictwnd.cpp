@@ -19,6 +19,7 @@
 
 #include "../common/log.h"
 #include "../common/settings.h"
+#include "blockedui.h"
 #include "uistyle.h"
 
 namespace lingxi {
@@ -168,6 +169,7 @@ constexpr int IDC_UD_ADD = 309;   // 添加/已存在则提升
 constexpr int IDC_UD_BOOST = 310; // 提升选中（+1000，排到更前）
 constexpr int IDC_UD_LOWER = 311; // 降低选中（-1000，下限 1）
 constexpr int IDC_UD_SEARCH = 312; // 搜索过滤框（词条/拼音子串，不区分大小写）
+constexpr int IDC_UD_BLOCKED = 313; // R6 屏蔽词管理窗入口
 
 HWND g_hUserDict = nullptr;
 HWND g_hUdList = nullptr;
@@ -478,6 +480,9 @@ LRESULT CALLBACK UserDictWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_UD_ADD: UdAddWord(); return 0;
         case IDC_UD_BOOST: UdNudgeSelected(1000); return 0;
         case IDC_UD_LOWER: UdNudgeSelected(-1000); return 0;
+        case IDC_UD_BLOCKED: // R6：词典窗一键直达屏蔽词管理（同 blocked.txt 通道）
+            ShowBlockedWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE), hwnd);
+            return 0;
         case IDC_UD_SEARCH:
             if (HIWORD(wParam) == EN_CHANGE) RefreshUdList(); // 实时过滤
             return 0;
@@ -629,12 +634,12 @@ void CreateUserDictWindow(HINSTANCE hInst)
         { L"提升选中", IDC_UD_BOOST }, { L"降低选中", IDC_UD_LOWER },
         { L"删除选中", IDC_UD_DEL }, { L"清空", IDC_UD_CLEAR },
         { L"导入", IDC_UD_IMPORT }, { L"导出", IDC_UD_EXPORT },
-        { L"关闭", IDC_UD_CLOSE },
+        { L"屏蔽词", IDC_UD_BLOCKED }, { L"关闭", IDC_UD_CLOSE },
     };
-    int bw = (W - pad * 2 - 6 * 6) / 7;
-    for (int i = 0; i < 7; i++)
+    int bw = (W - pad * 2 - 7 * 5) / 8;
+    for (int i = 0; i < 8; i++)
     {
-        int bx = pad + i * (bw + 6);
+        int bx = pad + i * (bw + 5);
         CreateWindowExW(0, L"BUTTON", btns[i].text, WS_CHILD | WS_VISIBLE | WS_TABSTOP,
                         bx, rowBtnY, bw, btnH, g_hUserDict,
                         (HMENU)(INT_PTR)btns[i].id, hInst, NULL);

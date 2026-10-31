@@ -15,6 +15,7 @@
 
 #include "../common/log.h"
 #include "../common/settings.h"
+#include "blockedui.h"
 #include "usagestats.h"
 
 namespace lingxi {
@@ -131,6 +132,7 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         AppendMenuW(menu, MF_STRING, 2010, L"导出设置备份...");
         AppendMenuW(menu, MF_STRING, 2011, L"导入设置备份...");
         AppendMenuW(menu, MF_STRING, 2013, L"重新加载用户词典");
+        AppendMenuW(menu, MF_STRING, 2018, L"屏蔽词管理...");
         AppendMenuW(menu, MF_STRING, 2014, L"打开数据文件夹");
         AppendMenuW(menu, MF_STRING, 2015, L"恢复默认设置...");
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
@@ -183,6 +185,9 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         }
         case 2013:
             if (g_hooks.reloadUserDict) g_hooks.reloadUserDict(); // 词典文件外部编辑后免重启生效
+            break;
+        case 2018: // R6 屏蔽词管理窗（blocked.txt 与用户词典同通道热载）
+            ShowBlockedWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE), hwnd);
             break;
         case 2014:
         {
