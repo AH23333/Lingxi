@@ -2,6 +2,7 @@
 #include "../common/log.h"
 #include "../common/settings.h"
 #include "uistyle.h"
+#include "symsearch.h"
 
 #include <windowsx.h>
 #include <stdio.h>
@@ -146,7 +147,11 @@ constexpr int kCatH = 26;
 constexpr int kPad = 4;
 constexpr int kCatTabW = 48;   // 标签宽（10 分类×48=480，3 全角字标签也放得下）
 constexpr int kCloseW = 22;    // 头部右侧 × 关闭按钮宽（搜狗/Win+. 范式：显式出口）
+constexpr int kSearchH = 30;   // 标签行下搜索行高（EDIT + 提示占位）
 constexpr int kCatCount = (int)(sizeof(kCats) / sizeof(kCats[0]));
+
+// 网格纵向起点：标签行 + 搜索行 + 内边距（搜索行常驻，非搜索态也占位）
+int GridY() { return kCatH + kSearchH + kPad; }
 
 // ---------------- "最近"页（动态分类，注册表持久化）----------------
 // 首标签 = 最近使用（最新在前，≤12 项）；条目存 g_recentStore，
@@ -308,6 +313,131 @@ void RebuildDateTimeItems()
     g_dtCat.count = (int)g_dtPtrs.size();
 }
 
+// ---------------- 搜索行（EDIT + 结果分类，symsearch.cpp 供检索）----------------
+// 前置声明：面板几何/状态定义在本块下方，函数体先引用
+int PanelWidth();
+int PanelHeight();
+extern HWND g_hPanel;
+extern std::function<void(const std::wstring&)> g_onInsert;
+
+// 常驻搜索框在标签行下。点击 EDIT 进入搜索态：临时摘 WS_EX_NOACTIVATE +
+// SetForegroundWindow 抢激活（真实 EDIT 需要 WM_CHAR 流，NOACTIVATE 下击键
+// 全漏给宿主），记录 g_prevFore；退出（Esc/回车上屏/点标签/插符号/失活）时
+// 复原 exstyle + 把前台还给原窗口。插入链路是管道 SendInsertText，与焦点
+// 无关（四管理窗已验证焦点被夺后仍可插入宿主）。
+constexpr int kSearchEditId = 0x5E31;
+std::vector<std::wstring> g_searchStore;
+std::vector<const wchar_t*> g_searchPtrs;
+Category g_searchCat = { L"搜索", nullptr, 0, 62, 8 }; // 结果格：62×8（长条目小字号）
+std::wstring g_searchQuery;
+bool g_searching = false;
+HWND g_prevFore = nullptr;
+HWND g_hSearchEdit = nullptr;
+WNDPROC g_oldEditProc = nullptr;
+HFONT g_fontEdit = nullptr; // 搜索框 14px（主字体 20px 太大）
+HFONT g_fontTiny = nullptr; // 搜索结果长条目（颜文字等）13px，62px 格内放得下
+
+void RebuildSearchPtrs()
+{
+    g_searchPtrs.clear();
+    for (const auto& s : g_searchStore) g_searchPtrs.push_back(s.c_str());
+    g_searchCat.items = g_searchPtrs.empty() ? nullptr : g_searchPtrs.data();
+    g_searchCat.count = (int)g_searchPtrs.size();
+}
+
+void SyncPanelSize(HWND h)
+{
+    SetWindowPos(h, HWND_TOPMOST, 0, 0, PanelWidth(), PanelHeight(),
+                 SWP_NOMOVE | SWP_NOACTIVATE);
+    UiApplyRoundCorners(h, PanelWidth(), PanelHeight());
+    InvalidateRect(h, NULL, TRUE);
+}
+
+void EnterSearch(HWND h)
+{
+    if (g_searching) return;
+    g_prevFore = GetForegroundWindow();
+    g_searching = true;
+    LONG_PTR ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+    SetWindowLongPtrW(h, GWL_EXSTYLE, ex & ~WS_EX_NOACTIVATE);
+    SetForegroundWindow(h);
+    if (g_hSearchEdit) SetFocus(g_hSearchEdit);
+    SyncPanelSize(h); // 网格让位给结果区（初值 1 行高）
+}
+
+// restoreFore=true：前台还给进入搜索前的窗口（用户主动退出）；
+// false：失活兜底（别人已抢走前台，不能再抢回）。
+void ExitSearch(HWND h, bool restoreFore)
+{
+    if (!g_searching) return;
+    g_searching = false; // 先置 false：清空 EDIT 触发的 EN_CHANGE 直接忽略，
+                         // SetForegroundWindow 引发的 WM_ACTIVATE(INACTIVE) 也免疫
+    if (g_hSearchEdit) SetWindowTextW(g_hSearchEdit, L"");
+    g_searchQuery.clear();
+    g_searchStore.clear();
+    RebuildSearchPtrs();
+    LONG_PTR ex = GetWindowLongPtrW(h, GWL_EXSTYLE);
+    SetWindowLongPtrW(h, GWL_EXSTYLE, ex | WS_EX_NOACTIVATE);
+    if (restoreFore && g_prevFore && IsWindow(g_prevFore))
+        SetForegroundWindow(g_prevFore);
+    g_prevFore = nullptr;
+    SyncPanelSize(h); // 回到当前标签页网格
+}
+
+// 搜索结果刷新（EN_CHANGE）：重查 + 换高度；行数随结果 0..12 行伸缩
+void RefreshSearchResults(HWND h)
+{
+    if (!g_hSearchEdit) return;
+    wchar_t buf[128];
+    int len = GetWindowTextLengthW(g_hSearchEdit);
+    if (len < 0) len = 0;
+    if (len > 120) len = 120;
+    GetWindowTextW(g_hSearchEdit, buf, len + 1);
+    g_searchQuery.assign(buf, (size_t)len);
+    g_searchStore = SymbolSearch(g_searchQuery);
+    RebuildSearchPtrs();
+    SyncPanelSize(h);
+}
+
+// EDIT 子类化：Esc 两段（清词→退出）、回车上屏首个结果、点击进入搜索态
+LRESULT CALLBACK SearchEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    switch (msg)
+    {
+    case WM_LBUTTONDOWN:
+    case WM_MOUSEACTIVATE:
+        // NOACTIVATE 父窗口拦掉了系统的鼠标激活，手动进搜索态抢前台
+        if (!g_searching && g_hPanel) EnterSearch(g_hPanel);
+        break;
+    case WM_KEYDOWN:
+        if (wp == VK_ESCAPE)
+        {
+            if (GetWindowTextLengthW(h) > 0)
+            {
+                SetWindowTextW(h, L""); // 触发 EN_CHANGE → 空结果
+            }
+            else if (g_searching && g_hPanel)
+            {
+                ExitSearch(g_hPanel, true);
+            }
+            return 0;
+        }
+        if (wp == VK_RETURN)
+        {
+            if (g_searching && g_hPanel && !g_searchStore.empty())
+            {
+                std::wstring item = g_searchStore[0];
+                if (g_onInsert) g_onInsert(item);
+                AddRecent(item);
+                ExitSearch(g_hPanel, true);
+            }
+            return 0;
+        }
+        break;
+    }
+    return CallWindowProcW(g_oldEditProc, h, msg, wp, lp);
+}
+
 // 标签序：0="最近"（动态），1="收藏"（动态），2..kCatCount+1=静态分类，
 // kCatCount+2="日期时间"（动态）。注册表 lastSymbolCat 仍存静态分类 1 基序
 // （kCats 下标+1，与"收藏"页插入前的老版本一致），加载 +1 / 销毁 -1 换算，免迁移。
@@ -348,14 +478,14 @@ HFONT g_font = nullptr;
 HFONT g_fontSmall = nullptr; // 收藏★角标用小号字（12px，与 20px 主字体并存）
 std::function<void(const std::wstring&)> g_onInsert;
 
-const Category& CurCat() { return CatAt(g_cat); }
+const Category& CurCat() { return g_searching ? g_searchCat : CatAt(g_cat); }
 
 int PanelHeight()
 {
     const Category& c = CurCat();
     int rows = (c.count + c.cols - 1) / c.cols;
-    if (rows < 1) rows = 1; // "最近"空态也保一行高（画提示文字）
-    return kCatH + kPad + rows * kCell + kPad;
+    if (rows < 1) rows = 1; // "最近"/搜索空态也保一行高（画提示文字）
+    return GridY() + rows * kCell + kPad;
 }
 
 int PanelWidth() { return kPad + kCatTabW * kTabCount + kCloseW + kPad; }
@@ -363,14 +493,14 @@ int PanelWidth() { return kPad + kCatTabW * kTabCount + kCloseW + kPad; }
 // 网格水平居中于面板（不同分类网格宽不同）
 int GridX() { return kPad + (PanelWidth() - 2 * kPad - CurCat().cellW * CurCat().cols) / 2; }
 
-// 网格命中：返回分类内条目序号（-1=头部/格间/页外）；供点击/hover/光标三路复用
+// 网格命中：返回分类内条目序号（-1=头部/搜索行/格间/页外）；供点击/hover/光标三路复用
 int HitItem(int x, int y)
 {
-    if (y < kCatH) return -1;
+    if (y < GridY()) return -1; // 头部与搜索行（EDIT 自行处理）不算网格
     const Category& cat = CurCat();
     int gx = GridX();
     int col = (x - gx) / cat.cellW;
-    int row = (y - kCatH - kPad) / kCell;
+    int row = (y - GridY()) / kCell;
     int idx = row * cat.cols + col;
     if (col < 0 || col >= cat.cols || x < gx || idx < 0 || idx >= cat.count) return -1;
     return idx;
@@ -403,6 +533,7 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             int c = (x - kPad) / kCatTabW;
             if (c >= 0 && c < kTabCount && c != g_cat)
             {
+                if (g_searching) ExitSearch(h, true); // 点标签退出搜索（还前台给宿主）
                 g_cat = c;
                 if (c == kDtTabIndex) RebuildDateTimeItems(); // 时间页切到时现算保鲜
                 g_hoverIdx = -1; // 换页旧 hover 高亮作废
@@ -416,15 +547,17 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         const Category& cat = CurCat();
         int gx = GridX();
         int col = (x - gx) / cat.cellW;
-        int row = (y - kCatH - kPad) / kCell;
+        int row = (y - GridY()) / kCell;
         int idx = row * cat.cols + col;
         if (col >= 0 && col < cat.cols && x >= gx && idx >= 0 && idx < cat.count)
         {
             std::wstring item(cat.items[idx]);
             if (g_onInsert) g_onInsert(item);
             // "最近"页记录（去重前移+落盘）；"日期时间"页不进最近（随开随算，长串也挤坏 38px 格）
-            if (g_cat != kDtTabIndex) AddRecent(item);
-            if (g_cat == 0) InvalidateRect(h, NULL, FALSE); // 正看"最近"页则即时刷新
+            if (g_searching || g_cat != kDtTabIndex) AddRecent(item);
+            if (g_searching)
+                ExitSearch(h, true); // 搜索结果上屏后退搜索（插入链路与焦点无关）
+            else if (g_cat == 0) InvalidateRect(h, NULL, FALSE); // 正看"最近"页则即时刷新
             // 插入后保留面板（便于连续输入）；点击符号不抢焦点
             return 0;
         }
@@ -535,6 +668,7 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     case WM_MOUSEWHEEL:
     {
         // 滚轮换分类标签（12 页横向不便点击时的快捷手势；上滚=左一页）
+        if (g_searching) return 0; // 搜索态滚轮不翻页（结果区语义留给后续滚动）
         int d = (short)GET_WHEEL_DELTA_WPARAM(wp);
         if (d == 0) return 0;
         int nc = (g_cat + (d > 0 ? -1 : 1) + kTabCount) % kTabCount;
@@ -575,10 +709,11 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         HGDIOBJ oldFont = SelectObject(hdc, g_font);
 
         // 分类按钮：选中=皮肤浅底药丸 + 强调色字；未选中=次级灰字
+        //（搜索态无选中药丸——网格区由搜索结果接管，标签仅剩浏览入口）
         for (int i = 0; i < kTabCount; i++)
         {
             RECT cr{ kPad + i * kCatTabW, 2, kPad + (i + 1) * kCatTabW, kCatH - 1 };
-            if (i == g_cat)
+            if (i == g_cat && !g_searching)
             {
                 RECT pr = cr;
                 InflateRect(&pr, -2, -1);
@@ -613,8 +748,8 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         {
             int c = i % cat.cols;
             int r = i / cat.cols;
-            RECT cell{ gx + c * cat.cellW, kCatH + kPad + r * kCell,
-                       gx + (c + 1) * cat.cellW, kCatH + kPad + (r + 1) * kCell };
+            RECT cell{ gx + c * cat.cellW, GridY() + r * kCell,
+                       gx + (c + 1) * cat.cellW, GridY() + (r + 1) * kCell };
             if (i == g_hoverIdx) // 悬停高亮：皮肤浅底 + 强调色字（与选中标签同语言）
             {
                 RECT hl = cell;
@@ -628,10 +763,16 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             {
                 SetTextColor(hdc, kUiText);
             }
+            // 搜索结果长条目（颜文字等 >2 字符）用小字号，62px 格内放得下
+            size_t itemLen = wcslen(cat.items[i]);
+            bool tiny = g_searching && itemLen > 2;
+            if (tiny) SelectObject(hdc, g_fontTiny);
             DrawTextW(hdc, cat.items[i], -1, &cell,
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
-            // ★角标：已收藏符号在格右上角标星（"收藏"页本身全是收藏，不重复标）
-            if (g_cat != kFavTabIndex && IsFavorite(cat.items[i]))
+            if (tiny) SelectObject(hdc, g_font); // 还原主字体给下一格/角标
+            // ★角标：已收藏符号在格右上角标星（"收藏"页本身全是收藏，不重复标；
+            // 搜索结果页照标——收藏可见性优先）
+            if ((g_searching || g_cat != kFavTabIndex) && IsFavorite(cat.items[i]))
             {
                 RECT star{ cell.right - 14, cell.top + 1, cell.right - 2, cell.top + 13 };
                 HGDIOBJ oldSmall = SelectObject(hdc, g_fontSmall);
@@ -642,20 +783,32 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         }
 
         // "最近"页空态提示（首行网格区居中）
-        if (g_cat == 0 && g_recentPtrs.empty())
+        if (!g_searching && g_cat == 0 && g_recentPtrs.empty())
         {
-            RECT hint{ kPad, kCatH + kPad, rc.right - kPad, kCatH + kPad + kCell };
+            RECT hint{ kPad, GridY(), rc.right - kPad, GridY() + kCell };
             SetTextColor(hdc, kUiText2);
             DrawTextW(hdc, L"暂无最近使用（点击任意符号自动记录，最多 12 个）",
                       -1, &hint, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
 
         // "收藏"页空态提示（首行网格区居中）
-        if (g_cat == kFavTabIndex && g_favPtrs.empty())
+        if (!g_searching && g_cat == kFavTabIndex && g_favPtrs.empty())
         {
-            RECT hint{ kPad, kCatH + kPad, rc.right - kPad, kCatH + kPad + kCell };
+            RECT hint{ kPad, GridY(), rc.right - kPad, GridY() + kCell };
             SetTextColor(hdc, kUiText2);
             DrawTextW(hdc, L"暂无收藏（右键任意符号收藏，最多 60 个）",
+                      -1, &hint, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+
+        // 搜索态提示：空查询给用法，有查询无结果给"无匹配"（结果区首行居中）
+        if (g_searching && g_searchStore.empty())
+        {
+            RECT hint{ kPad, GridY(), rc.right - kPad, GridY() + kCell };
+            SetTextColor(hdc, kUiText2);
+            DrawTextW(hdc,
+                      g_searchQuery.empty()
+                          ? L"输入拼音或名称搜索，回车上屏首个结果"
+                          : L"无匹配结果（支持拼音 / 中文 / 英文名称）",
                       -1, &hint, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
 
@@ -663,6 +816,45 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         EndPaint(h, &ps);
         return 0;
     }
+    case WM_CREATE:
+    {
+        // 搜索框字体（一次创建进程内复用；主/小字体在 ShowSymbolPanel 侧创建）
+        if (!g_fontEdit)
+            g_fontEdit = CreateFontW(14, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                                     0, 0, CLEARTYPE_QUALITY, 0, L"Microsoft YaHei UI");
+        if (!g_fontTiny)
+            g_fontTiny = CreateFontW(13, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                                     0, 0, CLEARTYPE_QUALITY, 0, L"Microsoft YaHei UI");
+        // 常驻搜索 EDIT（标签行下）：CUE 提示占位；点击进搜索态（子类化）。
+        // 面板每开一个新窗口，EDIT 随建随毁（父窗口销毁连带），句柄/子类指针
+        // 在 WM_DESTROY 复位。
+        g_hSearchEdit = CreateWindowExW(0, L"EDIT", L"",
+            WS_CHILD | WS_VISIBLE | WS_BORDER | ES_AUTOHSCROLL,
+            kPad + 2, kCatH + 3, PanelWidth() - 2 * kPad - 4, kSearchH - 6,
+            h, (HMENU)(INT_PTR)kSearchEditId,
+            ((LPCREATESTRUCTW)lp)->hInstance, NULL);
+        if (g_hSearchEdit)
+        {
+            SendMessageW(g_hSearchEdit, WM_SETFONT, (WPARAM)g_fontEdit, TRUE);
+            // EM_SETCUEBANNER(0x1501)：工程 WINVER 下 winuser.h 未暴露该宏，按 SDK 值直发
+            SendMessageW(g_hSearchEdit, 0x1501 /*EM_SETCUEBANNER*/, FALSE,
+                         (LPARAM)L"搜索符号：拼音 / 中文名");
+            g_oldEditProc = (WNDPROC)SetWindowLongPtrW(g_hSearchEdit, GWLP_WNDPROC,
+                                                       (LONG_PTR)SearchEditProc);
+        }
+        return 0;
+    }
+    case WM_COMMAND:
+        // 搜索框文本变化：仅搜索态处理（退出搜索时的清空由 g_searching 闸忽略）
+        if (LOWORD(wp) == kSearchEditId && HIWORD(wp) == EN_CHANGE && g_searching)
+            RefreshSearchResults(h);
+        return 0;
+    case WM_ACTIVATE:
+        // 失活兜底：用户点了别的窗口（宿主/桌面/他应用），静默退出搜索——
+        // 前台是用户自己选的，不能再抢回；exstyle 复原后点网格不再激活面板。
+        if (g_searching && LOWORD(wp) == WA_INACTIVE)
+            ExitSearch(h, false);
+        return 0;
     case WM_DESTROY:
         // 记忆上次查看的静态分类标签（动态页"最近/收藏/日期"不记忆——各自有更优默认）。
         // 注册表仍存静态分类 1 基序（kCats 下标+1）；静态页现居标签序 2..kCatCount+1，
@@ -677,6 +869,15 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                 SaveSettingsDiff(st);
             }
         }
+        // 搜索态复位：面板销毁连带 EDIT，句柄/子类/前台锚点全部失效须清；
+        // 搜索态标记不清会让下一次开面板误入搜索分支（残句柄崩溃）
+        g_searching = false;
+        g_hSearchEdit = nullptr;
+        g_oldEditProc = nullptr;
+        g_prevFore = nullptr;
+        g_searchQuery.clear();
+        g_searchStore.clear();
+        g_searchPtrs.clear();
         g_hPanel = nullptr;
         return 0;
     }

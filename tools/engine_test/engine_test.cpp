@@ -12,6 +12,7 @@
 //
 #include "predictor.h"
 #include "calcnum.h"
+#include "../../ui/symsearch.h"
 #include "../../common/proto.h"
 #include "../../common/punct.h"
 #include "../../common/log.h"
@@ -675,6 +676,48 @@ int wmain()
                 py->Learn(L"v123", L"XXX污染");
                 Report(py->Predict(L"v123").cands[0] == L"壹佰贰拾叁",
                        "calc Learn rejected, dict not polluted");
+            }
+
+            // P5s. 符号搜索（ui/symsearch.cpp，符号面板搜索行共用）：
+            // 整词>子串排序、多词 AND、拼音/中文/英文检索、空查询空结果。
+            {
+                auto has = [](const std::vector<std::wstring>& v, const wchar_t* s) {
+                    return std::find(v.begin(), v.end(), std::wstring(s)) != v.end();
+                };
+                // P5s-1. 整词命中排前："mao" 首选 🐱（整词），冒号（子串）其后
+                {
+                    std::vector<std::wstring> r = lingxi::SymbolSearch(L"mao");
+                    Report(!r.empty() && r[0] == L"🐱" && has(r, L"：") && has(r, L"🦉"),
+                           "symsearch mao -> cat first, colon substring later");
+                }
+                // P5s-2. 拼音整词："douhao" 精确命中逗号
+                {
+                    std::vector<std::wstring> r = lingxi::SymbolSearch(L"douhao");
+                    Report(!r.empty() && r[0] == L"，",
+                           "symsearch douhao -> comma");
+                }
+                // P5s-3. 多词 AND："mao tou ying" 只剩猫头鹰
+                {
+                    std::vector<std::wstring> r = lingxi::SymbolSearch(L"mao tou ying");
+                    Report(r.size() == 1 && r[0] == L"🦉",
+                           "symsearch multi-token AND narrows to owl");
+                }
+                // P5s-4. 中文关键词："爱心" 首选红心；"颜文字" 全量 24 条以 (^_^) 开头
+                {
+                    std::vector<std::wstring> r = lingxi::SymbolSearch(L"爱心");
+                    Report(!r.empty() && r[0] == L"\u2764\uFE0F",
+                           "symsearch chinese kw aixin -> red heart");
+                }
+                {
+                    std::vector<std::wstring> r = lingxi::SymbolSearch(L"yanwenzi");
+                    Report(r.size() == 24 && r[0] == L"(^_^)",
+                           "symsearch yanwenzi -> 24 kaomoji");
+                }
+                // P5s-5. 空查询空结果；进度条可达
+                Report(lingxi::SymbolSearch(L"").empty(),
+                       "symsearch empty query -> empty");
+                Report(has(lingxi::SymbolSearch(L"jindutiao"), L"█"),
+                       "symsearch jindutiao -> progress block");
             }
 
             // P6. 候选翻页数据有效性：长串应给出第二页且候选唯一、页边界正确

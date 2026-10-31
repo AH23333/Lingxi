@@ -77,6 +77,7 @@
     <ClCompile Include="blockedui.cpp" />
     <ClCompile Include="clipboardui.cpp" />
     <ClCompile Include="symbolpanel.cpp" />
+    <ClCompile Include="symsearch.cpp" />
     <ClCompile Include="engine\ngram.cpp" />
     <ClCompile Include="engine\llm.cpp" />
     <ClCompile Include="engine\pinyin.cpp" />
@@ -95,6 +96,7 @@
     <ClInclude Include="blockedui.h" />
     <ClInclude Include="clipboardui.h" />
     <ClInclude Include="symbolpanel.h" />
+    <ClInclude Include="symsearch.h" />
     <ClInclude Include="uistyle.h" />
     <ClInclude Include="uitheme.h" />
     <ClInclude Include="engine\predictor.h" />
