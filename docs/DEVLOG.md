@@ -1009,6 +1009,7 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **Settings.incognito**：注册表 Incognito DWORD，LoadSettings/SaveSettings/SaveDiff 三处接线；common/settings 增单键快读 IncognitoActive()（RegGetValue µs 级，沙箱感知 LINGXI_SETTINGS_NS），热路径零缓存保开关精确性。
 - **门禁接线**：pipeserver ApplyLearn 顶部早退（学习/统计/备份触发/目标提醒四合一）；symbolpanel AddRecent 不记最近；clipboardui CbListenProc WM_CLIPBOARDUPDATE 不录历史。
 - **托盘**：菜单 2022"无痕模式（临时不留痕）"勾选切换 + BuildTrayTip"· 无痕"标注 + kHelpText 两处同步（托盘菜单列表/词典与学习段）。
+- **engine_test P8c 断言块**（Report 224→228）：IncognitoActive 缺键 false/置位 true/LoadSettings 往返一致/清除 false。
 - 门禁：build Debug 零错 + engine_test 沙箱 224/0 + fix_readings 缺口 0，全后台。
 
 ### 批次 H：帮助窗 Ctrl+F 查找 + 诊断无痕行（d125be8）

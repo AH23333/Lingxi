@@ -1011,6 +1011,26 @@ int wmain()
                 lingxi::SaveSettings(s0); // 还原沙盒基线
             }
 
+            // P8c. 无痕模式 IncognitoActive（批次 G）：单键快读与 LoadSettings 一致
+            {
+                Report(!lingxi::IncognitoActive(),
+                       "incognito: default false (key absent)", L"");
+                lingxi::Settings s0 = lingxi::LoadSettings();
+                lingxi::Settings s1 = s0;
+                s1.incognito = true;
+                lingxi::SaveSettings(s1);
+                Report(lingxi::IncognitoActive(),
+                       "incognito: IncognitoActive true after set", L"");
+                lingxi::Settings s2 = lingxi::LoadSettings();
+                Report(s2.incognito,
+                       "incognito: LoadSettings roundtrip keeps flag", L"");
+                s1.incognito = false;
+                lingxi::SaveSettings(s1);
+                Report(!lingxi::IncognitoActive(),
+                       "incognito: IncognitoActive false after clear", L"");
+                lingxi::SaveSettings(s0); // 还原沙盒基线
+            }
+
             // P9. 自学习用户词典：选字后该词置顶（备份/恢复真实词典，不污染）
             {
                 // 拼出 userdict 路径并备份现有内容
