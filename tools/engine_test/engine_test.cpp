@@ -11,6 +11,7 @@
 // 因此首次运行若 <exe目录>\data 缺词表，自动从 <exe目录>\..\Debug\data 拷贝。
 //
 #include "predictor.h"
+#include "calcnum.h"
 #include "../../common/proto.h"
 #include "../../common/punct.h"
 #include "../../common/log.h"
@@ -597,6 +598,83 @@ int wmain()
                              st.medianMs, st.avgMs, st.maxMs);
                 wprintf(L"[INFO] latency %ls\n", line);
                 Report(st.medianMs < 10.0, "pinyin latency median < 10ms (50 runs)", line);
+            }
+
+            // P5v. v 模式（数字大写/计算器，ui/engine/calcnum.cpp）：引擎在
+            // 词典处理前拦截 v 组合（IsCalcQuery），产出确定性候选
+            // （大写/小写/金额 或 计算结果/中文读法），cover=整串消耗。
+            {
+                auto has = [](const std::vector<std::wstring>& v, const wchar_t* s) {
+                    return std::find(v.begin(), v.end(), std::wstring(s)) != v.end();
+                };
+                // P5v-1. 触发口径：v/V + calc 字符算；裸 v/字母串/算式无前缀不算
+                Report(lingxi::IsCalcQuery(L"v1") && lingxi::IsCalcQuery(L"V9") &&
+                       lingxi::IsCalcQuery(L"v(1+2)") && lingxi::IsCalcQuery(L"v.5"),
+                       "calc IsCalcQuery accepts v+calc char");
+                Report(!lingxi::IsCalcQuery(L"v") && !lingxi::IsCalcQuery(L"va") &&
+                       !lingxi::IsCalcQuery(L"niha") && !lingxi::IsCalcQuery(L"1+2") &&
+                       !lingxi::IsCalcQuery(L""),
+                       "calc IsCalcQuery rejects non-calc");
+                // P5v-2. 纯数字：大写/小写/金额三连（顺序即优先级）
+                {
+                    std::vector<std::wstring> c = lingxi::CalcCandidates(L"v123");
+                    Report(c.size() == 3 && c[0] == L"壹佰贰拾叁" &&
+                           c[1] == L"一百二十三" && c[2] == L"壹佰贰拾叁元整",
+                           "calc v123 -> upper/lower/rmb ordered");
+                }
+                // P5v-3. 零折叠：整组零+低位组前导零合并为一个零（壹亿零伍）
+                Report(has(lingxi::CalcCandidates(L"v100000005"), L"壹亿零伍") &&
+                       has(lingxi::CalcCandidates(L"v10010"), L"壹万零壹拾"),
+                       "calc zero folding (100000005/10010)");
+                // P5v-4. 小写"一十"归约（10→十）；前导零剥（007→柒）
+                Report(has(lingxi::CalcCandidates(L"v10"), L"十") &&
+                       lingxi::CalcCandidates(L"v007")[0] == L"柒" &&
+                       has(lingxi::CalcCandidates(L"v007"), L"柒元整"),
+                       "calc lower yishi fold + leading zeros");
+                // P5v-5. 金额规则矩阵：00→整 / 30→角 / 03→零分 / 03 零元→叁分 / 34→角分
+                Report(has(lingxi::CalcCandidates(L"v12.00"), L"壹拾贰元整") &&
+                       has(lingxi::CalcCandidates(L"v12.30"), L"壹拾贰元叁角") &&
+                       has(lingxi::CalcCandidates(L"v12.03"), L"壹拾贰元零叁分") &&
+                       has(lingxi::CalcCandidates(L"v0.03"), L"叁分") &&
+                       has(lingxi::CalcCandidates(L"v12.34"), L"壹拾贰元叁角肆分") &&
+                       has(lingxi::CalcCandidates(L"v0.5"), L"伍角"),
+                       "calc rmb jiao/fen matrix");
+                // P5v-6. 全零：零/零元整（大小写同形去重）
+                {
+                    std::vector<std::wstring> c = lingxi::CalcCandidates(L"v0");
+                    Report(!c.empty() && c[0] == L"零" && has(c, L"零元整"),
+                           "calc v0 -> ling/ling yuan zheng");
+                }
+                // P5v-7. 计算器：+ * 括号负数小数；结果/大写/小写三连
+                {
+                    std::vector<std::wstring> c = lingxi::CalcCandidates(L"v(1+2)*3");
+                    Report(c.size() >= 3 && c[0] == L"9" && c[1] == L"玖" && c[2] == L"九",
+                           "calc expr (1+2)*3 -> 9/jiu");
+                }
+                Report(lingxi::CalcCandidates(L"v10/4")[0] == L"2.5" &&
+                       has(lingxi::CalcCandidates(L"v10/4"), L"贰点伍"),
+                       "calc expr 10/4 -> 2.5 decimal");
+                Report(lingxi::CalcCandidates(L"v2-5")[0] == L"-3" &&
+                       has(lingxi::CalcCandidates(L"v2-5"), L"负叁"),
+                       "calc expr negative result -> fu prefix");
+                // P5v-8. 非法输入不产候选：除零/语法错/超界（17 位）
+                Report(lingxi::CalcCandidates(L"v1/0").empty() &&
+                       lingxi::CalcCandidates(L"v1..2").empty() &&
+                       lingxi::CalcCandidates(L"v99999999999999999").empty(),
+                       "calc illegal inputs -> no candidates");
+                // P5v-9. 引擎集成：Predict 拦截在词典前，cover=整串、replaceLen=0
+                {
+                    lingxi::Prediction r = py->Predict(L"v1+2");
+                    bool coverFull = r.cover.size() == r.cands.size() && !r.cands.empty();
+                    for (uint32_t cv : r.cover) if (cv != 4) coverFull = false;
+                    Report(!r.cands.empty() && r.cands[0] == L"3" && r.replaceLen == 0 &&
+                           coverFull,
+                           "calc engine Predict intercept + full cover");
+                }
+                // P5v-10. Learn 拒收：v 组合不进自学习（防词典污染）
+                py->Learn(L"v123", L"XXX污染");
+                Report(py->Predict(L"v123").cands[0] == L"壹佰贰拾叁",
+                       "calc Learn rejected, dict not polluted");
             }
 
             // P6. 候选翻页数据有效性：长串应给出第二页且候选唯一、页边界正确

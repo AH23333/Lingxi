@@ -11,6 +11,7 @@
 //      按「覆盖率 + 词频 + 简拼/残段罚分」排序，输出整句与单词。
 //
 #include "predictor.h"
+#include "calcnum.h"
 
 #include <windows.h>
 
@@ -382,6 +383,15 @@ public:
     {
         Prediction p;
         if (context.empty()) return p;
+        // v 模式（数字大写/计算器）：确定性候选，拦截在拼音词典处理前；
+        // cover=整串消耗（提交后全清），Learn 侧拒收 IsCalcQuery 键。
+        if (IsCalcQuery(context))
+        {
+            p.cands = CalcCandidates(context);
+            p.cover.assign(p.cands.size(), (uint32_t)context.size());
+            p.replaceLen = 0;
+            return p;
+        }
         Settings st = LoadSettings();
         _fuzzy = st.fuzzyPinyin; // 开关实时生效
         if (st.fuzzyGroups >= 1 && st.fuzzyGroups <= 0xFF && st.fuzzyGroups != _fuzzyGroups)
@@ -1393,6 +1403,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     void Learn(const std::wstring& rawPinyin, const std::wstring& word) override
     {
         if (rawPinyin.empty() || word.empty()) return;
+        if (IsCalcQuery(rawPinyin)) return; // v 模式：确定性结果不进自学习（防词典污染）
         std::string key = ToUtf8(rawPinyin);
         // 双拼模式下 rawPinyin 是双拼串，而 Predict 以转换后的全拼串查键——
         // 不做同一转换，学习键与查询键永不相交，双拼下学习完全失效

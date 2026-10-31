@@ -80,6 +80,7 @@
     <ClCompile Include="engine\ngram.cpp" />
     <ClCompile Include="engine\llm.cpp" />
     <ClCompile Include="engine\pinyin.cpp" />
+    <ClCompile Include="engine\calcnum.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="window.h" />

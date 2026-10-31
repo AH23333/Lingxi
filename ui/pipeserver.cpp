@@ -7,6 +7,7 @@
 #include "usagestats.h"
 #include "uitheme.h"
 #include "autobackup.h"
+#include "engine/calcnum.h"
 
 #include <atomic>
 #include <thread>
@@ -551,7 +552,8 @@ void PipeServer::PredictProc()
         // 两阶段重排：原序已显示，后台按上文重排 top-8（不阻塞首次候选）。
         // 门槛：≥2 候选（单候选重排是纯浪费）；ctx 非空（无上文时 LLM 无从判断
         // 连贯性，prompt 退化为频度复读，省一次调用）；陈旧闸 ≤400ms。
-        if (e.pinyin && _reranker && st.llmRerank && !_reranker->Broken() &&
+        // v 模式（数字大写/计算器）候选是确定性结果，重排纯浪费，跳过。
+        if (e.pinyin && !IsCalcQuery(e.text) && _reranker && st.llmRerank && !_reranker->Broken() &&
             pred.cands.size() >= 2 && !e.ctx.empty() &&
             GetTickCount64() - e.enqueuedAt <= 400)
         {

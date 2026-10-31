@@ -53,6 +53,47 @@ static bool GetFocusContext(ITfThreadMgr* pTm, ITfContext** ppCtx)
     return SUCCEEDED(hr) && *ppCtx;
 }
 
+// ---- v 模式（数字大写/计算器）键位支持 ----
+// 引擎侧见 ui/engine/calcnum.cpp；触发口径与该处字符集一致：
+// 组合 "v"+calc 字符。双拼模式 v=声母(zh)，不触发（调用方把关）。
+
+static bool IsCalcChar(wchar_t c)
+{
+    return (c >= L'0' && c <= L'9') ||
+           c == L'+' || c == L'-' || c == L'*' || c == L'/' ||
+           c == L'(' || c == L')' || c == L'.';
+}
+
+// calc 键 → 字符（美式键位；Shift 映射 * ( ) +；0=非 calc 键）。
+// 数字/加减乘除括号点全走组合，不再翻页/选词/标点（v 模式专属）。
+static wchar_t CalcKeyChar(WPARAM wParam)
+{
+    bool shift = (GetKeyState(VK_SHIFT) & 0x8000) != 0;
+    if (wParam >= L'0' && wParam <= L'9')
+    {
+        if (!shift) return (wchar_t)wParam;
+        if (wParam == L'8') return L'*';
+        if (wParam == L'9') return L'(';
+        if (wParam == L'0') return L')';
+        return 0; // Shift+1..7（!@#$%^&）非 calc
+    }
+    if (!shift)
+    {
+        if (wParam == VK_OEM_MINUS) return L'-';
+        if (wParam == VK_OEM_PERIOD) return L'.';
+        if (wParam == VK_OEM_2) return L'/';
+        return 0;
+    }
+    if (wParam == VK_OEM_PLUS) return L'+'; // Shift+= → +
+    return 0;
+}
+
+// v 模式组合判定：拼音串形如 "v"+calc 字符（触发后粘性，直至组合结束）
+static bool CalcCtxActive(const std::wstring& pinyin)
+{
+    return pinyin.size() >= 2 && pinyin[0] == L'v' && IsCalcChar(pinyin[1]);
+}
+
 // 安全取光标矩形。Chromium 上对"写会话里产生的 composition range"在另一个
 // 读会话里调用 GetTextExt 会触发框架内部 AV（0xC0000005）。这里：
 //   1) 优先用当前读会话 GetSelection 得到的插入点 range（与 ec 同会话，最安全）；
@@ -722,6 +763,12 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
     bool shiftOrCaps = (GetKeyState(VK_SHIFT) & 0x8000) != 0 || (GetKeyState(VK_CAPITAL) & 1) != 0;
     if (PinyinActive())
     {
+        // v 模式（数字大写/计算器）：全拼专属。组合为 "v" 时按 calc 键触发；
+        // 进入后 calc 键全吃——数字/加减乘除括号点不再走翻页/选词/标点路径。
+        // 双拼 v=声母(zh)，不触发。_pinyin 仅 UI 线程写，锁外读为既定模式。
+        if (!LoadSettings().shuangpin && CalcKeyChar(wParam) != 0 &&
+            (_pinyin == L"v" || CalcCtxActive(_pinyin)))
+            return true;
         if (IsLetterKey(wParam))
         {
             // 输入中的 Shift+字母：也要吃（HandlePinyinKey 会先提交原文再放行）
@@ -957,6 +1004,20 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
     {
         PinyinAppend(L'\'');
         return;
+    }
+    // v 模式（数字大写/计算器）：全拼专属。组合为 "v" 时按 calc 键触发追加
+    // 进入 calc 态；进入后 calc 键（数字/运算符/点）持续追加，不选词/翻页。
+    // 误入（"va"）自动脱离 calc 口径；退格删回 "v" 可再触发。空格/回车仍走
+    // 下方 switch：候选 cover=整串（引擎侧拦截），空格上屏首选结果，回车
+    // 原样上屏表达式。
+    if (!LoadSettings().shuangpin)
+    {
+        wchar_t cc = CalcKeyChar(wParam);
+        if (cc != 0 && (_pinyin == L"v" || CalcCtxActive(_pinyin)))
+        {
+            PinyinAppend(cc);
+            return;
+        }
     }
     switch (wParam)
     {
