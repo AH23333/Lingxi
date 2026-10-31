@@ -871,3 +871,13 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **行为探针取证**：blocked.txt 写入"郭云龙+西安" → probe gylg 4→3 候（郭云龙消失）、xian 首选 西安→先；删除文件后基线复原（gylg=4 候/gylgl=供应链管理 1 候/xian→西安）。
 - 门禁：build 零错；regress ALL PASS（tmp\regress-1420324283）；smoke1 15/15 + smoke2 8/8。
 - 工装注意：PowerShell 跑 LingxiUI.exe（GUI 子系统）**不等待即返回**，probe 日志读到旧内容——行为探针须 `cmd /c` 包裹（等子进程退出）；PS 5.1 无 `` `u{...} `` 转义，BOM 靠 UTF8Encoding(true) 即可，勿在字符串里手拼 FEFF。
+
+### R6 闭环：候选右键直接屏蔽（`281d692`）
+
+管理窗（`4981be0`）之后的功率键补齐：看到垃圾候选右键即屏蔽，免开窗。
+
+- **blockedui 公共 API 三入口**：`BlockWord`（校验+去重+原子写+fire g_hooks.reloadUserDict，`BlockWordResult` 五态枚举：Blocked/AlreadyBlocked/LimitReached/TooLong/SaveFailed）/`UnblockWord`/`IsWordBlocked`——热载封装在 blockedui.cpp 内，candwnd_interact 只 include 公共头 blockedui.h，不触碰 uiinternal.h（P0 纪律 4/5）。
+- **右键菜单 8 号项**：按当前屏蔽态切换文案（未屏蔽="屏蔽该词（不再出现）"；已屏蔽="取消屏蔽（恢复候选）"+MF_CHECKED），结果统一浮窗 1.5s；超限/写失败各有文案。
+- **管理窗 BlAdd 复用 BlockWord**：校验/去重/落盘/热载与右键同一条路，switch 五态映射状态行文案——口径唯一定义点。
+- 门禁：build 零错；regress ALL PASS（regress-2180511821）；smoke1 15/15 + smoke2 8/8；probe 基线全符。
+- **假红实录（既有 PITFALLS #19/#60/#66 类，非新坑）**：smoke1/2 重启链之后首跑 regress 双红（deep_test attempt1 pinyin-settle 红连锁 25 FAIL、e2e 三次 settle 各异），`taskkill LingxiUI.exe` 清宿主后重跑 deep_test 直绿、e2e 第 3 次过——smoke 脚本重启过的宿主带残留态，regress 前清一次宿主可稳定复绿。
