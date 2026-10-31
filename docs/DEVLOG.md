@@ -859,3 +859,15 @@ R2-R4 收口后用户要求继续低难度功能、40 分钟内收口——选 R
 ### 备注
 - 工装沉淀：tmp/verify-p2.ps1（括号匹配逐块核验器，可复用后续拆分段）、tmp/smoke1.ps1（15 项）/tmp/smoke2.ps1（8 项）继续作为真机门禁。
 - 三段净效果：ui 层最大文件 2868→1796（settingsui.cpp）、1542 行 window.cpp 消失（3 文件均 <744）、9+ 散装 setter 收敛为 1 结构体 1 写点；公共头（window.h/settingsui.h）与 DLL/引擎零改动。
+## 2026-10-31 · R6 屏蔽词管理窗（`4981be0`）
+
+GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早已就绪，本轮补可视化编辑，**引擎零改动**。
+
+- **新文件 ui/blockedui.{h,cpp}**（phraseui 模板，AGENTS.md 纪律 1：新窗口=新文件）：列表 + 词输入 + 添加/删除选中/清空（带确认）+ 状态行；窗口类 LingxiBlockedWnd，控件 ID 段 600-606（ID 空间：settings 101-132 / userdict 300-313 / help 350 / stats 360-362 / hotphrase 400-406 / phrase 500-506 / blocked 600+）。
+- **口径镜像引擎 LoadBlockedLocked**：词 1-50 字符、上限 500 条、UTF-8 带 BOM、去重（unordered_set）；保存走共享 WriteFileBytes（原子 .tmp+MoveFileEx）→ fire `g_hooks.reloadUserDict()`（blocked.txt 与 userdict 同 _udMtx 同通道，LoadUserDict 尾部装载）。
+- **入口双路（settingsui.cpp 零增长，P0 上界 1796 行不破）**：托盘菜单 2018"屏蔽词管理..."（tray.cpp）+ 词典窗按钮行 7→8 加"屏蔽词"（IDC_UD_BLOCKED=313，userdictwnd.cpp）。
+- **备份随行**（settingsbackup.cpp）：导出同 basename"-屏蔽词.txt"；导入检测→询问→恢复→fire reloadUserDict（与用户词典/热键短语同模式）；日志加 bl=%d 字段。
+- **帮助同步**（helpwnd.cpp）：托盘菜单清单加"屏蔽词管理"、词典与学习段加两行说明。
+- **行为探针取证**：blocked.txt 写入"郭云龙+西安" → probe gylg 4→3 候（郭云龙消失）、xian 首选 西安→先；删除文件后基线复原（gylg=4 候/gylgl=供应链管理 1 候/xian→西安）。
+- 门禁：build 零错；regress ALL PASS（tmp\regress-1420324283）；smoke1 15/15 + smoke2 8/8。
+- 工装注意：PowerShell 跑 LingxiUI.exe（GUI 子系统）**不等待即返回**，probe 日志读到旧内容——行为探针须 `cmd /c` 包裹（等子进程退出）；PS 5.1 无 `` `u{...} `` 转义，BOM 靠 UTF8Encoding(true) 即可，勿在字符串里手拼 FEFF。
