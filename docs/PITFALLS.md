@@ -454,3 +454,26 @@
 - **根因**：PowerShell 5.1 → cmd 原生进程传参时 `\"` 先被 PS 剥一层；cmd 忽略 `\` 不转义、而 MSBuild（.NET 规则）把 `\"` 视为字面引号——同一条命令经过**两套转义规则**，嵌套引号必碎。
 - **修法**：① git 长中文 message 一律 `-F 文件`（tmp/ 下临时文件，UTF-8）；② MSBuild 带尾反斜杠的属性写 `\\`（`"/p:SolutionDir=%CD%\\"`），或落成 .cmd 脚本跑；顺带：wprintf 中文在重定向下经 wcstombs 按 C locale 转换失败会**整行截断**（engine_test 末行"=== 结果: PASS=.. FAIL=.. ==="只剩"=== "），门禁计数改用 `Select-String '\[PASS\]' | Measure` 统计，别信尾行。
 - **规约**：Windows 下跨 shell 组装含引号/反斜杠的命令行，一律走脚本文件（.cmd/-F）或环境变量，禁止在 PowerShell 单行里嵌套 `\"`。
+### 77. PowerShell 5.1 把 $null 绑定成 "" 传给 [string] P/Invoke 参数——FindWindowW(cls, $null) 只匹配空标题窗口 ⭐⭐
+- **症状**：smoke4 对 LingxiCbWnd/LingxiSymbolPanel 的 FindWindowW 全 NOT FOUND，但 EnumWindows+GetClassName 看得到窗口且 IsWindowVisible=True；按"类名+标题"双参查找反而命中。
+- **根因**：PS 5.1 把 $null 绑定到 .NET [string] 参数时转为 String.Empty——FindWindowW 第二参从"NULL=匹配任意标题"变成"空串=只匹配空标题"；标题非空的运行期窗口（帮助/剪贴板/面板）全体假阴性，启动期空标题窗口（候选/监听/托盘）恰好匹配——幸存者偏差让探针"看着正常"。
+- **修法**：真 NULL 用 `[NullString]::Value`（diag11 实证三窗全中）；或签名改 IntPtr 传 IntPtr.Zero。
+- **规约**：P/Invoke 字符串参数的 $null 语义必须显式表达；"部分窗口找得到"不能证明编组正确——按窗口属性分层抽样验证。
+
+### 78. W 系 P/Invoke 缺 CharSet=CharSet.Unicode——字符串按 ANSI 编组成乱码静默失败 ⭐⭐
+- **症状**：diag4/5/6 FindWindowW('LingxiUIMainWnd') 恒 0，误诊"托盘窗消失/僵尸宿主"；OpenEventW 乱码名打不开事件。
+- **根因**：DllImport 缺省 CharSet.Ansi，string 参数按 ANSI 字节传给 W 宽字符函数——类名变乱码，永远查不到且无任何报错；PostMessageW 等无字符串参数的函数不受影响，掩盖了面窄的假象。
+- **修法**：凡带字符串参数的 W 函数显式声明 `CharSet=CharSet.Unicode`。
+- **规约**：跨语言字符串编组错误是"静默语义漂移"不是崩溃——"查不到/打不开"类 API 失败先审编组声明再怀疑目标本身。
+
+### 79. `cmd /c "... && start GUI.exe" | Out-Null` 挂死 PowerShell ⭐
+- **症状**：diag4 冻结在启动宿主行，工具 360s 超时全输出丢失，探针后段全没跑。
+- **根因**：cmd start 拉起的 GUI 子进程继承 PS 管道写端句柄——进程存活则管道永不 EOF，Out-Null 永等；超时杀的是外层命令。
+- **修法**：启 GUI 用 Start-Process（不接管道）；传环境变量先 `$env:VAR` 再 Start-Process（子进程继承）。
+- **规约**：长脚本必须边跑边 Add-Content 落盘结果文件防超时丢证；凡"管道+GUI 子进程"组合都要审句柄继承。
+
+### 80. PowerShell 自定义函数撞内置别名——GL 被 gl(Get-Location) 劫持 ⭐
+- **症状**：`$(GL)` 想取 GetLastError，输出却是当前目录路径，gle= 字段全是垃圾。
+- **根因**：命令解析优先级别名>函数，gl 是 Get-Location 内置别名且大小写不敏感。
+- **修法**：错误码封装命名避开内置别名（LastErr），或直接内联 Marshal::GetLastWin32Error。
+- **规约**：自定义函数名先对 `Get-Command -CommandType Alias` 核重。

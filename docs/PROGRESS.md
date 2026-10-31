@@ -99,3 +99,6 @@
 - **待办（用户空闲统一补跑）**：重启宿主拾取新 exe → e2e+smoke（任务③+频闪+暗色+剪贴板历史肉眼验收）→ regress 全量 → newtask-verify.ps1 v2；30+ 清单剩余批次（符号面板搜索与收藏页/emoji 分类扩充/帮助窗查找/无痕模式/透明度档位细化）按"后台可验性"逐批 build+engine_test 门禁后 commit，docs 随批落账。
 
 - **批次 E 符号面板收藏页 ✅（10-31 夜三，e39107d，4 文件 +183/-25）**：第二标签"收藏"页——右键网格符号收藏/取消（★角标即时反馈），上限 60 条注册表持久化（favoriteSymbols，仿 recentSymbols 模式）；右键收藏标签确认清空；标签序 0=最近/1=收藏/2..15=静态/16=日期，lastSymbolCat 注册表语义不变（±1 换算免迁移）；kHelpText 同步。**搜索框押后**（NOACTIVATE 抢焦点交互须前台验证）。门禁：build 零错+engine_test 沙箱 224/0+fix_readings 缺口 0，全后台。工装坑：PS 5.1 Set-Content -Encoding UTF8 带 BOM 会污 commit message 主题行，改 [IO.File]::WriteAllText+UTF8Encoding(false) 后 amend。
+
+- **批次 F emoji 高频扩充 ✅（10-31 傍晚二，e0443ff）**：5 分类扩容（表情 48/手势 36/动物 48/食物 48/活动 42），全部单码点或 +VS16 避 E13.1+/ZWJ 渲染缺失，新增条目 \u 转义防 VS16 编辑丢失。门禁：build 零错 + engine_test 沙箱 224/0 + fix_readings 缺口 0，全后台。
+- **批次 C-F 真机验证收口 ✅（10-31 夜四）**：smoke4 **12/12 全过**（剪贴板节流落盘/WM_HOTKEY 5 开关窗/诊断两行/--symbols 转发/846 宽/收藏对称切换/表情页 48 条 4 行——批次 F 直接验证）。首跑两 FAIL 全系探针假阴性：$null→"" 编组使 FindWindowW(cls,$null) 只匹配空标题窗口（PITFALLS #77）+ 缺 CharSet.Unicode 乱码（#78）+ cmd start 管道继承挂死（#79）——diag7-11 取证链实锤转发/热键/建窗零缺陷，"僵尸宿主"为误诊；工装别撞名入 #80。
