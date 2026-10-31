@@ -185,6 +185,80 @@ void AddRecent(const std::wstring& sym)
     }
 }
 
+// ---------------- "收藏"页（动态分类，注册表持久化）----------------
+// 第二标签 = 收藏（右键网格符号 收藏/取消，≤60 项，最新在前）。
+// 存储同"最近"页模式：store 保活 + 指针数组适配 Category::items 只读指针约定。
+constexpr size_t kFavMax = 60;
+std::vector<std::wstring> g_favStore;
+std::vector<const wchar_t*> g_favPtrs;
+Category g_favCat = { L"收藏", nullptr, 0, 38, 12 };
+
+void RebuildFavPtrs()
+{
+    g_favPtrs.clear();
+    for (const auto& r : g_favStore) g_favPtrs.push_back(r.c_str());
+}
+
+void LoadFavs()
+{
+    g_favStore.clear();
+    std::wstring s = LoadSettings().favoriteSymbols;
+    size_t start = 0;
+    while (g_favStore.size() < kFavMax)
+    {
+        size_t p = s.find(L'\x1F', start);
+        size_t end = (p == std::wstring::npos) ? s.size() : p;
+        if (end <= start) break; // 空段/到尾
+        g_favStore.push_back(s.substr(start, end - start));
+        if (p == std::wstring::npos) break;
+        start = p + 1;
+    }
+    RebuildFavPtrs();
+}
+
+bool IsFavorite(const wchar_t* sym)
+{
+    for (const auto& f : g_favStore)
+        if (f == sym) return true;
+    return false;
+}
+
+void PersistFavs()
+{
+    std::wstring joined;
+    for (size_t i = 0; i < g_favStore.size(); i++)
+    {
+        if (i) joined += L'\x1F';
+        joined += g_favStore[i];
+    }
+    Settings st = LoadSettings();
+    if (st.favoriteSymbols != joined)
+    {
+        st.favoriteSymbols = joined;
+        SaveSettingsDiff(st);
+    }
+}
+
+// 右键网格符号的收藏开关：未收藏=置顶加入（超限挤掉最旧），已收藏=移除
+void ToggleFavorite(const std::wstring& sym)
+{
+    if (sym.empty()) return;
+    auto it = std::find(g_favStore.begin(), g_favStore.end(), sym);
+    bool added = (it == g_favStore.end());
+    if (added)
+    {
+        g_favStore.insert(g_favStore.begin(), sym);
+        if (g_favStore.size() > kFavMax) g_favStore.pop_back();
+    }
+    else
+    {
+        g_favStore.erase(it);
+    }
+    RebuildFavPtrs();
+    PersistFavs();
+    LX_LOG(L"ui", added ? L"符号收藏: %ls" : L"取消符号收藏: %ls", sym.c_str());
+}
+
 // ---------------- "日期时间"页（动态分类，打开/切页时现算）----------------
 // 日期/时间/星期随开随算（点击上屏当前值）；排在尾标签，不挤占既有序号。
 std::vector<std::wstring> g_dtStore;
@@ -217,7 +291,13 @@ void RebuildDateTimeItems()
     g_dtCat.count = (int)g_dtPtrs.size();
 }
 
-// 标签序：0="最近"（动态），1..kCatCount=静态分类，kCatCount+1="日期时间"（动态）
+// 标签序：0="最近"（动态），1="收藏"（动态），2..kCatCount+1=静态分类，
+// kCatCount+2="日期时间"（动态）。注册表 lastSymbolCat 仍存静态分类 1 基序
+// （kCats 下标+1，与"收藏"页插入前的老版本一致），加载 +1 / 销毁 -1 换算，免迁移。
+constexpr int kTabCount = kCatCount + 3;      // 含"最近""收藏""日期时间"三动态页
+constexpr int kFavTabIndex = 1;               // "收藏"页标签序号（紧跟"最近"）
+constexpr int kDtTabIndex = kCatCount + 2;    // "日期时间"页标签序号
+
 const Category& CatAt(int i)
 {
     if (i <= 0)
@@ -226,12 +306,15 @@ const Category& CatAt(int i)
         g_recentCat.count = (int)g_recentPtrs.size();
         return g_recentCat;
     }
-    if (i == kCatCount + 1) return g_dtCat;
-    return kCats[i - 1];
+    if (i == kFavTabIndex)
+    {
+        g_favCat.items = g_favPtrs.empty() ? nullptr : g_favPtrs.data();
+        g_favCat.count = (int)g_favPtrs.size();
+        return g_favCat;
+    }
+    if (i == kDtTabIndex) return g_dtCat;
+    return kCats[i - 2];
 }
-
-constexpr int kTabCount = kCatCount + 2;      // 含"最近"与"日期时间"页
-constexpr int kDtTabIndex = kCatCount + 1;    // "日期时间"页标签序号
 
 // × 关闭按钮命中区（头部最右）
 RECT CloseBtnRect()
@@ -245,6 +328,7 @@ int g_cat = 0;
 int g_hoverIdx = -1; // 网格悬停高亮（-1=无；hover 高亮 + 手型光标）
 bool g_mouseTracked = false;
 HFONT g_font = nullptr;
+HFONT g_fontSmall = nullptr; // 收藏★角标用小号字（12px，与 20px 主字体并存）
 std::function<void(const std::wstring&)> g_onInsert;
 
 const Category& CurCat() { return CatAt(g_cat); }
@@ -331,21 +415,64 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     }
     case WM_RBUTTONDOWN:
     {
-        // 右键"最近"标签 = 清空最近记录（其余右键=关面板，原语义不变）
         int x = GET_X_LPARAM(lp), y = GET_Y_LPARAM(lp);
-        if (y < kCatH && x >= kPad && x < kPad + kCatTabW)
+        if (y < kCatH)
         {
-            g_recentStore.clear();
-            g_recentPtrs.clear();
-            Settings st = LoadSettings();
-            if (!st.recentSymbols.empty())
+            // 右键"最近"标签 = 清空最近记录
+            if (x >= kPad && x < kPad + kCatTabW)
             {
-                st.recentSymbols.clear();
-                SaveSettingsDiff(st);
+                g_recentStore.clear();
+                g_recentPtrs.clear();
+                Settings st = LoadSettings();
+                if (!st.recentSymbols.empty())
+                {
+                    st.recentSymbols.clear();
+                    SaveSettingsDiff(st);
+                }
+                InvalidateRect(h, NULL, TRUE); // 清空后空态提示立现
+                LX_LOG(L"ui", L"右键\"最近\"标签清空记录");
+                return 0;
             }
-            InvalidateRect(h, NULL, TRUE); // 清空后空态提示立现
-            LX_LOG(L"ui", L"右键\"最近\"标签清空记录");
-            return 0;
+            // 右键"收藏"标签 = 确认后清空收藏（收藏是用户主动沉淀，比"最近"贵重，须确认）
+            if (x >= kPad + kFavTabIndex * kCatTabW && x < kPad + (kFavTabIndex + 1) * kCatTabW)
+            {
+                if (!g_favStore.empty() &&
+                    MessageBoxW(h, L"清空全部收藏的符号？", L"灵犀输入法",
+                                MB_OKCANCEL | MB_ICONQUESTION | MB_SETFOREGROUND) == IDOK)
+                {
+                    g_favStore.clear();
+                    g_favPtrs.clear();
+                    PersistFavs();
+                    SetWindowPos(h, HWND_TOPMOST, 0, 0, PanelWidth(), PanelHeight(),
+                                 SWP_NOMOVE | SWP_NOACTIVATE);
+                    UiApplyRoundCorners(h, PanelWidth(), PanelHeight());
+                    InvalidateRect(h, NULL, TRUE); // 空态提示立现 + 行数收缩随动
+                    LX_LOG(L"ui", L"右键\"收藏\"标签清空收藏");
+                }
+                return 0;
+            }
+        }
+        else
+        {
+            // 右键网格条目 = 收藏/取消收藏（"日期"页条目随开随算，不收藏）
+            int idx = HitItem(x, y);
+            if (idx >= 0 && g_cat != kDtTabIndex)
+            {
+                ToggleFavorite(std::wstring(CurCat().items[idx]));
+                if (g_cat == kFavTabIndex)
+                {
+                    // 正看"收藏"页：增删条目行数变，面板高度/圆角随动
+                    SetWindowPos(h, HWND_TOPMOST, 0, 0, PanelWidth(), PanelHeight(),
+                                 SWP_NOMOVE | SWP_NOACTIVATE);
+                    UiApplyRoundCorners(h, PanelWidth(), PanelHeight());
+                    InvalidateRect(h, NULL, TRUE);
+                }
+                else
+                {
+                    InvalidateRect(h, NULL, FALSE); // 其他页仅★角标即时刷新
+                }
+                return 0;
+            }
         }
         ClosePanel();
         return 0;
@@ -486,6 +613,15 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             }
             DrawTextW(hdc, cat.items[i], -1, &cell,
                       DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+            // ★角标：已收藏符号在格右上角标星（"收藏"页本身全是收藏，不重复标）
+            if (g_cat != kFavTabIndex && IsFavorite(cat.items[i]))
+            {
+                RECT star{ cell.right - 14, cell.top + 1, cell.right - 2, cell.top + 13 };
+                HGDIOBJ oldSmall = SelectObject(hdc, g_fontSmall);
+                SetTextColor(hdc, skin.accent);
+                DrawTextW(hdc, L"★", -1, &star, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+                SelectObject(hdc, oldSmall);
+            }
         }
 
         // "最近"页空态提示（首行网格区居中）
@@ -497,18 +633,30 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
                       -1, &hint, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
         }
 
+        // "收藏"页空态提示（首行网格区居中）
+        if (g_cat == kFavTabIndex && g_favPtrs.empty())
+        {
+            RECT hint{ kPad, kCatH + kPad, rc.right - kPad, kCatH + kPad + kCell };
+            SetTextColor(hdc, kUiText2);
+            DrawTextW(hdc, L"暂无收藏（右键任意符号收藏，最多 60 个）",
+                      -1, &hint, DT_CENTER | DT_VCENTER | DT_SINGLELINE);
+        }
+
         SelectObject(hdc, oldFont);
         EndPaint(h, &ps);
         return 0;
     }
     case WM_DESTROY:
-        // 记忆上次查看的静态分类标签（动态页"最近/日期"不记忆——各自有更优默认）
-        if (g_cat >= 1 && g_cat <= kCatCount)
+        // 记忆上次查看的静态分类标签（动态页"最近/收藏/日期"不记忆——各自有更优默认）。
+        // 注册表仍存静态分类 1 基序（kCats 下标+1）；静态页现居标签序 2..kCatCount+1，
+        // 存取两侧各 ±1 换算，老版本写入的值无须迁移。
+        if (g_cat >= 2 && g_cat <= kCatCount + 1)
         {
+            uint32_t catIdx = (uint32_t)(g_cat - 1);
             Settings st = LoadSettings();
-            if (st.lastSymbolCat != (uint32_t)g_cat)
+            if (st.lastSymbolCat != catIdx)
             {
-                st.lastSymbolCat = (uint32_t)g_cat;
+                st.lastSymbolCat = catIdx;
                 SaveSettingsDiff(st);
             }
         }
@@ -531,17 +679,18 @@ void ShowSymbolPanel(HINSTANCE hInst, std::function<void(const std::wstring&)> o
     }
     g_onInsert = std::move(onInsert);
 
-    // "最近"页载入 + 上次静态分类记忆：动态页保持智能默认（有记录开
+    // "最近"/"收藏"页载入 + 上次静态分类记忆：动态页保持智能默认（有记录开
     // "最近"，空则开"常用"），静态分类（数学/表情/…）则恢复上次查看页。
     LoadRecents();
+    LoadFavs();
     RebuildDateTimeItems(); // "日期时间"页现算（面板开着时间会走，切页时再刷新）
     g_hoverIdx = -1;
     g_mouseTracked = false;
     uint32_t lastCat = LoadSettings().lastSymbolCat;
     if (lastCat >= 1 && lastCat <= (uint32_t)kCatCount)
-        g_cat = (int)lastCat;
+        g_cat = (int)lastCat + 1; // 静态页现居标签序 2..kCatCount+1（"收藏"页插序 1）
     else
-        g_cat = g_recentPtrs.empty() ? 1 : 0;
+        g_cat = g_recentPtrs.empty() ? 2 : 0; // 默认"常用"（现序 2）/ 有记录开"最近"
 
     WNDCLASSW wc{};
     wc.lpfnWndProc = PanelWndProc;
@@ -556,6 +705,9 @@ void ShowSymbolPanel(HINSTANCE hInst, std::function<void(const std::wstring&)> o
     if (!g_font)
         g_font = CreateFontW(20, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
                              0, 0, CLEARTYPE_QUALITY, 0, L"Microsoft YaHei UI");
+    if (!g_fontSmall)
+        g_fontSmall = CreateFontW(12, 0, 0, 0, FW_NORMAL, 0, 0, 0, DEFAULT_CHARSET,
+                                  0, 0, CLEARTYPE_QUALITY, 0, L"Microsoft YaHei UI");
 
     // 按鼠标所在显示器（含副屏负坐标）的工作区钳位
     POINT pt;

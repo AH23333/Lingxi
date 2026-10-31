@@ -52,6 +52,7 @@ struct Settings
     int candidatePinX = 0;         // 固定位置屏幕坐标（负值合法：多显示器左侧屏）
     int candidatePinY = 0;
     std::wstring recentSymbols;    // 符号面板"最近"页：\x1F 分隔、最新在前、≤12 项（面板维护）
+    std::wstring favoriteSymbols;  // 符号面板"收藏"页：\x1F 分隔、最新在前、≤60 项（右键符号收藏，面板维护）
     uint32_t dailyCharGoal = 500;  // 每日上屏汉字目标（R8 统计增强）：达成当日一次性
                                    // 候选窗气泡提醒；0=关闭提醒。统计窗显示进度
     uint32_t lastSettingsPage = 0; // 设置窗：上次查看页（重开直达；越界回首页）

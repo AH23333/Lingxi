@@ -113,6 +113,7 @@ Settings LoadSettings()
     if (GetDword(hKey, L"CandidatePinX", v)) s.candidatePinX = (int)v; // 负值经 DWORD 往返
     if (GetDword(hKey, L"CandidatePinY", v)) s.candidatePinY = (int)v;
     GetString(hKey, L"RecentSymbols", s.recentSymbols); // 缺键=空（"最近"页空态）
+    GetString(hKey, L"FavoriteSymbols", s.favoriteSymbols); // 缺键=空（"收藏"页空态）
     if (GetDword(hKey, L"DailyCharGoal", v) && v <= 100000) s.dailyCharGoal = v;
     if (GetDword(hKey, L"LastSettingsPage", v)) s.lastSettingsPage = v; // 越界钳制在消费方（页数随版本变）
     if (GetDword(hKey, L"LastSymbolCat", v)) s.lastSymbolCat = v;
@@ -158,6 +159,7 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"CandidatePinX", (DWORD)(uint32_t)s.candidatePinX);
     SetDword(hKey, L"CandidatePinY", (DWORD)(uint32_t)s.candidatePinY);
     SetString(hKey, L"RecentSymbols", s.recentSymbols);
+    SetString(hKey, L"FavoriteSymbols", s.favoriteSymbols);
     SetDword(hKey, L"DailyCharGoal", s.dailyCharGoal);
     SetDword(hKey, L"LastSettingsPage", s.lastSettingsPage);
     SetDword(hKey, L"LastSymbolCat", s.lastSymbolCat);
@@ -217,6 +219,7 @@ void SaveSettingsDiff(const Settings& s)
     PutDwordDiff(hKey, L"CandidatePinX", (DWORD)(uint32_t)s.candidatePinX);
     PutDwordDiff(hKey, L"CandidatePinY", (DWORD)(uint32_t)s.candidatePinY);
     PutStringDiff(hKey, L"RecentSymbols", s.recentSymbols);
+    PutStringDiff(hKey, L"FavoriteSymbols", s.favoriteSymbols);
     PutDwordDiff(hKey, L"DailyCharGoal", s.dailyCharGoal);
     PutDwordDiff(hKey, L"LastSettingsPage", s.lastSettingsPage);
     PutDwordDiff(hKey, L"LastSymbolCat", s.lastSymbolCat);
