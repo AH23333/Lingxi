@@ -59,6 +59,9 @@ void ExportSettingsBackup(HWND owner)
     bool ok = RunCmdHidden(args);
     // 用户词典 + 热键短语随行（同 basename"-用户词典.txt"/"-热键短语.txt"）：
     // 两者都在 APPDATA 文本文件，注册表备份不含；一并导出让备份完整可迁移。
+    // 源文件不存在=正常（新装）；存在但读/写失败=备份不完整，必须告知用户
+    //（审计轮 7 修复：原实现仅记日志，弹窗仍报"已导出"，虚假信心）。
+    int sidecarFail = 0;
     bool dictOk = false, hpOk = false, blOk = false;
     if (ok)
     {
@@ -68,27 +71,34 @@ void ExportSettingsBackup(HWND owner)
         std::string raw;
         if (ReadFileBytes(UserDictPathW(), raw))
         {
-            WriteFileBytes(base + L"-用户词典.txt", raw);
-            dictOk = true;
+            if (WriteFileBytes(base + L"-用户词典.txt", raw)) dictOk = true;
+            else sidecarFail++;
         }
         if (ReadFileBytes(HotPhraseDataPath(), raw))
         {
-            WriteFileBytes(base + L"-热键短语.txt", raw);
-            hpOk = true;
+            if (WriteFileBytes(base + L"-热键短语.txt", raw)) hpOk = true;
+            else sidecarFail++;
         }
         // 屏蔽词随行（"-屏蔽词.txt"）：blocked.txt 也在 APPDATA，注册表备份不含
         if (ReadFileBytes(BlockedWordsPathW(), raw))
         {
-            WriteFileBytes(base + L"-屏蔽词.txt", raw);
-            blOk = true;
+            if (WriteFileBytes(base + L"-屏蔽词.txt", raw)) blOk = true;
+            else sidecarFail++;
         }
     }
-    LX_LOG(L"ui", L"设置备份导出 ok=%d dict=%d hp=%d bl=%d path=%ls",
-           (int)ok, (int)dictOk, (int)hpOk, (int)blOk, path);
-    MessageBoxW(owner,
-                ok ? L"设置备份已导出。" : L"导出失败（路径不可写或 reg.exe 不可用）。",
-                L"导出设置备份",
-                MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONWARNING));
+    LX_LOG(L"ui", L"设置备份导出 ok=%d dict=%d hp=%d bl=%d fail=%d path=%ls",
+           (int)ok, (int)dictOk, (int)hpOk, (int)blOk, sidecarFail, path);
+    if (ok && sidecarFail)
+        MessageBoxW(owner,
+                    (L"注册表设置已导出，但 " + std::to_wstring(sidecarFail) +
+                     L" 个随行数据文件（词典/短语/屏蔽词）写入失败，备份不完整！\n"
+                     L"详情见日志，请检查目标路径后重试。").c_str(),
+                    L"导出设置备份", MB_OK | MB_ICONWARNING);
+    else
+        MessageBoxW(owner,
+                    ok ? L"设置备份已导出。" : L"导出失败（路径不可写或 reg.exe 不可用）。",
+                    L"导出设置备份",
+                    MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONWARNING));
 }
 
 void ImportSettingsBackup(HWND owner)
@@ -108,6 +118,7 @@ void ImportSettingsBackup(HWND owner)
     std::wstring args = L"/c reg import \"" + std::wstring(path) + L"\"";
     bool ok = RunCmdHidden(args);
     bool dictRestored = false, hpRestored = false, blRestored = false;
+    int restoreFail = 0; // 用户已确认恢复但读/写失败（审计轮 7：须告知，防"以为已还原"）
     if (ok)
     {
         if (g_hooks.settingsChanged) g_hooks.settingsChanged(); // 热键等需随新设置重注册
@@ -130,6 +141,7 @@ void ImportSettingsBackup(HWND owner)
                     if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
                     dictRestored = true;
                 }
+                else restoreFail++;
             }
         }
         // 随行热键短语存在则询问恢复（覆盖后通知重注册全部短语热键）
@@ -147,6 +159,7 @@ void ImportSettingsBackup(HWND owner)
                     NotifyHotPhrasesChanged();
                     hpRestored = true;
                 }
+                else restoreFail++;
             }
         }
         // 随行屏蔽词存在则询问恢复（blocked.txt 与用户词典同通道热载）
@@ -164,16 +177,24 @@ void ImportSettingsBackup(HWND owner)
                     if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
                     blRestored = true;
                 }
+                else restoreFail++;
             }
         }
     }
-    LX_LOG(L"ui", L"设置备份导入 ok=%d dict=%d hp=%d bl=%d path=%ls",
-           (int)ok, (int)dictRestored, (int)hpRestored, (int)blRestored, path);
-    MessageBoxW(owner,
-                ok ? L"设置已导入，即时生效（设置页若开着请重开刷新）。"
-                   : L"导入失败（文件不是有效的注册表导出格式？）。",
-                L"导入设置备份",
-                MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONWARNING));
+    LX_LOG(L"ui", L"设置备份导入 ok=%d dict=%d hp=%d bl=%d fail=%d path=%ls",
+           (int)ok, (int)dictRestored, (int)hpRestored, (int)blRestored, restoreFail, path);
+    if (ok && restoreFail)
+        MessageBoxW(owner,
+                    (L"注册表设置已导入，但 " + std::to_wstring(restoreFail) +
+                     L" 项数据（词典/短语/屏蔽词）恢复失败，当前文件未被覆盖！\n"
+                     L"详情见日志，请检查文件占用后重试。").c_str(),
+                    L"导入设置备份", MB_OK | MB_ICONWARNING);
+    else
+        MessageBoxW(owner,
+                    ok ? L"设置已导入，即时生效（设置页若开着请重开刷新）。"
+                       : L"导入失败（文件不是有效的注册表导出格式？）。",
+                    L"导入设置备份",
+                    MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONWARNING));
 }
 
 } // namespace lingxi

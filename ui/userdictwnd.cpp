@@ -344,7 +344,14 @@ void UdExport()
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
     if (!GetSaveFileNameW(&ofn)) return;
     std::string raw;
-    if (ReadFileBytes(UserDictPathW(), raw)) WriteFileBytes(path, raw);
+    if (!ReadFileBytes(UserDictPathW(), raw) || !WriteFileBytes(path, raw))
+    {
+        // 与设置备份同口径（审计轮 7）：导出失败必须明示，
+        // 防“我以为备份了”的虚假信心。
+        MessageBoxW(g_hUserDict, L"导出失败（词典读取失败或目标位置不可写），未生成备份文件。",
+                    L"灵犀输入法", MB_OK | MB_ICONWARNING);
+        return;
+    }
 }
 
 // 自定义词条：手动添加候选词（词+拼音，拼音留空自动推断）。
