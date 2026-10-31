@@ -691,6 +691,10 @@ void PipeServer::SendInsertText(const std::wstring& text)
 // 后续打 ni 即可命中。cover 缺失/为 0 时维持旧口径（整条 raw）。
 void PipeServer::ApplyLearn(ClientCtx* c, uint32_t ver, uint32_t index)
 {
+    // 无痕模式（批次 G）：选词不留痕——不学习/不计统计/不触发每日备份与
+    // 目标提醒。单键读注册表（µs 级）保精确：托盘开关下一选词即生效。
+    // 预测本身不受影响（查询走既有词典，无痕只停"写"侧）。
+    if (IncognitoActive()) return;
     std::wstring raw, word;
     uint32_t cover = 0;
     EnterCriticalSection(&_cs);

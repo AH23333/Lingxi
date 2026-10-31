@@ -17,6 +17,9 @@ struct Settings
     uint32_t darkMode = 0;        // 0 跟随系统 1 浅色 2 深色（R7：跟随=宿主直读系统主题）
     bool enCompletion = true;     // 英文逐键补全（词中前缀替换）
     bool paused = false;          // 暂停预测：完全直通，不出任何候选（临时需要时用）
+    bool incognito = false;       // 无痕模式（批次 G）：选词不学习/不计打字统计/不记
+                                   // 最近符号与剪贴板历史（预测与收藏不受影响）；
+                                   // 托盘开关，单键快读（IncognitoActive）即时生效
     bool cnPunct = true;          // 中文标点：中文模式下 . , / ; 等映射为全角标点
     bool fuzzyPinyin = true;      // 模糊音总开关：关=全部组失效；开=按 fuzzyGroups 位掩码生效
     uint32_t fuzzyGroups = 0xFF;  // 模糊音组位掩码：bit0=zh/z bit1=ch/c bit2=sh/s bit3=n/l bit4=前后鼻音 bit5=f/h bit6=l/r bit7=g/k
@@ -64,6 +67,8 @@ struct Settings
 };
 
 Settings LoadSettings();
+// 无痕模式快速查询：单键读（选词热路径用，避免全量 LoadSettings 的 ~30 项注册表读）
+bool IncognitoActive();
 void SaveSettings(const Settings& s);
 // 只写与当前落盘值不同的键（防"整页回写"把未同步/未加载的控件状态覆盖全部设置）
 void SaveSettingsDiff(const Settings& s);

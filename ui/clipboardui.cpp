@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "../common/log.h"
+#include "../common/settings.h"
 #include "uistyle.h"
 
 namespace lingxi {
@@ -534,7 +535,8 @@ LRESULT CALLBACK CbListenProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 {
     if (msg == WM_CLIPBOARDUPDATE)
     {
-        AddCapture(GrabClipboardText());
+        // 无痕模式（批次 G）：不录新历史（既有历史可继续查看/复制/删除）
+        if (!IncognitoActive()) AddCapture(GrabClipboardText());
         return 0;
     }
     if (msg == WM_DESTROY)

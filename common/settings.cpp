@@ -90,6 +90,7 @@ Settings LoadSettings()
     if (GetDword(hKey, L"DarkMode", v) && v <= 2) s.darkMode = v;
     if (GetDword(hKey, L"EnCompletion", v)) s.enCompletion = v != 0;
     if (GetDword(hKey, L"Paused", v)) s.paused = v != 0;
+    if (GetDword(hKey, L"Incognito", v)) s.incognito = v != 0;
     if (GetDword(hKey, L"CnPunct", v)) s.cnPunct = v != 0;
     if (GetDword(hKey, L"FuzzyPinyin", v)) s.fuzzyPinyin = v != 0;
     if (GetDword(hKey, L"FuzzyGroups", v) && v <= 0xFF) s.fuzzyGroups = v; // 缺键=全组，与历史行为一致
@@ -126,6 +127,19 @@ Settings LoadSettings()
     return s;
 }
 
+// 无痕模式快速查询：单键读（选词热路径 µs 级；缺键=关）。
+// 语义与 LoadSettings().incognito 一致；托盘开关落盘后下一选词即生效。
+bool IncognitoActive()
+{
+    HKEY hKey = nullptr;
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, ActiveKey(), 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+        return false;
+    DWORD v = 0;
+    bool active = GetDword(hKey, L"Incognito", v) && v != 0;
+    RegCloseKey(hKey);
+    return active;
+}
+
 void SaveSettings(const Settings& s)
 {
     HKEY hKey = nullptr;
@@ -139,6 +153,7 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"DarkMode", s.darkMode);
     SetDword(hKey, L"EnCompletion", s.enCompletion ? 1 : 0);
     SetDword(hKey, L"Paused", s.paused ? 1 : 0);
+    SetDword(hKey, L"Incognito", s.incognito ? 1 : 0);
     SetDword(hKey, L"CnPunct", s.cnPunct ? 1 : 0);
     SetDword(hKey, L"FuzzyPinyin", s.fuzzyPinyin ? 1 : 0);
     SetDword(hKey, L"FuzzyGroups", s.fuzzyGroups);
@@ -201,6 +216,7 @@ void SaveSettingsDiff(const Settings& s)
     PutDwordDiff(hKey, L"DarkMode", s.darkMode);
     PutDwordDiff(hKey, L"EnCompletion", s.enCompletion ? 1 : 0);
     PutDwordDiff(hKey, L"Paused", s.paused ? 1 : 0);
+    PutDwordDiff(hKey, L"Incognito", s.incognito ? 1 : 0);
     PutDwordDiff(hKey, L"CnPunct", s.cnPunct ? 1 : 0);
     PutDwordDiff(hKey, L"FuzzyPinyin", s.fuzzyPinyin ? 1 : 0);
     PutDwordDiff(hKey, L"FuzzyGroups", s.fuzzyGroups);

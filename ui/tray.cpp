@@ -73,6 +73,7 @@ std::wstring BuildTrayTip()
     Settings s = LoadSettings();
     std::wstring t = L"灵犀输入法";
     if (s.paused) t += L"（已暂停）";
+    if (s.incognito) t += L" · 无痕";
     if (!s.pinyinEnabled) t += L" · 拼音关";
     if (s.shuangpin) t += L" · 双拼";
     if (s.traditionalOutput) t += L" · 繁体";
@@ -127,6 +128,8 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         AppendMenuW(menu, MF_STRING, 2012, L"暂停 30 分钟后自动恢复");
         AppendMenuW(menu, MF_STRING, 2016, L"暂停 1 小时后自动恢复");
     AppendMenuW(menu, MF_STRING, 2017, L"打字统计...");
+        AppendMenuW(menu, MF_STRING | (s.incognito ? MF_CHECKED : 0), 2022,
+                    L"无痕模式（不学习 · 不计统计 · 不留历史）");
         AppendMenuW(menu, MF_STRING | (s.candidatePinned ? MF_CHECKED : 0), 2007, L"固定候选窗位置");
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(menu, MF_STRING, 2005, L"符号面板（Ctrl+Shift+B）");
@@ -194,6 +197,15 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
             SetTimer(hwnd, 2, 60 * 60 * 1000, NULL);
             UpdateTrayTip();
             LX_LOG(L"ui", L"暂停 1 小时（定时自动恢复）");
+            break;
+        }
+        case 2022: // 无痕模式（批次 G）：临时不留痕迹——学习/统计/最近符号/剪贴板历史全停
+        {
+            Settings ns = LoadSettings();
+            ns.incognito = !ns.incognito;
+            SaveSettings(ns);
+            UpdateTrayTip();
+            LX_LOG(L"ui", L"无痕模式切换 incognito=%u", (unsigned)(ns.incognito ? 1 : 0));
             break;
         }
         case 2013:

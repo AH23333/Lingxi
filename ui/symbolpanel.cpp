@@ -182,6 +182,7 @@ void LoadRecents()
 void AddRecent(const std::wstring& sym)
 {
     if (sym.empty()) return;
+    if (IncognitoActive()) return; // 无痕模式（批次 G）：不记"最近"符号（收藏不受影响）
     auto it = std::find(g_recentStore.begin(), g_recentStore.end(), sym);
     if (it != g_recentStore.end()) g_recentStore.erase(it);      // 去重前移（最新在前）
     g_recentStore.insert(g_recentStore.begin(), sym);
