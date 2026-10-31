@@ -969,5 +969,14 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **接线**：托盘 2021"剪贴板历史...（Ctrl+Alt+V）"；全局热键 Ctrl+Alt+V（kTrayHotkeyClip=5，占用容错）；kHelpText 全量同步；沙箱停用监听与窗口。
 - 门禁：build Debug 零错 + engine_test 沙箱 **224/0** + fix_readings 缺口 0，全后台。
 
+### 批次 D：管理窗体验 + 托盘版本号 + 诊断数据全景（`ba58c1f`）
+
+- **管理窗标题条目数**：屏蔽词/自定义短语/快捷短语三窗标题实时携带条数（Refresh 时 SetWindowTextW——任务栏/窗口列表一眼可辨规模）。
+- **列表双击回填**：三管理窗双击列表条目回填输入框（屏蔽词→词框；自定义短语→缩写+短语；快捷短语→**录制框捕获态 g_capMods/g_capVk 同步置位**+句式框），编辑后重新添加。
+- **托盘版本号项**：菜单底部灰显"版本 1.0（构建于 __DATE__）"（与 --version 同源；TPM_RETURNCMD 对灰显返回 0 无副作用）。
+- **--diagnostics 数据全景**：新增"每日目标：N 字/日　屏蔽词：N 条　自定义短语：N 条"与"每日备份：N 份（保留 14）　剪贴板历史：N 条（上限 50）"两行；新公共 API autobackup `DailyBackupCount()`（只读枚举 daily-* 目录）+ clipboardui `ClipboardHistoryCount()`；**cmd /c 包裹重定向实测**两行精确落盘（PS 不等 GUI 子系统进程，#R6 坑重申）。
+- **kHelpText 同步**：管理窗列表双击回填速查行。
+- 门禁：build Debug 零错 + engine_test 沙箱 **224/0** + fix_readings 缺口 0 + --diagnostics 实证，全后台。
+
 
 
