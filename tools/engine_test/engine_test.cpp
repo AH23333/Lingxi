@@ -995,6 +995,15 @@ int wmain()
                     Report(hasShi, "fuzzy group gating: all groups on, si hits 是 again", L"");
                 }
                 {
+                    // l/r 组（bit6）× n/l 组（bit3）共存回归（审计轮 5 else-if 修复）：
+                    // 修复前 l→r 分支被 bit3 的 l→n 分支遮挡——双组同开时 lang 只出
+                    // nang 变体，r→l 却正常（单向不对称）；修复后须同时出 rang（让）
+                    lingxi::Prediction r = py->Predict(L"lang");
+                    bool hasRang = false;
+                    for (const auto& c : r.cands) if (c == L"让") hasRang = true;
+                    Report(hasRang, "fuzzy groups: l/r+n/l coexist, lang hits 让", L"");
+                }
+                {
                     // f/h 组（bit5）：关→"he" 不再模糊出"和"(fo? 反向)；开→"fei" 可出"费"旁证。
                     // 用 hu↔fu：关组时 hu 输入不得出"服"（fu 系），开组时应可。
                     sg.fuzzyGroups = 1; lingxi::SaveSettings(sg);

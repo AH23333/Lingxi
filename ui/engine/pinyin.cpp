@@ -1441,21 +1441,24 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
 
         std::vector<std::string> initVar{ initial };
         // 组位掩码：bit0=zh/z bit1=ch/c bit2=sh/s bit3=n/l（细分开关，对标微软拼音）
+        // 注意独立 if 非 else-if 链：同一声母可挂多组（"l" 同属 bit3 与 bit6），
+        // else-if 会令后写分支被先命中分支遮挡（审计轮 5 修复——修复前双组
+        // 同开时 l→r 永不可达，r→l 却正常，单向不对称）
         if (initial == "z" && (_fuzzyGroups & 1)) initVar.push_back("zh");
-        else if (initial == "zh" && (_fuzzyGroups & 1)) initVar.push_back("z");
-        else if (initial == "c" && (_fuzzyGroups & 2)) initVar.push_back("ch");
-        else if (initial == "ch" && (_fuzzyGroups & 2)) initVar.push_back("c");
-        else if (initial == "s" && (_fuzzyGroups & 4)) initVar.push_back("sh");
-        else if (initial == "sh" && (_fuzzyGroups & 4)) initVar.push_back("s");
-        else if (initial == "n" && (_fuzzyGroups & 8)) initVar.push_back("l");
-        else if (initial == "l" && (_fuzzyGroups & 8)) initVar.push_back("n");
+        if (initial == "zh" && (_fuzzyGroups & 1)) initVar.push_back("z");
+        if (initial == "c" && (_fuzzyGroups & 2)) initVar.push_back("ch");
+        if (initial == "ch" && (_fuzzyGroups & 2)) initVar.push_back("c");
+        if (initial == "s" && (_fuzzyGroups & 4)) initVar.push_back("sh");
+        if (initial == "sh" && (_fuzzyGroups & 4)) initVar.push_back("s");
+        if (initial == "n" && (_fuzzyGroups & 8)) initVar.push_back("l");
+        if (initial == "l" && (_fuzzyGroups & 8)) initVar.push_back("n");
         // f/h、l/r、g/k 三组：对标微软拼音更多组细分（GAP §1）
-        else if (initial == "f" && (_fuzzyGroups & 0x20)) initVar.push_back("h");
-        else if (initial == "h" && (_fuzzyGroups & 0x20)) initVar.push_back("f");
-        else if (initial == "r" && (_fuzzyGroups & 0x40)) initVar.push_back("l");
-        else if (initial == "l" && (_fuzzyGroups & 0x40)) initVar.push_back("r");
-        else if (initial == "g" && (_fuzzyGroups & 0x80)) initVar.push_back("k");
-        else if (initial == "k" && (_fuzzyGroups & 0x80)) initVar.push_back("g");
+        if (initial == "f" && (_fuzzyGroups & 0x20)) initVar.push_back("h");
+        if (initial == "h" && (_fuzzyGroups & 0x20)) initVar.push_back("f");
+        if (initial == "r" && (_fuzzyGroups & 0x40)) initVar.push_back("l");
+        if (initial == "l" && (_fuzzyGroups & 0x40)) initVar.push_back("r");
+        if (initial == "g" && (_fuzzyGroups & 0x80)) initVar.push_back("k");
+        if (initial == "k" && (_fuzzyGroups & 0x80)) initVar.push_back("g");
 
         std::vector<std::string> finVar{ final };
         if ((_fuzzyGroups & 0x10) &&
