@@ -336,12 +336,12 @@ std::wstring lingxi::BuildDiagnosticsText()
     lingxi::Settings s = lingxi::LoadSettings();
     _snwprintf_s(buf, _TRUNCATE,
         L"设置：拼音=%u 候选数=%u 字号=%u 字体=%u 皮肤=%u 不透明度=%u%% "
-        L"双拼=%u 繁体=%u 暂停=%u 固定位置=%u\n",
+        L"双拼=%u 繁体=%u 暂停=%u 固定位置=%u 无痕=%u\n",
         (unsigned)s.pinyinEnabled, (unsigned)s.candidateCount,
         (unsigned)s.candidateFontSize, (unsigned)s.uiFont, (unsigned)s.skinIndex,
         (unsigned)s.candidateOpacity, (unsigned)s.shuangpin,
         (unsigned)s.traditionalOutput, (unsigned)s.paused,
-        (unsigned)s.candidatePinned);
+        (unsigned)s.candidatePinned, (unsigned)(s.incognito ? 1 : 0));
     t += buf;
     // 数据文件统计（用户词典行数 / 热键短语条数）
     {

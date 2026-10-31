@@ -8,6 +8,7 @@
 
 #include <windows.h>
 #include <windowsx.h>
+#include <cwctype>
 #include <string>
 
 #include "../common/log.h"
@@ -73,6 +74,7 @@ const wchar_t* kHelpText =
     L"\r\n"
     L"【帮助窗 / 设置窗】\r\n"
     L"· 帮助窗 Ctrl + 滚轮：正文字号调节（12-28）\r\n"
+    L"· 帮助窗 Ctrl+F：查找速查内容（输入即跳转，Enter/F3=下一个，Esc=关闭查找）\r\n"
     L"· 帮助窗 Esc：关闭　　底部\"复制全部文本\"：速查内容一键进剪贴板\r\n"
     L"· 设置窗 Esc：隐藏；位置与尺寸自动记忆（重开恢复）\r\n"
     L"\r\n"
@@ -135,8 +137,117 @@ int g_helpFontH = 15;  // 帮助正文字号（Ctrl+滚轮 12..28 可调）
 HFONT g_helpFont = nullptr; // 进程内复用，防反复开关帮助窗泄漏
 HWND g_hHelpBtn = nullptr;  // 底部"复制全部文本"按钮
 WNDPROC g_oldHelpEditProc = nullptr; // 正文 EDIT 子类化（Esc 关窗）
+// Ctrl+F 查找行（批次 H）：底部按钮条上方的"查找: + 输入框 + 下一个"，
+// 默认隐藏，开时压缩正文高度；输入即跳转（EN_UPDATE），Enter/按钮=下一个，
+// 找不到回绕到开头再找一次，仍未找到按钮反馈"未找到"。
+bool g_findVisible = false;
+HWND g_hFindLabel = nullptr, g_hFindEdit = nullptr, g_hFindBtn = nullptr;
+WNDPROC g_oldFindEditProc = nullptr;
 constexpr int IDC_HELP_COPY = 350;
+constexpr int IDC_HELP_FINDNEXT = 351;
+constexpr int IDC_HELP_FINDEDIT = 352;
 constexpr int kHelpBarH = 48; // 底部按钮条高（px，帮助窗无 DPI 缩放基础设施）
+constexpr int kFindBarH = 34; // 查找行高
+
+// 统一布局：正文让出底部按钮条（查找行可见时再让出查找行）。
+// WM_SIZE 与查找行开/关共用，保证拉伸窗口后控件不漂移。
+void HelpLayout()
+{
+    if (!g_hHelp) return;
+    RECT rc;
+    GetClientRect(g_hHelp, &rc);
+    int cx = rc.right, cy = rc.bottom;
+    int findH = g_findVisible ? kFindBarH : 0;
+    HWND edit = (HWND)GetWindowLongPtrW(g_hHelp, GWLP_USERDATA);
+    if (edit)
+        MoveWindow(edit, 0, 0, cx, cy > kHelpBarH + findH ? cy - kHelpBarH - findH : cy, TRUE);
+    if (g_hHelpBtn)
+        MoveWindow(g_hHelpBtn, 12, cy > kHelpBarH ? cy - kHelpBarH + 8 : 0, 140, 32, TRUE);
+    if (g_findVisible)
+    {
+        int fy = cy - kHelpBarH - kFindBarH + 4;
+        if (g_hFindLabel) MoveWindow(g_hFindLabel, 10, fy + 5, 40, 20, TRUE);
+        if (g_hFindEdit) MoveWindow(g_hFindEdit, 54, fy, cx - 54 - 96, 24, TRUE);
+        if (g_hFindBtn) MoveWindow(g_hFindBtn, cx - 90, fy, 80, 24, TRUE);
+    }
+}
+
+// 查找：从 from 起（字符索引）大小写不敏感找第一处，命中选中+滚到可见；
+// 尾后未中回绕到开头再找；仍未中按钮反馈"未找到"（下次输入自动复位）。
+void HelpFind(HWND help, int from)
+{
+    HWND edit = (HWND)GetWindowLongPtrW(help, GWLP_USERDATA);
+    if (!edit || !g_hFindEdit) return;
+    int flen = GetWindowTextLengthW(g_hFindEdit);
+    if (flen <= 0) return;
+    std::wstring needle(flen + 1, L'\0');
+    GetWindowTextW(g_hFindEdit, &needle[0], flen + 1);
+    needle.resize(flen);
+    int tlen = GetWindowTextLengthW(edit);
+    std::wstring text(tlen + 1, L'\0');
+    GetWindowTextW(edit, &text[0], tlen + 1);
+    text.resize(tlen);
+    for (auto& ch : needle) ch = (wchar_t)towlower(ch);
+    for (auto& ch : text) ch = (wchar_t)towlower(ch);
+    size_t pos = text.find(needle, from > 0 ? (size_t)from : 0);
+    if (pos == std::wstring::npos && from > 0) pos = text.find(needle, 0); // 回绕
+    if (g_hFindBtn) SetWindowTextW(g_hFindBtn, pos == std::wstring::npos ? L"未找到" : L"下一个");
+    if (pos != std::wstring::npos)
+    {
+        SendMessageW(edit, EM_SETSEL, (WPARAM)pos, (LPARAM)(pos + needle.size()));
+        SendMessageW(edit, EM_SCROLLCARET, 0, 0);
+    }
+}
+
+void HelpFindNext(HWND help) // Enter/"下一个"：从当前选中末尾继续
+{
+    HWND edit = (HWND)GetWindowLongPtrW(help, GWLP_USERDATA);
+    if (!edit) return;
+    DWORD s0 = 0, s1 = 0;
+    SendMessageW(edit, EM_GETSEL, (WPARAM)&s0, (LPARAM)&s1);
+    HelpFind(help, (int)s1);
+}
+
+void CloseFindBar(HWND help)
+{
+    g_findVisible = false;
+    if (g_hFindLabel) ShowWindow(g_hFindLabel, SW_HIDE);
+    if (g_hFindEdit) ShowWindow(g_hFindEdit, SW_HIDE);
+    if (g_hFindBtn) ShowWindow(g_hFindBtn, SW_HIDE);
+    HelpLayout();
+    HWND edit = (HWND)GetWindowLongPtrW(help, GWLP_USERDATA);
+    if (edit) SetFocus(edit);
+}
+
+void OpenFindBar(HWND help)
+{
+    g_findVisible = true;
+    if (g_hFindLabel) ShowWindow(g_hFindLabel, SW_SHOW);
+    if (g_hFindBtn) ShowWindow(g_hFindBtn, SW_SHOW);
+    if (g_hFindEdit) ShowWindow(g_hFindEdit, SW_SHOW);
+    // 预填当前选中片段（无选中则清空）：选中即所查是常态
+    HWND edit = (HWND)GetWindowLongPtrW(help, GWLP_USERDATA);
+    if (edit && g_hFindEdit)
+    {
+        DWORD s0 = 0, s1 = 0;
+        SendMessageW(edit, EM_GETSEL, (WPARAM)&s0, (LPARAM)&s1);
+        if (s1 > s0 && s1 <= (DWORD)GetWindowTextLengthW(edit))
+        {
+            int tlen = GetWindowTextLengthW(edit);
+            std::wstring text(tlen + 1, L'\0');
+            GetWindowTextW(edit, &text[0], tlen + 1);
+            text.resize(tlen);
+            SetWindowTextW(g_hFindEdit, text.substr(s0, s1 - s0).c_str());
+        }
+        else SetWindowTextW(g_hFindEdit, L"");
+    }
+    HelpLayout();
+    if (g_hFindEdit)
+    {
+        SetFocus(g_hFindEdit);
+        SendMessageW(g_hFindEdit, EM_SETSEL, 0, -1); // 全选备改
+    }
+}
 
 // 复制帮助正文到剪贴板（含实时配置快照；剪贴板被占 3×30ms 重试——
 // 复制是用户主动点击，偶发占用不该静默失败）
@@ -180,19 +291,46 @@ LRESULT CALLBACK HelpEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         DestroyWindow(GetParent(h)); // 焦点在正文时 Esc 同样关窗
         return 0;
     }
+    if (msg == WM_KEYDOWN && wp == 'F' && (GetKeyState(VK_CONTROL) & 0x8000))
+    {
+        if (g_findVisible && g_hFindEdit) // 已开：回到查找框全选备改
+        {
+            SetFocus(g_hFindEdit);
+            SendMessageW(g_hFindEdit, EM_SETSEL, 0, -1);
+        }
+        else OpenFindBar(GetParent(h));
+        return 0;
+    }
+    if (msg == WM_KEYDOWN && wp == VK_F3) // F3=下一个（未开查找行则先开，Windows 惯例）
+    {
+        if (g_findVisible) HelpFindNext(GetParent(h));
+        else OpenFindBar(GetParent(h));
+        return 0;
+    }
     return CallWindowProcW(g_oldHelpEditProc, h, msg, wp, lp);
+}
+
+// 查找框子类化：Enter=下一个、Esc=关查找行（不关窗）、Ctrl+F=全选备改
+LRESULT CALLBACK HelpFindEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_KEYDOWN)
+    {
+        if (wp == VK_ESCAPE) { CloseFindBar(GetParent(h)); return 0; }
+        if (wp == VK_RETURN) { HelpFindNext(GetParent(h)); return 0; }
+        if (wp == 'F' && (GetKeyState(VK_CONTROL) & 0x8000))
+        {
+            SendMessageW(h, EM_SETSEL, 0, -1);
+            return 0;
+        }
+    }
+    return CallWindowProcW(g_oldFindEditProc, h, msg, wp, lp);
 }
 
 LRESULT CALLBACK HelpWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (msg == WM_SIZE)
     {
-        HWND edit = (HWND)GetWindowLongPtrW(h, GWLP_USERDATA);
-        int cx = LOWORD(lp), cy = HIWORD(lp);
-        int bodyH = cy > kHelpBarH ? cy - kHelpBarH : cy; // 正文让出底部按钮条
-        if (edit) MoveWindow(edit, 0, 0, cx, bodyH, TRUE);
-        if (g_hHelpBtn) MoveWindow(g_hHelpBtn, 12, cy > kHelpBarH ? cy - kHelpBarH + 8 : 0,
-                                   140, 32, TRUE);
+        HelpLayout(); // 正文/按钮条/查找行统一布局（拉伸后不漂移）
         return 0;
     }
     if (msg == WM_MOUSEWHEEL)
@@ -214,10 +352,30 @@ LRESULT CALLBACK HelpWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         }
         return 0;
     }
-    if (msg == WM_COMMAND && LOWORD(wp) == IDC_HELP_COPY)
+    if (msg == WM_COMMAND)
     {
-        HelpCopyAll(h);
-        return 0;
+        int id = LOWORD(wp), code = HIWORD(wp);
+        if (id == IDC_HELP_COPY)
+        {
+            HelpCopyAll(h);
+            return 0;
+        }
+        if (id == IDC_HELP_FINDNEXT && code == BN_CLICKED)
+        {
+            HelpFindNext(h);
+            return 0;
+        }
+        if (id == IDC_HELP_FINDEDIT && code == EN_UPDATE) // 输入即跳转（从当前选中首起）
+        {
+            HWND edit = (HWND)GetWindowLongPtrW(h, GWLP_USERDATA);
+            if (edit)
+            {
+                DWORD s0 = 0, s1 = 0;
+                SendMessageW(edit, EM_GETSEL, (WPARAM)&s0, (LPARAM)&s1);
+                HelpFind(h, (int)s0);
+            }
+            return 0;
+        }
     }
     if (msg == WM_TIMER && wp == 3)
     {
@@ -241,6 +399,11 @@ LRESULT CALLBACK HelpWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     {
         g_hHelp = nullptr;
         g_hHelpBtn = nullptr;
+        g_hFindLabel = nullptr;
+        g_hFindEdit = nullptr;
+        g_hFindBtn = nullptr;
+        g_oldFindEditProc = nullptr;
+        g_findVisible = false;
         return 0;
     }
     return DefWindowProcW(h, msg, wp, lp);
@@ -298,6 +461,23 @@ void ShowHelpWindow(HINSTANCE hInst)
                                  12, H - kHelpBarH + 8, 140, 32, g_hHelp,
                                  (HMENU)(INT_PTR)IDC_HELP_COPY, hInst, NULL);
     SendMessageW(g_hHelpBtn, WM_SETFONT, (WPARAM)g_helpFont, TRUE);
+    // 查找行（Ctrl+F 呼出，默认隐藏；位置由 HelpLayout 统一计算）
+    g_hFindLabel = CreateWindowExW(0, L"STATIC", L"查找:", WS_CHILD,
+                                   10, 0, 40, 20, g_hHelp, NULL, hInst, NULL);
+    g_hFindEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                  WS_CHILD | ES_AUTOHSCROLL | WS_TABSTOP,
+                                  54, 0, W - 54 - 96, 24, g_hHelp,
+                                  (HMENU)(INT_PTR)IDC_HELP_FINDEDIT, hInst, NULL);
+    g_hFindBtn = CreateWindowExW(0, L"BUTTON", L"下一个",
+                                 WS_CHILD | WS_TABSTOP,
+                                 0, 0, 80, 24, g_hHelp,
+                                 (HMENU)(INT_PTR)IDC_HELP_FINDNEXT, hInst, NULL);
+    g_oldFindEditProc =
+        (WNDPROC)SetWindowLongPtrW(g_hFindEdit, GWLP_WNDPROC, (LONG_PTR)HelpFindEditProc);
+    SendMessageW(g_hFindLabel, WM_SETFONT, (WPARAM)g_helpFont, TRUE);
+    SendMessageW(g_hFindEdit, WM_SETFONT, (WPARAM)g_helpFont, TRUE);
+    SendMessageW(g_hFindBtn, WM_SETFONT, (WPARAM)g_helpFont, TRUE);
+    HelpLayout(); // 建齐后统一摆位（含隐藏态正文全高）
     UpdateWindow(g_hHelp);
 }
 
