@@ -109,35 +109,28 @@ void BlAdd()
         SetDlgItemTextW(g_hBlWnd, IDC_BL_STATUS, L"请填写要屏蔽的词（1-50 字符）");
         return;
     }
-    if (w.size() > kMaxBlockedLen)
+    // 校验+去重+落盘+热载统一走公共 BlockWord（与候选右键屏蔽同一条路）
+    switch (BlockWord(w))
     {
-        SetDlgItemTextW(g_hBlWnd, IDC_BL_STATUS, L"词过长（上限 50 字符）");
-        return;
-    }
-    auto words = LoadBlockedWords();
-    for (const auto& e : words)
-        if (e == w)
-        {
-            SetDlgItemTextW(g_hBlWnd, IDC_BL_STATUS, L"该词已在屏蔽列表中");
-            return;
-        }
-    if (words.size() >= kMaxBlockedEntries)
-    {
+    case BlockWordResult::Blocked:
+        RefreshBlList();
+        SetDlgItemTextW(g_hBlWnd, IDC_BL_WORD, L"");
+        SetDlgItemTextW(g_hBlWnd, IDC_BL_STATUS, L"已添加，该词不会再出现在候选中");
+        break;
+    case BlockWordResult::AlreadyBlocked:
+        SetDlgItemTextW(g_hBlWnd, IDC_BL_STATUS, L"该词已在屏蔽列表中");
+        break;
+    case BlockWordResult::LimitReached:
         SetDlgItemTextW(g_hBlWnd, IDC_BL_STATUS, L"已达上限，请先删除部分条目");
-        return;
-    }
-    words.push_back(w);
-    if (!SaveBlockedWords(words))
-    {
+        break;
+    case BlockWordResult::TooLong:
+        SetDlgItemTextW(g_hBlWnd, IDC_BL_STATUS, L"词过长（上限 50 字符）");
+        break;
+    case BlockWordResult::SaveFailed:
         MessageBoxW(g_hBlWnd, L"屏蔽词写入失败（文件被占用或无权限），修改未保存。",
                     L"灵犀输入法", MB_OK | MB_ICONWARNING);
-        return;
+        break;
     }
-    LX_LOG(L"ui", L"屏蔽词添加: %ls", w.c_str());
-    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
-    RefreshBlList();
-    SetDlgItemTextW(g_hBlWnd, IDC_BL_WORD, L"");
-    SetDlgItemTextW(g_hBlWnd, IDC_BL_STATUS, L"已添加，该词不会再出现在候选中");
 }
 
 void BlDeleteSelected()
@@ -267,6 +260,48 @@ bool SaveBlockedWords(const std::vector<std::wstring>& words)
     // 带 BOM 写：文本编辑器打开不乱码（引擎解析端 BOM 容忍）
     std::string utf = "\xEF\xBB\xBF" + WToUtf8(text);
     return WriteFileBytes(BlockedWordsPathW(), utf);
+}
+
+// ---------------- 右键屏蔽入口（公共 API） ----------------
+
+bool IsWordBlocked(const std::wstring& word)
+{
+    if (word.empty()) return false;
+    for (const auto& w : LoadBlockedWords())
+        if (w == word) return true;
+    return false;
+}
+
+BlockWordResult BlockWord(const std::wstring& word)
+{
+    if (word.empty() || word.size() > kMaxBlockedLen) return BlockWordResult::TooLong;
+    auto words = LoadBlockedWords();
+    for (const auto& w : words)
+        if (w == word) return BlockWordResult::AlreadyBlocked;
+    if (words.size() >= kMaxBlockedEntries) return BlockWordResult::LimitReached;
+    words.push_back(word);
+    if (!SaveBlockedWords(words)) return BlockWordResult::SaveFailed;
+    LX_LOG(L"ui", L"屏蔽词添加: %ls", word.c_str());
+    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
+    return BlockWordResult::Blocked;
+}
+
+bool UnblockWord(const std::wstring& word)
+{
+    auto words = LoadBlockedWords();
+    bool found = false;
+    for (size_t i = 0; i < words.size(); i++)
+        if (words[i] == word)
+        {
+            words.erase(words.begin() + (long)i);
+            found = true;
+            break;
+        }
+    if (!found) return false;
+    if (!SaveBlockedWords(words)) return false;
+    LX_LOG(L"ui", L"屏蔽词移除: %ls", word.c_str());
+    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
+    return true;
 }
 
 void ShowBlockedWindow(HINSTANCE hInst, HWND hParent)

@@ -10,6 +10,7 @@
 #include "../common/settings.h"
 #include "uistyle.h"
 #include "settingsui.h"
+#include "blockedui.h" // 右键"屏蔽该词"（BlockWord/UnblockWord/IsWordBlocked）
 
 //
 // 候选窗交互（P2 拆分自 window.cpp，2026-10-31）：鼠标手势（拖拽/悬停/
@@ -632,12 +633,15 @@ LRESULT CandWindow::OnRButtonUp(HWND hwnd, LPARAM lParam)
     }
 
     bool inDict = UserDictHasWord(word);
+    bool blocked = IsWordBlocked(word);
     HMENU menu = CreatePopupMenu();
     AppendMenuW(menu, MF_STRING, 1, L"置顶该词");
     AppendMenuW(menu, MF_STRING, 2, L"提升词频");
     AppendMenuW(menu, MF_STRING | (inDict ? 0 : MF_GRAYED), 3, L"降低词频");
     AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuW(menu, MF_STRING | (inDict ? 0 : MF_GRAYED), 4, L"从用户词典删除");
+    AppendMenuW(menu, MF_STRING | (blocked ? MF_CHECKED : 0), 8,
+                blocked ? L"取消屏蔽（恢复候选）" : L"屏蔽该词（不再出现）");
     AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
     AppendMenuW(menu, MF_STRING, 5, L"复制该词");
     AppendMenuW(menu, MF_STRING, 6, L"联网搜索该词");
@@ -669,6 +673,35 @@ LRESULT CandWindow::OnRButtonUp(HWND hwnd, LPARAM lParam)
                                      : L"拼音：" + py;
         ShowTip(fb.c_str(), pt);
         SetTimer(hwnd, 2, 2500, NULL);
+        return 0;
+    }
+    if (cmd == 8)
+    {
+        // 屏蔽/取消屏蔽（R6 闭环：blocked.txt 与用户词典同通道热载，下次击键生效）
+        std::wstring fb;
+        if (blocked)
+        {
+            fb = UnblockWord(word) ? L"已取消屏蔽，恢复参与候选：" + word
+                                   : L"操作失败（该词不在屏蔽列表或文件被占用）";
+        }
+        else
+        {
+            switch (BlockWord(word))
+            {
+            case BlockWordResult::Blocked:
+                fb = L"已屏蔽，该词不再出现：" + word; break;
+            case BlockWordResult::AlreadyBlocked:
+                fb = L"该词已在屏蔽列表中"; break;
+            case BlockWordResult::LimitReached:
+                fb = L"屏蔽词已达上限（500），请在管理窗清理"; break;
+            case BlockWordResult::TooLong:
+                fb = L"词过长（上限 50 字符），无法屏蔽"; break;
+            case BlockWordResult::SaveFailed:
+                fb = L"屏蔽失败（文件被占用？）"; break;
+            }
+        }
+        ShowTip(fb.c_str(), pt);
+        SetTimer(hwnd, 2, 1500, NULL);
         return 0;
     }
     if (cmd == 1 || cmd == 2 || cmd == 3 || cmd == 4)
