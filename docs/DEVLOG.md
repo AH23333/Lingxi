@@ -1051,3 +1051,11 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **逐块核对干净**：Predict 尾段（ups 双向去重/两向量同长 resize/繁体注入后统一转换，日期字与 emoji 不受繁转影响）；InjectExplicitTop（covers 同步/截断同步）；Learn（双拼键同构转换/每键 8 条淘汰最小计数/锁内含索引更新、KickPersist 锁外）；Generate 全段（tier 基准/匹配缓存 span≤6<7/B3 rawLen 回放/长纯声母近全跨度受限发射/质量三闸（词长偏好 1.5、低频变体 +2.5、纯简拼整词限制）/残段 headOk 门/稳定排序确定性）；LoadUserDict（三段制表符解析全验证 word/key/count>0）；**KickPersist 竞态矩阵三交错全覆盖**（CAS 成功直启/失败由收尾重查兜底/写失败恢复脏位重试）+ WriteFileAtomicA 原子写 + detach 线程进程退出安全（全局单例无运行期析构）。
 - **微瑕不修（记录）**：①520-521 悬挂 if（key.size()>=2 守卫体即第二条 if，语义正确但两行间插语句即碎，风格脆弱）；②521 NormKey(raw) 冗余重算（=511 行 key，微秒级）；③手编 userdict.txt 键未规范化容忍缺口（"ni hao" 带空格键可加载但永不匹配 Predict 查键——内部格式自有写方恒规范化，非功能缺陷）。
 - 门禁：build Debug 零错 + engine_test 沙箱 **234/0** + fix_readings 缺口 0，全后台。
+### 深度审计轮 6（llm.cpp 续写 KV 状态机 2 真缺陷已修 + ngram/main 干净）
+
+- **llm.cpp 续写 Generate 两缺陷（已修 06447e）**：A）decode 失败路径 ResetKv 清空 KV 后，循环外无条件 _genKv.hasPrev=true 把增量态覆盖回来——下次入口对空 KV 的 seq_rm(prompt.size()) 空范围空转"成功"（llama.h:760 仅"部分删除失败"才 false），公共前缀照常匹配，delta tokens 从位置 0 错位放置→静默垃圾续写；B）get_logits_ith 空中断只置 hasPrev=false 不清 KV——残留 prompt+半程生成尾，下次 common=0 全量 decode 挂在陈旧 KV 末尾错位（pos=null=追加语义，代码单 token 步进自身依赖此语义），保存后自我延续直到 KV 溢出才 ResetKv 又进 A 链。修复=kvClean 标记三处（decode 失败/logits 空→ResetKv+false；保存门 
+>0 && kvClean；多路采样门加 kvClean）。
+- **对照重排槽（_rrCtx）同构路径逐行核对干净**：prefill 失败在 746 保存点前早退；生成中断残留恰为"prompt+生成尾"标准形；Borda 短路守卫（merged.empty() 先判）/sampler chain 所有权/EMA 吞吐降级/重罚路径全对——同型缺陷重排侧不存在，侧证修复点定位精确。
+- **ngram.cpp（390 行）全文干净**：StripContinuationEcho 下溢边界逐一验（k≥2 守卫下 maxK<2 零迭代不落 k--）；DedupCompletions ②前缀堆叠双分支（n 延伸 kn/kn 延伸 n）两方向对称；ChainPredictor midWord/pureAscii 路由与 B4 ASCII 过滤兜底全对。微瑕：注释"前 5"对 kMaxCands=9 漂移。
+- **main.cpp（595 行）全文干净**：装配序安全（托盘创建先于 g_hooks 赋值，但菜单展示必在消息泵启动后=赋值已完成）；chain 持有 sharedLlm 所有权、delete engine 单点释放；六处 CLI 早退 LocalFree 全对称；singleton Mutex/hReady/NotifyThreadParam static 生命周期全部正确；g_hotPhrases 仅 UI 线程读写（注释声明与实际调用点核对一致）。
+- 门禁：build Debug 零错 + engine_test 沙箱 **234/0**（LLM 无模型沙箱不可达=编译级回归）+ fix_readings 缺口 0，全后台。
