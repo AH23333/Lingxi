@@ -94,6 +94,8 @@ public:
 
     // ---- 键盘选词 / 状态 ----
     bool CandidatesVisible();
+    bool IsAssocShown();           // 联想窗在显：_assocShown 锁式读（OnCandidates 管道线程写）
+    void ClearAssocState();        // 联想收尾/撤销：清 _assocShown+_assocReq（防迟到回包复活）
     void InsertCandidate(uint32_t index);
     void SendAssocCtx();           // 选词联想（GAP §11）：读光标前文+caret 发 CTX_F_ASSOC 帧
     bool AssocEligible() const;     // 联想资格闸：中文模式+开关联动+激活（上屏两处/点选连发共用）
@@ -189,6 +191,7 @@ private:
     uint32_t _verSent = 0;     // 最近发出的上下文版本
     // 选词联想态账（GAP §11）：_assocReq=联想帧已发出等回包（防双发+回包认账）；
     // _assocShown=联想候选已显示（无组合非选词按键即撤销；点选时即"来自联想窗"）。
+    // 两标志持 _cs 读写（OnCandidates 在管道线程写；UI 线程走 IsAssocShown/ClearAssocState）。
     bool _assocReq = false;
     bool _assocShown = false;
     uint32_t _verCands = 0;    // 候选对应的版本

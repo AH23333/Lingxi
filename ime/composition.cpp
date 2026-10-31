@@ -911,7 +911,7 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
                 _lastBackspaceTick = GetTickCount64(); // 退格删除：抑制随之而来的补全预测
             // 联想窗选词道（GAP §11）：_assocShown 时空格/数字复用点选路
             // InsertCandidate（含 replaceLen 替换、自学习、上屏连发下一轮联想）。
-            if (_assocShown &&
+            if (IsAssocShown() &&
                 (wParam == VK_SPACE || (wParam >= L'1' && wParam <= L'9')))
             {
                 uint32_t idx;
