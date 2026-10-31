@@ -1045,3 +1045,9 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **engine_test P13 扩展**：5 代表断言（wanan/chunjie/hongbao/woaini/zaoshanghao，含 VS16 对等值比较），Report **228→233**。
 - 门禁：build Debug 零错 + engine_test 沙箱 **233/0** + fix_readings 缺口 0，全后台零前台依赖。
 - 审计轮 4 收口见上节；runbook 回归预期同步 233，肉眼清单补 emoji 抽查项。
+### 深度审计轮 5（引擎核心 pinyin.cpp 2119 行，1 真缺陷已修）
+
+- **真缺陷（已修 efc7490）**：ComputeFuzzy 声母 else-if 链——"l" 同挂 bit3（l→n，默认开）与 bit6（l→r）两支，双组同开时 l→r 分支永不可达（r→l 正常，单向不对称）；掩码变更经 BuildFuzzyIndex 直达预计算表。修法=else-if 链改独立 if（各条件 initial 判等自守卫，仅 "l" 可命中两支，其余行为等价）。P8b +1 回归断言（0xFF 双组 lang 出"让"），Report 233→**234**。
+- **逐块核对干净**：Predict 尾段（ups 双向去重/两向量同长 resize/繁体注入后统一转换，日期字与 emoji 不受繁转影响）；InjectExplicitTop（covers 同步/截断同步）；Learn（双拼键同构转换/每键 8 条淘汰最小计数/锁内含索引更新、KickPersist 锁外）；Generate 全段（tier 基准/匹配缓存 span≤6<7/B3 rawLen 回放/长纯声母近全跨度受限发射/质量三闸（词长偏好 1.5、低频变体 +2.5、纯简拼整词限制）/残段 headOk 门/稳定排序确定性）；LoadUserDict（三段制表符解析全验证 word/key/count>0）；**KickPersist 竞态矩阵三交错全覆盖**（CAS 成功直启/失败由收尾重查兜底/写失败恢复脏位重试）+ WriteFileAtomicA 原子写 + detach 线程进程退出安全（全局单例无运行期析构）。
+- **微瑕不修（记录）**：①520-521 悬挂 if（key.size()>=2 守卫体即第二条 if，语义正确但两行间插语句即碎，风格脆弱）；②521 NormKey(raw) 冗余重算（=511 行 key，微秒级）；③手编 userdict.txt 键未规范化容忍缺口（"ni hao" 带空格键可加载但永不匹配 Predict 查键——内部格式自有写方恒规范化，非功能缺陷）。
+- 门禁：build Debug 零错 + engine_test 沙箱 **234/0** + fix_readings 缺口 0，全后台。
