@@ -1370,6 +1370,29 @@ int wmain()
                     Report(found, "R5 emoji haha",
                            h.cands.empty() ? L"<none>" : h.cands[0].c_str());
                 }
+                // 批次 I 新词融合：问候/节日/生活（含 VS16 对显式转义）
+                {
+                    struct FusionCase { const wchar_t* input; const wchar_t* word; const wchar_t* emoji; };
+                    const FusionCase cases[] = {
+                        { L"wanan",       L"晚安",     L"🌙" },
+                        { L"chunjie",     L"春节",     L"🏮" },
+                        { L"hongbao",     L"红包",     L"🧧" },
+                        { L"woaini",      L"我爱你",   L"\u2764\uFE0F" },
+                        { L"zaoshanghao", L"早上好",   L"🌞" },
+                    };
+                    for (const auto& c : cases)
+                    {
+                        lingxi::Prediction p = py->Predict(c.input);
+                        bool found = false;
+                        for (size_t k = 0; k + 1 < p.cands.size(); k++)
+                            if (p.cands[k] == c.word && p.cands[k + 1] == c.emoji)
+                            { found = true; break; }
+                        wchar_t detail[128];
+                        _snwprintf_s(detail, _TRUNCATE, L"%ls -> %ls%ls",
+                                     c.input, c.word, c.emoji);
+                        Report(found, "R5 batch I fusion", detail);
+                    }
+                }
             }
 
             // P14. R6 屏蔽词：blocked.txt 热载过滤（Generate+自学习）+ 卸载恢复
