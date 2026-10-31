@@ -1033,3 +1033,8 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **usagestats 解析**：键名带 '=' 比较防前缀碰撞（"day=" 不会误吞 "dayPicks="）；_strtoui64 垃圾容错；BOM 跳过/CRLF 修剪；全键解析与 SaveLocked 写出全对称。
 - **regress 兼容确认**：regress.cmd 判据=engine_test exit code 而非断言数——P8c（224→228）不破坏收口；build_et.cmd 与 regress 内 engine_test 构建同为 Release 配置，P8c 已在收口同构环境验证 228/0。
 - 结论：今晚三批审计（轮 2/轮 3）覆盖 C-H 全部新代码与 G/H 全部门禁接线点，**零 actionable 缺陷**；唯一修正为 smoke5 断言针自纠（工具侧，非产品代码）。
+### 深度审计轮 4（候选窗 toast 态机，零缺陷结论）
+
+- **candwnd toast 态机**（批次 A 引入、任务③加固，最常用 UI 面）：五处清 _toastText（Show/SetPage/ShowModeToast/WM_TIMER 到期/render 读取快照）逐点核对全对称；ShowTextToast 自适应宽度（GetTextExtent+28px padding）/1.6s 驻留/SWP_NOACTIVATE 无抢焦/圆角重设全对；已投递 WM_TIMER 竞态由 wasToast 双分支守卫（真 toast 到期走隐藏/候选接管直接返回）——PITFALLS #71 修复位实现与注释一致。
+- 微瑕不修：ShowModeToast ool dark=_dark; ... _dark=dark; 自赋值死代码（无行为影响，不值得 churn）；ShowTextToast 在首帧渲染前调用时 _toastFont 为 NULL——SelectObject(NULL) 失败落默认字体量宽，实际调用链（ApplyLearn 目标达成）必在首次渲染后，不可达。
+- **今晚审计总结（轮 2-4）**：clipboardui/批次 D 回填/statswnd CSV/symbolpanel 收藏/tray 资源/uitheme/settingsui 滚动 v2/pipeserver 主链/usagestats 解析/toast 态机——**十模块零 actionable 缺陷**；工具侧修正 1 处（smoke5 断言针"输入"→"候选"）。
