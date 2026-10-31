@@ -1002,3 +1002,20 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **smoke4.ps1 12 项全过**：剪贴板 5 连拷节流落盘（clipboard.dat 前缀扫描）/ 托盘消息窗 / WM_HOTKEY 5 开剪贴板历史窗 + WM_CLOSE 隐藏语义（关=藏，保控件状态）/ 诊断全景两行 / `--symbols` 第二实例转发开面板（命名事件→NotifyThread→Post msg 实证）/ 17 标签宽 846 / 右键收藏↔取消收藏（注册表回读对称）/ **表情页 48 条 4 行高 186（批次 F 直接验证）** / LastSymbolCat 恢复。
 - **首跑 5/7 两 FAIL 系探针假阴性，非代码缺陷**：$null→"" 编组（PITFALLS #77）使 `FindWindowW(cls, $null)` 只匹配空标题窗口——运行期创建的三个标题非空窗口（帮助/剪贴板/面板）全体假阴性；diag7-11 取证链（EnumWindows 码位 dump / FW(cls+title) 对照 / [NullString]::Value 复验）实锤；修正探针后 12/12。宿主全链路（WM_HOTKEY 3 暂停翻转注册表+日志、4 帮助窗、5 剪贴板窗、转发事件）零缺陷，"僵尸宿主"为工装误诊（#78/#79 叠加）。
 - **smoke4 工装修正**：CbWnd 断言改"存在且已隐藏"；测试前后保护/恢复用户剪贴板。
+
+### 批次 G：无痕模式（7d6b0a）
+
+- **语义**：临时不留痕迹——选词不学习/不计统计/不触发每日备份与目标提醒、不记最近符号、不录剪贴板历史；预测与收藏（显式动作）不受影响。托盘一键切换，下一选词即生效。
+- **Settings.incognito**：注册表 Incognito DWORD，LoadSettings/SaveSettings/SaveDiff 三处接线；common/settings 增单键快读 IncognitoActive()（RegGetValue µs 级，沙箱感知 LINGXI_SETTINGS_NS），热路径零缓存保开关精确性。
+- **门禁接线**：pipeserver ApplyLearn 顶部早退（学习/统计/备份触发/目标提醒四合一）；symbolpanel AddRecent 不记最近；clipboardui CbListenProc WM_CLIPBOARDUPDATE 不录历史。
+- **托盘**：菜单 2022"无痕模式（临时不留痕）"勾选切换 + BuildTrayTip"· 无痕"标注 + kHelpText 两处同步（托盘菜单列表/词典与学习段）。
+- 门禁：build Debug 零错 + engine_test 沙箱 224/0 + fix_readings 缺口 0，全后台。
+
+### 批次 H：帮助窗 Ctrl+F 查找 + 诊断无痕行（d125be8）
+
+- **查找行**（底部按钮条上方，默认隐藏）：Ctrl+F 呼出（已开则回查找框全选备改）/Esc 关查找行不关窗；F3 无修饰键直达（未开则先开，Windows 惯例）。
+- **查找行为**：输入即跳转（EN_UPDATE 从当前选中首起）；Enter/"下一个"按钮/F3=从选中末尾续找；尾部未中回绕开头；仍未中按钮反馈"未找到"（下次输入自动复位）；查找框预填当前选中片段；大小写不敏感（towlower）。
+- **布局收口**：WM_SIZE 体改调 HelpLayout()（正文/按钮条/查找行三段统一，拉伸不漂移）；查找三控件创建挂 ShowHelpWindow 建窗段（子类化 HelpFindEditProc：Esc/Enter/Ctrl+F 三键）；WM_DESTROY 状态复位（g_findVisible + 句柄组），重开默认隐藏。
+- **诊断无痕行**：--diagnostics 设置行补"无痕=%u"（smoke5 断言点）；kHelpText 同步（Enter/F3=下一个）。
+- 门禁：build Debug 零错 + engine_test 沙箱 224/0 + fix_readings 缺口 0 + --diagnostics 实测"无痕=0"（exit 0），全后台。
+- **smoke5.ps1 预置**（G+H 真机验证脚本，用户空闲+宿主重启后跑）：G1-G5 诊断翻转/无痕期 clipboard.dat 不增长且不含 marker/关无痕恢复记录；H1-H12 帮助查找全链——F3 无修饰键可 PostMessage 直达子类过程（绕开 Ctrl+F 的 GetKeyState 异步键态限制），SetWindowTextW 触发 EN_UPDATE 实测输入即跳转、EM_GETSEL 断言选区推进、"未找到"反馈与复位、Esc 只关查找行、重开状态复位。全文用户状态保护/恢复（Incognito/剪贴板）。

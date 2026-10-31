@@ -102,3 +102,6 @@
 
 - **批次 F emoji 高频扩充 ✅（10-31 傍晚二，e0443ff）**：5 分类扩容（表情 48/手势 36/动物 48/食物 48/活动 42），全部单码点或 +VS16 避 E13.1+/ZWJ 渲染缺失，新增条目 \u 转义防 VS16 编辑丢失。门禁：build 零错 + engine_test 沙箱 224/0 + fix_readings 缺口 0，全后台。
 - **批次 C-F 真机验证收口 ✅（10-31 夜四）**：smoke4 **12/12 全过**（剪贴板节流落盘/WM_HOTKEY 5 开关窗/诊断两行/--symbols 转发/846 宽/收藏对称切换/表情页 48 条 4 行——批次 F 直接验证）。首跑两 FAIL 全系探针假阴性：$null→"" 编组使 FindWindowW(cls,$null) 只匹配空标题窗口（PITFALLS #77）+ 缺 CharSet.Unicode 乱码（#78）+ cmd start 管道继承挂死（#79）——diag7-11 取证链实锤转发/热键/建窗零缺陷，"僵尸宿主"为误诊；工装别撞名入 #80。
+
+- **批次 G 无痕模式 ✅（10-31 夜五，7d6b0a，7 文件）**：托盘 2022 一键"临时不留痕"——选词不学习/不计统计/不触发备份与目标提醒/不记最近符号/不录剪贴板历史；预测与收藏不受影响；Settings.incognito 三处接线 + IncognitoActive() 单键快读（µs 级，热路径零缓存保开关精确）；门禁 pipeserver.ApplyLearn/symbolpanel.AddRecent/clipboardui.CbListenProc 三点早退；tip"· 无痕"+kHelpText 同步。门禁：build 零错+engine_test 沙箱 224/0+fix_readings 缺口 0，全后台。
+- **批次 H 帮助窗 Ctrl+F 查找 ✅（10-31 夜五，d125be8）**：查找行（默认隐藏）Ctrl+F 呼出/Esc 关；F3/Enter/按钮=下一个（回绕+未找到反馈+自动复位）；输入即跳转（EN_UPDATE）；预填当前选中；HelpLayout() 统一三段布局（WM_SIZE 收口）；--diagnostics 补"无痕="行；kHelpText 同步。门禁：build 零错+engine_test 224/0+fix_readings 缺口 0+--diagnostics 实证。**smoke5.ps1 预置**（G1-G5+H1-H12，F3 无修饰键绕开 GetKeyState 异步键态限制可纯消息驱动；待用户空闲+宿主重启后跑）。
