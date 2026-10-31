@@ -65,9 +65,9 @@ void EnsureSandboxChecked()
 {
     if (g_checked) return;
     g_checked = true;
-    wchar_t ns[64] = {};
-    if (GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", ns, 64) > 0)
-        g_sandbox = true;
+    // 读 main.cpp 的快照（而非直读环境变量）：生产宿主启动即清 LINGXI_SETTINGS_NS，
+    // e2e 派生的宿主若惰性读环境会误判生产，把剪贴板历史写进 regress 临时 APPDATA
+    g_sandbox = WasTestSpawned();
 }
 
 std::wstring DataFilePath()

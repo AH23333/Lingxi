@@ -69,6 +69,16 @@ struct Settings
 Settings LoadSettings();
 // 无痕模式快速查询：单键读（选词热路径用，避免全量 LoadSettings 的 ~30 项注册表读）
 bool IncognitoActive();
+// 测试派生快照（2026-11-01）：本进程是否带 LINGXI_SETTINGS_NS 派生。
+// 背景：regress/e2e 设 LINGXI_SETTINGS_NS=test + APPDATA=沙箱，e2e 期间重生的
+// LingxiUI 宿主带着两者活到测试结束后。main.cpp 生产路径清了 LINGXI_SETTINGS_NS
+// （护设置键），但 clipboardui/autobackup 的惰性沙箱自检发生在清除之后，误判
+// "非沙箱"，把剪贴板历史与自动备份写进 regress 临时 APPDATA——用户真实
+// clipboard.dat/备份停更（实证：tmp\regress-*\userdata 下出现含探针的
+// clipboard.dat，真实文件停在前一天）。修法：main.cpp 清除变量【前】先
+// SnapshotTestSpawned() 固化判定；模块侧一律读 WasTestSpawned()，不再各自读环境。
+bool SnapshotTestSpawned(); // 生产路径清除 LINGXI_SETTINGS_NS 前调用一次
+bool WasTestSpawned();      // 任意时刻调用；未快照则惰性读当前环境
 void SaveSettings(const Settings& s);
 // 只写与当前落盘值不同的键（防"整页回写"把未同步/未加载的控件状态覆盖全部设置）
 void SaveSettingsDiff(const Settings& s);

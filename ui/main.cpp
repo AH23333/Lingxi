@@ -466,6 +466,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     // 沙箱键，用户表现为"改了不生效"（2026-10-29 晚实测事故：19:40 的全部
     // 修改落进 _test 键）。probe 子命令保留沙箱（e2e 断言依赖），生产路径
     // 在此强制清除，确保设置 UI 永远读写真实 HKCU。
+    // 2026-11-01 补：必须先快照再清除——clipboardui/autobackup 靠该变量自判
+    // 沙箱，惰性读发生在清除后曾把 e2e 重生宿主的剪贴板/备份写进 regress
+    // 临时 APPDATA（用户真实 clipboard.dat/备份停更，smoke5 G5 实证）。
+    lingxi::SnapshotTestSpawned();
     SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", NULL);
 
     // 早期单实例：任何窗口/引擎/LLM 加载前先占命名 Mutex，重复实例立即退出。

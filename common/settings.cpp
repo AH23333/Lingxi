@@ -74,7 +74,32 @@ void SetString(HKEY hKey, const wchar_t* name, const std::wstring& v)
                    (DWORD)((v.size() + 1) * sizeof(wchar_t)));
 }
 
+// 测试派生判定（与 ActiveKey 同口径的"环境里有无合法 ns"）：三态缓存，
+// -1 未快照（惰性读环境） 0 生产 1 测试派生。
+int g_testSpawned = -1;
+
+bool TestSpawnedFromEnv()
+{
+    wchar_t ns[48] = L"";
+    DWORD n = GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", ns, 48);
+    if (n == 0 || n >= 48) return false;
+    return ns[0] != 0;
+}
+
 } // namespace
+
+bool SnapshotTestSpawned()
+{
+    g_testSpawned = TestSpawnedFromEnv() ? 1 : 0;
+    return g_testSpawned != 0;
+}
+
+bool WasTestSpawned()
+{
+    if (g_testSpawned < 0)
+        g_testSpawned = TestSpawnedFromEnv() ? 1 : 0;
+    return g_testSpawned != 0;
+}
 
 Settings LoadSettings()
 {
