@@ -1066,3 +1066,11 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **userdictwnd.cpp 真缺陷（已修，268ee54）**：UdExport 读源失败或写目标失败完全静默——与 settingsbackup 同根因（用户误以为已备份）。修复=失败弹 WARNING"未生成备份文件"。其余 753 行全文干净：删除/升降频按内容匹配+索引回退+落空刷新（引擎并发重写防漂移）；WriteFileBytes tmp+MoveFileEx 原子写与引擎双写者共存；右键词典操作全路径（删全读音条目/Pin +10000/降频钳位 1/新增键推导全拼守卫/写失败 false+日志）；UdAddWord 键归一化与引擎 NormKey 口径一致。微瑕不修：UdClearAll 忽略写结果（安全方向，RefreshUdList 让用户看到真相）、删除路径恒真 if(removed)、Nudge 漂移早退未刷新列表。
 - **tray.cpp（422 行）全文干净**：托盘资源配对（NIM_ADD/NIM_DELETE 对称）、定时器三清点、热键三注销、ENDSESSION 双 flush、菜单命令全分发核对。微瑕不修：60 分钟到期日志文案写"30 分钟"（仅日志文案，菜单/弹窗文案正确）、卸载脚本路径限开发目录。
 - 门禁：build Debug 零错 + engine_test **234/0** + fix_readings 缺口 0，全后台（regress 含 taskkill 宿主项押后空闲收口）。
+
+### 深度审计轮 8（候选窗三件套 + pipeserver + statswnd 全文零缺陷）
+
+- **candwnd_render.cpp（413 行）全文干净**：三字体重建先删后建防 GDI 泄漏；皮肤越界回退默认；tooltip 懒建+常驻复用+工作区钳制；OnPaint 全路径快照锁内拷贝/画刷全删/组合串掐头保尾循环 size_t keep>=1 无下溢；NULL_PEN+RoundRect 选中态；构建戳 LINGXI_BUILD_STAMP 门控。存疑点排除：LayoutMetrics 直读 candidateFontSize 无钳位——LoadSettings 侧已消毒（settings.cpp:89 仅接受 12..32 否则默认 16）。
+- **candwnd_interact.cpp（777 行）全文干净**：剪贴板 3×30ms 重试+SetClipboardData 成功让渡所有权失败自清；W2M+RFC3986 百分号编码联网搜索；拖拽工作区钳制+toast 守卫（防 toast 小窗坐标写进固定设置）；滚轮三手势（Shift 不透明度 70-100/Ctrl 字号 12-32/裸滚轮翻页 long long 夹取）；右键词典菜单全路径含不抢前台根因注释（旧实现 SetForegroundWindow 致 TSF 焦点离开宿主→SendHide）；锁内快照锁外回调（_pick/_btnCmd 不持 _cs 调用）。
+- **pipeserver.cpp（745 行）全文干净**：SEH 三外壳 C2712 合规（POD 参数传递）；单实例 FILE_FLAG_FIRST_PIPE_INSTANCE 冲突 ExitProcess；客户端 shared_ptr 引用计数管句柄生命周期（断线不死锁不悬垂）；CTX 双格式 V2/V1 长度自洽判别、损坏帧丢弃；有界队列 8+每客户端去重+防抖合并（多客户端下被弃应用帧丢弃属良性设计——该应用必已 Deactivate）；预测期零持锁；两阶段重排 gen+rrSeq 双代序闸+400ms 观察窗+900ms 预算+RerankStillCurrent 二次核对；cover 与 cands 平行校验三处一致；B1 学习键=消耗前缀。微瑕不修：Stop() 不 join 分离的重排线程（仅退出路径，进程拆除兜底）。
+- **statswnd.cpp（297 行）全文干净**：CSV/诊断报告导出按结果弹窗（与轮 7 静默失败修复同口径，本文件本就正确）；清零确认对话框；Esc 双路（正文子类化+窗口本体）；单例 IsWindow 复用；子类化指针复建正确（SetWindowLongPtrW 返回原始 EDIT proc）。
+- 结论：至此 ui 层全部窗口/交互/管线文件完成深度审计（轮 2-8 累计 17 文件，真缺陷 6 处全部已修）。门禁：build Debug 零错 + engine_test **234/0** + fix_readings 缺口 0，全后台。
