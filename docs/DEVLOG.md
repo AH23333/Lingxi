@@ -1,4 +1,4 @@
-# 灵犀输入法 — 开发日志（DEVLOG）
+﻿# 灵犀输入法 — 开发日志（DEVLOG）
 
 > 按时间顺序记录每个里程碑做了什么、为什么这么做。踩坑细节见 [PITFALLS.md](PITFALLS.md)，当前状态见 [PROGRESS.md](PROGRESS.md)。
 
@@ -880,4 +880,5 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **右键菜单 8 号项**：按当前屏蔽态切换文案（未屏蔽="屏蔽该词（不再出现）"；已屏蔽="取消屏蔽（恢复候选）"+MF_CHECKED），结果统一浮窗 1.5s；超限/写失败各有文案。
 - **管理窗 BlAdd 复用 BlockWord**：校验/去重/落盘/热载与右键同一条路，switch 五态映射状态行文案——口径唯一定义点。
 - 门禁：build 零错；regress ALL PASS（regress-2180511821）；smoke1 15/15 + smoke2 8/8；probe 基线全符。
-- **假红实录（既有 PITFALLS #19/#60/#66 类，非新坑）**：smoke1/2 重启链之后首跑 regress 双红（deep_test attempt1 pinyin-settle 红连锁 25 FAIL、e2e 三次 settle 各异），`taskkill LingxiUI.exe` 清宿主后重跑 deep_test 直绿、e2e 第 3 次过——smoke 脚本重启过的宿主带残留态，regress 前清一次宿主可稳定复绿。
+- **假红实录（PITFALLS #19/#33/#60 时序抖动类，非新坑）**：首跑 regress 双红（deep_test 内部 3 连败：attempt1 pinyin-settle 红连锁 25 FAIL、attempt2/3 仅 T10/T12 各 2 FAIL；e2e 三次 settle 失败点各异）。原样复跑即绿（deep_test 首试直绿；e2e 第 3 次过——**绿跑前两试仍 settle 红**，抖动未消失）。**纠偏：与"手清宿主"无因果**——regress.cmd 94/107 行本就先 taskkill 再跑各套件，两跑起点同为零宿主；非代码回归（改动仅菜单项+文件 IO 助手，TSF/管道/引擎路径零触碰）。教训：settle 类双红先原样复跑一次再排查，勿抢因果。
+
