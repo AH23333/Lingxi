@@ -1085,3 +1085,14 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **candwnd_core.cpp（489 行）全文干净**：Shutdown 刻意不 DeleteCriticalSection 的退出竞态论证（存活线程踩已删 CS，泄漏无害）；LayoutAndPosition 锚定三级回退链（caret→鼠标位→记忆位）+工作区双轴钳制+同步补画防残影；Show/SetPage 的 ver 保页语义与 DLL 侧 rerank 判定对称；WM_TIMER 陈旧定时器 wasToast 守卫；CurrentPageRangeLocked 规整边界（start>total 回 0/start≥total 末整页）。轮 4 微瑕记录复核：ShowModeToast 自赋值死代码仍在（不修维持原判）。
 - **autobackup.cpp（208 行）全文干净**：TodayBoth 单次 GetLocalTime 防午夜撕裂（suffix/dayKey 同源）；done.flag 幂等认账（半截备份无标记→重启补拷，目录存在不认账——注释里记录的缺陷修复实现正确）；成败都记 g_doneDay 防选词热路径文件系统风暴；轮换字典序=时间序保 14 份；g_mtx 串行打字路径与手动路径；沙箱探测单次。
 - 结论：common 层（IPC/协议/设置/日志/标点）+ 候选窗核心生命周期 + 每日备份全部干净，真缺陷 0。门禁：build Debug 零错 + engine_test **234/0** + fix_readings 缺口 0，全后台。
+
+### 深度审计轮 10（helpwnd + symbolpanel + 四管理窗 + settingsui 全文，2 真缺陷已修）
+
+- **helpwnd.cpp 真缺陷（已修）**：WM_MOUSEWHEEL 不检查 Ctrl 直接调字号增减——帮助文本与注释均写明"Ctrl+滚轮改字号"，焦点在按钮等处时裸滚轮误改字号（焦点在正文时滚轮被子控件吃掉才长期掩盖）。修复=补 Ctrl 检查，非 Ctrl 滚轮转发正文滚动（焦点在按钮等处时也能滚文本，UX 增益）；smoke5 核对无滚轮/字号断言，修复安全。其余干净：BuildHelpText 数组索引全消毒（分类/条目/命令三表边界逐一验）、查找回绕、复制 3×30ms 重试、GWLP_USERDATA 存正文 EDIT 的子类化链。
+- **settingsui.cpp（1245 行）全文（轮 3 已审滚动段）1 真缺陷（已修）**：WM_MOUSELEAVE 的 g_trackingMouse=false 只在 g_navHover!=-1 分支内执行——鼠标从内容区直接移出窗口时 hover 态为 -1，标志滞留 true，TrackMouseEvent 不再重挂；此后悬停导航再离窗收不到 LEAVE，**hover 药丸滞留绘制**。修复=无条件重置（TME_LEAVE 本就一次性，离开即失效须重挂）。其余干净：owner-draw 勾选态丢失真凶注释与外置 g_toggleOn 全链一致；创建期 g_updating+g_controlsLoaded 双保险防刷零（EN_CHANGE/BN_CLICKED 全挡）；fuzzyGroups 8 bit 装载/保存双侧对称；SaveFromControls 全控件钳位（count 1-9/toggleMode 0-4/skin 0-6/uiFont 0-3/字号表驱动）；窗口位置恢复监视器交集校验；SB_BOTTOM 用 nMax-nPage。微瑕不修：101 行注释"bit0..bit4"对 8 组漂移；句柄失效重建路径旧字体不删+g_toggleOn 陈旧键累积（罕见路径，HWND 复用碰撞可忽略）。
+- **symbolpanel.cpp（756 行）全文干净**：\x1F 解析限 12/收藏上限 60 差异持久化/最近条目去重前移；CatAt 索引映射与保存侧 ±1 换算对称；滚轮换分类 mod 循环有界；日期页 6 条目同源取时；右键清空最近/收藏带确认；无痕模式不录最近。微瑕不修：网格上方 4px 填充带因整除截断计入第 0 行命中区（纯命中区微扩，无越界）。
+- **clipboardui.cpp（668 行）全文干净**：LXCB 加载全程边界校验（截断文件保留已读部分）；.tmp+MoveFileExW 原子写；回声去重（仅最近一条）+已存在前移+节流 5 次落盘+删除/清空立即落盘（用户意图优先）；GlobalSize 界定 wcsnlen 防非终结数据越界读；SetClipboardData 成功让渡所有权、失败 GlobalFree；监听窗 WM_DESTROY 注销 listener。微瑕不修：WM_CTLCOLOR 返回 WHITE_BRUSH 但 SetBkColor=kUiCard（纯装饰色差）。
+- **phraseui.cpp（410 行）全文干净**：行循环 last 先记防收尾漏读；NormalizeAbbrev 白名单 a-z+2-16 位；制表符为存储分隔符故短语剥制表（写读对称）；去重=缩写+短语全等（同缩写多短语合法共存）；写失败 WARNING；g_hooks.phrasesChanged 热载。
+- **hotphraseui.cpp（487 行）全文干净**：录制框 KEYDOWN/SYSKEYDOWN 捕获、Esc=清空录制与关窗 Esc 语义分离（注释明示）；加载侧 mods 掩码归一+Ctrl|Alt 强制+vk 非零；键占用去重（mods+vk 全等）；两 EDIT 共享原类过程同份 g_oldHpEditProc 合法（同类控件）；NotifyHotPhrasesChanged 供备份导入侧外部触发。
+- **blockedui.cpp（435 行）全文干净**：unordered_set 去重；长度/条数双侧钳制；BlockWord 公共路径统一（窗口添加与候选右键屏蔽同路，结果枚举全分支映射 UI 提示）；清空确认；UnblockWord 逐条精确匹配。微瑕不修（跨四窗同型）：phraseui/hotphraseui/blockedui 的 CTLCOLOR WHITE_BRUSH 色差与 clipboardui 同型。
+- 结论：轮 10 收口——帮助窗/符号面板/剪贴板历史/自定义短语/快捷短语/屏蔽词/设置窗全文完成，ui 层深审再无未读文件。本轮 2 真缺陷（裸滚轮误改字号/hover 药丸滞留）全修，轮 2-10 累计真缺陷 **7 处全部已修**。门禁：build Debug 零错 + engine_test **234/0** + fix_readings 缺口 0，全后台（smoke 双套件按 runbook 押后空闲收口）。
