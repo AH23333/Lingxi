@@ -451,6 +451,11 @@ private:
 
         std::string outUtf8;
         uint64_t t0 = GetTickCount64();
+        // KV 一致性标记：仅当循环以标准形（KV=prompt+生成尾）收尾才允许按增量态保存。
+        // 异常中断（decode 失败/logits 空）后 KV 已整序清除——若仍保存 hasPrev=true，
+        // 下次入口对空 KV 的 seq_rm 空范围空转"成功"，delta 会从位置 0 错位放置，
+        // 静默产出垃圾续写（审计轮 6 修复 A/B）。
+        bool kvClean = true;
         llama_batch batch = (common < (size_t)n)
                                 ? _api.batch_get_one(tokens.data() + common, n - (int)common)
                                 : _api.batch_get_one(tokens.data() + n - 1, 1);
@@ -463,10 +468,11 @@ private:
                 // 彻底清空并标记下次全量重评估
                 LX_LOG(L"llm", L"decode 返回 %d，清空 KV", rcDecode);
                 ResetKv();
+                kvClean = false;
                 break;
             }
             float* logits = _api.get_logits_ith(_ctx, -1);
-            if (!logits) { _genKv.hasPrev = false; break; }
+            if (!logits) { ResetKv(); kvClean = false; break; }
             int32_t nv = _api.vocab_n_tokens(_vocab);
             int best = 0;
             for (int32_t v = 1; v < nv; v++)
@@ -480,8 +486,10 @@ private:
             batch = _api.batch_get_one((llama_token*)&best, 1);
         }
 
-        // 保存 prompt 状态供下次增量（生成尾部由下次入口统一弃掉）
-        if (n > 0)
+        // 保存 prompt 状态供下次增量（生成尾部由下次入口统一弃掉）；
+        // kvClean=false 时跳过——KV 已整序清除、hasPrev 已被 ResetKv 置 false，
+        // 下次按空 KV 全量重评估，杜绝"记着 prompt 实际 KV 为空"的错位增量
+        if (n > 0 && kvClean)
         {
             _genKv.prompt.assign(tokens.begin(), tokens.begin() + n);
             _genKv.hasPrev = true;
@@ -497,7 +505,7 @@ private:
         // fork：seq_rm 到 prompt 末位前一格 → 重 decode 末位拿新鲜 logits →
         // 采样循环。采样尾留在 KV 也安全（下次入口 seq_rm(prompt.size(),-1) 弃掉）。
         Settings st = LoadSettings();
-        if (st.llmMultiPath && _samplerOk && kvUsable &&
+        if (st.llmMultiPath && kvClean && _samplerOk && kvUsable &&
             common * 10 >= (size_t)n * 9 && GetTickCount64() - t0 <= 60)
         {
             llama_memory_t mem = _api.get_memory(_ctx);
