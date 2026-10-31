@@ -1,4 +1,4 @@
-﻿# 进度看板（PROGRESS）
+# 进度看板（PROGRESS）
 
 > 一页看清：完成了什么、正在做什么、下一步。详细过程见 [DEVLOG.md](DEVLOG.md)，坑见 [PITFALLS.md](PITFALLS.md)。
 
@@ -96,7 +96,7 @@
 - **批次 A/B 深度审计修复 ✅（10-31 晚，`0677401`）**：用户指令"继续深入挖掘潜在问题"——代码级审计确认 5 项真实缺陷修复：usage.txt 原子写（.tmp+MoveFileExW，CREATE_ALWAYS 直写有进程被杀半截/备份读到撕裂文件两窗口）；备份幂等认账改 **done.flag 完成标记**（"目录存在"可能认下被杀的半截备份）；备份失败防每选词文件系统风暴（成败都认账+日志告警，重启自动补试）；TodayBoth 单次取时（午夜撕裂认账日与目录差一天）；ApplyLearn goal 读取 16 选词 atomic 缓存（热路径注册表 IO 降 94%）。疑点排除：tray 2020/rotation 属性校验/重复弹 toast 均有既有守卫。门禁：build 零错+engine_test 沙箱 **224/0**+fix_readings 缺口 0，全后台。
 - **批次 C 剪贴板历史窗 ✅（10-31 夜，`66bb3d0`，5 文件 +721 行）**：新自包含模块 ui/clipboardui.{h,cpp}——隐藏监听窗（普通 POPUP 非 HWND_MESSAGE，WM_CLIPBOARDUPDATE 直投场景保守处理）+AddClipboardFormatListener 全局复制自动入史（纯空白跳过/单条 ≤2000 字符/回声去重/重复前移/上限 50）；存储 clipboard.dat 私有二进制（LXCB magic+边界校验加载+原子写）；节流落盘（每 5 次+Flush 补写，删除立即）；历史窗（blockedui 模板）=列表时间预览+只读全文预览框+双击直接复制回剪贴板+Esc 三路关窗；托盘 2021+全局热键 Ctrl+Alt+V（占用容错）；kHelpText 同步；沙箱停用。门禁：build 零错+engine_test 沙箱 **224/0**+fix_readings 缺口 0，全后台。
 - **批次 D 管理窗体验+托盘版本号+诊断全景 ✅（10-31 夜二，`ba58c1f`，10 文件 +122 行）**：三管理窗（屏蔽词/自定义短语/快捷短语）标题实时条目数 + 列表双击回填输入框（快捷短语录制框捕获态同步置位）；托盘菜单底部灰显版本号项（与 --version 同源）；--diagnostics 新增数据全景两行（每日目标/屏蔽词/自定义短语 + 每日备份份数 DailyBackupCount 新 API/剪贴板历史条数 ClipboardHistoryCount 新 API），cmd /c 包裹重定向实证两行精确落盘；kHelpText 同步。门禁：build 零错+engine_test 沙箱 **224/0**+fix_readings 缺口 0+--diagnostics 实证，全后台。
-- **待办（用户空闲统一补跑）**：重启宿主拾取新 exe → e2e+smoke（任务③+频闪+暗色+剪贴板历史肉眼验收）→ regress 全量 → newtask-verify.ps1 v2；30+ 清单剩余批次（符号面板搜索与收藏页/emoji 分类扩充/帮助窗查找/无痕模式/透明度档位细化）按"后台可验性"逐批 build+engine_test 门禁后 commit，docs 随批落账。
+- **待办（用户空闲统一补跑，见 tmp\runbook_idle.md）**：重启宿主拾取新 exe（含批次 G/H）→ regress 全量 → smoke5.ps1（G 无痕+H 帮助查找 17 项，F3 无修饰键可纯消息驱动）→ smoke1/2 复跑 → 肉眼验收（频闪 v2/暗色跟随/帮助查找/无痕开关/剪贴板历史观感）；build32 补跑（LNK1168=IME 进程占用 Debug32 DLL，须宿主重启或注销后）。押后项：符号面板搜索框（NOACTIVATE 抢焦点须前台验证）、数字大写/计算器（须统一设计勿仓促）。
 
 - **批次 E 符号面板收藏页 ✅（10-31 夜三，e39107d，4 文件 +183/-25）**：第二标签"收藏"页——右键网格符号收藏/取消（★角标即时反馈），上限 60 条注册表持久化（favoriteSymbols，仿 recentSymbols 模式）；右键收藏标签确认清空；标签序 0=最近/1=收藏/2..15=静态/16=日期，lastSymbolCat 注册表语义不变（±1 换算免迁移）；kHelpText 同步。**搜索框押后**（NOACTIVATE 抢焦点交互须前台验证）。门禁：build 零错+engine_test 沙箱 224/0+fix_readings 缺口 0，全后台。工装坑：PS 5.1 Set-Content -Encoding UTF8 带 BOM 会污 commit message 主题行，改 [IO.File]::WriteAllText+UTF8Encoding(false) 后 amend。
 

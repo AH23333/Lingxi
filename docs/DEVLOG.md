@@ -1026,3 +1026,10 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **smoke5 断言自纠**：查找针"输入"kHelpText 全文仅 2 处（标题+"一键输入句式"），H7 第三次续找回绕到首个匹配致 u0>t0 假失败——改"候选"（≥8 处）；F3 无修饰键可 PostMessage 直达子类过程（绕开 Ctrl+F 的 GetKeyState 异步键态限制）是 smoke5 可全自动的关键设计。
 - **门禁**：Release 构建补跑绿（自 P0 后多批未跑）；probe 基线复验全符（新二进制 gylg=4 候/gylgl=供应链管理/xian→西安/xyzxyz 空/长句尾 23≥20）——批次 G/H 零引擎回归。
 - **build32 LNK1168**：Debug32\ImeCore.dll 被运行中 IME 进程加载，用户使用期不可解锁——记入空闲收口 runbook（tmp/runbook_idle.md：重启宿主后补跑或注销重登再跑）。
+### 深度审计轮 3（滚动 v2 / pipeserver 主链 / usagestats 解析，零缺陷结论）
+
+- **settingsui 频闪 v2 滚动**：ScrollSettingsTo 滚动矢量方向/导航列与页脚带 BLT 排除/SW_SCROLLCHILDREN 幂等重排/空矩形守卫全正确；防抖循环信号量幻影信用由 have=false 空转轮兜底，无饥饿无丢帧。
+- **pipeserver 主链**：EnqueuePredict 每客户端只留最新+全局有界；PredictProc 按客户端裁剪（任务③修复位注释详尽、实现正确——全局 clear 早已退役）；空文本隐藏/SEH 熔断/暂停与补全门禁/cover-cands 平行校验全对。
+- **usagestats 解析**：键名带 '=' 比较防前缀碰撞（"day=" 不会误吞 "dayPicks="）；_strtoui64 垃圾容错；BOM 跳过/CRLF 修剪；全键解析与 SaveLocked 写出全对称。
+- **regress 兼容确认**：regress.cmd 判据=engine_test exit code 而非断言数——P8c（224→228）不破坏收口；build_et.cmd 与 regress 内 engine_test 构建同为 Release 配置，P8c 已在收口同构环境验证 228/0。
+- 结论：今晚三批审计（轮 2/轮 3）覆盖 C-H 全部新代码与 G/H 全部门禁接线点，**零 actionable 缺陷**；唯一修正为 smoke5 断言针自纠（工具侧，非产品代码）。
