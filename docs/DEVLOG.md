@@ -1020,3 +1020,9 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **诊断无痕行**：--diagnostics 设置行补"无痕=%u"（smoke5 断言点）；kHelpText 同步（Enter/F3=下一个）。
 - 门禁：build Debug 零错 + engine_test 沙箱 224/0 + fix_readings 缺口 0 + --diagnostics 实测"无痕=0"（exit 0），全后台。
 - **smoke5.ps1 预置**（G+H 真机验证脚本，用户空闲+宿主重启后跑）：G1-G5 诊断翻转/无痕期 clipboard.dat 不增长且不含 marker/关无痕恢复记录；H1-H12 帮助查找全链——F3 无修饰键可 PostMessage 直达子类过程（绕开 Ctrl+F 的 GetKeyState 异步键态限制），SetWindowTextW 触发 EN_UPDATE 实测输入即跳转、EM_GETSEL 断言选区推进、"未找到"反馈与复位、Esc 只关查找行、重开状态复位。全文用户状态保护/恢复（Incognito/剪贴板）。
+### 深度审计轮 2（C-H 全面走查，零缺陷结论 + smoke5 断言自纠）
+
+- **审计范围与结论**（逐文件深读，无 actionable 缺陷）：clipboardui（LXCB 加载边界校验/原子写/回声去重与"已存在前移"语义一致/ClipboardFlush 双路接线 WM_ENDSESSION+退出前）、批次 D 三窗双击回填（hotphraseui g_capMods/g_capVk 捕获态同步正确、blockedui/phraseui 同模式）、statswnd CSV 导出（BOM/取消不写/wstring 临时串生命周期安全）、symbolpanel 收藏页（\x1F 解析端界/60 上限/差异持久化）、tray 菜单与定时器资源配对（CreatePopupMenu↔DestroyMenu、SetTimer↔KillTimer 全对称）、uitheme（画刷缓存 24 槽满兜底 stock brush/DWM 属性动态解析失败静默）。
+- **smoke5 断言自纠**：查找针"输入"kHelpText 全文仅 2 处（标题+"一键输入句式"），H7 第三次续找回绕到首个匹配致 u0>t0 假失败——改"候选"（≥8 处）；F3 无修饰键可 PostMessage 直达子类过程（绕开 Ctrl+F 的 GetKeyState 异步键态限制）是 smoke5 可全自动的关键设计。
+- **门禁**：Release 构建补跑绿（自 P0 后多批未跑）；probe 基线复验全符（新二进制 gylg=4 候/gylgl=供应链管理/xian→西安/xyzxyz 空/长句尾 23≥20）——批次 G/H 零引擎回归。
+- **build32 LNK1168**：Debug32\ImeCore.dll 被运行中 IME 进程加载，用户使用期不可解锁——记入空闲收口 runbook（tmp/runbook_idle.md：重启宿主后补跑或注销重登再跑）。
