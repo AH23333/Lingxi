@@ -26,4 +26,7 @@ void ShowClipboardWindow(HINSTANCE hInst, HWND hParent);
 // 退出/注销前落盘（节流计数内未写的捕获补写；无脏数据为空操作）。
 void ClipboardFlush();
 
+// 历史条目数（--diagnostics 摘要用；沙箱返回 0）。
+size_t ClipboardHistoryCount();
+
 } // namespace lingxi

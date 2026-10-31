@@ -142,6 +142,20 @@ std::wstring BackupsDirW()
     return DataDirW() + L"\\backups";
 }
 
+uint32_t DailyBackupCount()
+{
+    WIN32_FIND_DATAW fd{};
+    HANDLE h = FindFirstFileW((BackupsDirW() + L"\\daily-*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    uint32_t n = 0;
+    do
+    {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) n++;
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return n;
+}
+
 bool AutoBackupNow()
 {
     std::lock_guard<std::mutex> lk(g_mtx);

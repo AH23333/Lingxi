@@ -111,11 +111,28 @@ void RefreshBlList()
     SendMessageW(g_hBlList, LB_RESETCONTENT, 0, 0);
     for (const auto& w : words)
         SendMessageW(g_hBlList, LB_ADDSTRING, 0, (LPARAM)w.c_str());
+    // 标题实时携带条目数：任务栏/窗口列表一眼可辨规模
+    wchar_t title[96] = {};
+    _snwprintf_s(title, _TRUNCATE,
+                 L"屏蔽词——所列词永不进入候选（%zu 词）", words.size());
+    SetWindowTextW(g_hBlWnd, title);
     wchar_t cap[128] = {};
     _snwprintf_s(cap, _TRUNCATE,
                  L"共 %zu 条（最多 %zu；词 1-50 字符，保存即热载、该词不再出现在候选）",
                  words.size(), kMaxBlockedEntries);
     SetDlgItemTextW(g_hBlWnd, IDC_BL_STATUS, cap);
+}
+
+// 双击列表：词条回填输入框（便于改后重新添加）
+void BlBackfillSelected()
+{
+    int sel = (int)SendMessageW(g_hBlList, LB_GETCURSEL, 0, 0);
+    if (sel < 0) return;
+    auto words = LoadBlockedWords();
+    if (sel >= (int)words.size()) return;
+    SetDlgItemTextW(g_hBlWnd, IDC_BL_WORD, words[sel].c_str());
+    SetDlgItemTextW(g_hBlWnd, IDC_BL_STATUS, L"已回填，可编辑后重新添加");
+    SetFocus(GetDlgItem(g_hBlWnd, IDC_BL_WORD));
 }
 
 void BlAdd()
@@ -208,6 +225,11 @@ LRESULT CALLBACK BlWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             case IDC_BL_CLEAR: BlClearAll(); return 0;
             case IDC_BL_CLOSE: ShowWindow(hwnd, SW_HIDE); return 0;
             }
+        else if (HIWORD(wParam) == LBN_DBLCLK && LOWORD(wParam) == IDC_BL_LIST)
+        {
+            BlBackfillSelected(); // 双击条目回填输入框（改后重加）
+            return 0;
+        }
         break;
     case WM_CTLCOLORSTATIC:
         SetBkColor((HDC)wParam, kUiBg);

@@ -655,4 +655,12 @@ void ClipboardFlush()
     if (g_pending > 0) SaveLocked();
 }
 
+size_t ClipboardHistoryCount()
+{
+    std::lock_guard<std::mutex> lk(g_mtx);
+    if (g_sandbox) return 0;
+    LoadLocked();
+    return g_items.size();
+}
+
 } // namespace lingxi

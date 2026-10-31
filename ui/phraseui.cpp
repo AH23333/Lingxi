@@ -144,10 +144,28 @@ void RefreshPhList()
         std::wstring line = e.abbrev + L"    " + e.phrase;
         SendMessageW(g_hPhList, LB_ADDSTRING, 0, (LPARAM)line.c_str());
     }
+    // 标题实时携带条目数：任务栏/窗口列表一眼可辨规模
+    wchar_t title[96] = {};
+    _snwprintf_s(title, _TRUNCATE,
+                 L"自定义短语——缩写一打就出长句（%zu 条）", entries.size());
+    SetWindowTextW(g_hPhWnd, title);
     wchar_t cap[96] = {};
     _snwprintf_s(cap, _TRUNCATE, L"共 %zu 条（最多 %zu；缩写 2-16 位字母，整串打出即置顶）",
                  entries.size(), kMaxPhraseEntries);
     SetDlgItemTextW(g_hPhWnd, IDC_PH_STATUS, cap);
+}
+
+// 双击列表：缩写+短语回填输入框（便于改后重新添加）
+void PhBackfillSelected()
+{
+    int sel = (int)SendMessageW(g_hPhList, LB_GETCURSEL, 0, 0);
+    if (sel < 0) return;
+    auto entries = LoadPhraseEntries();
+    if (sel >= (int)entries.size()) return;
+    SetDlgItemTextW(g_hPhWnd, IDC_PH_ABBREV, entries[sel].abbrev.c_str());
+    SetDlgItemTextW(g_hPhWnd, IDC_PH_TEXT, entries[sel].phrase.c_str());
+    SetDlgItemTextW(g_hPhWnd, IDC_PH_STATUS, L"已回填，可编辑后重新添加");
+    SetFocus(GetDlgItem(g_hPhWnd, IDC_PH_TEXT));
 }
 
 void PhAdd()
@@ -229,6 +247,11 @@ LRESULT CALLBACK PhWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             case IDC_PH_DEL: PhDeleteSelected(); return 0;
             case IDC_PH_CLOSE: ShowWindow(hwnd, SW_HIDE); return 0;
             }
+        else if (HIWORD(wParam) == LBN_DBLCLK && LOWORD(wParam) == IDC_PH_LIST)
+        {
+            PhBackfillSelected(); // 双击条目回填输入框（改后重加）
+            return 0;
+        }
         break;
     case WM_CTLCOLORSTATIC:
         SetBkColor((HDC)wParam, kUiBg);

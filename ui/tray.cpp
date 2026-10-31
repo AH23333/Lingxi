@@ -147,6 +147,12 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
                     2008, L"开机自动启动");
         AppendMenuW(menu, MF_STRING, 2006, L"卸载灵犀输入法...");
         AppendMenuW(menu, MF_STRING, 2003, L"退出");
+        AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
+        { // 版本号灰显项：菜单底部一眼可查（与 --version 同源）
+            wchar_t ver[96] = {};
+            _snwprintf_s(ver, _TRUNCATE, L"版本 1.0（构建于 %hs）", __DATE__);
+            AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, ver);
+        }
         POINT pt;
         GetCursorPos(&pt);
         int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY, pt.x, pt.y, 0, hwnd, NULL);

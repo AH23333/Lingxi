@@ -202,10 +202,31 @@ void RefreshHpList()
         std::wstring line = FormatHotkey(hp.mods, hp.vk) + L"    " + hp.phrase;
         SendMessageW(g_hHpList, LB_ADDSTRING, 0, (LPARAM)line.c_str());
     }
+    // 标题实时携带条目数：任务栏/窗口列表一眼可辨规模
+    wchar_t title[96] = {};
+    _snwprintf_s(title, _TRUNCATE,
+                 L"快捷短语——自定义热键一键输入句式（%zu 条）", entries.size());
+    SetWindowTextW(g_hHpWnd, title);
     wchar_t cap[96] = {};
     _snwprintf_s(cap, _TRUNCATE, L"共 %zu 条（最多 %zu；热键须含 Ctrl 或 Alt）",
                  entries.size(), kMaxHotPhrases);
     SetDlgItemTextW(g_hHpWnd, IDC_HP_STATUS, cap);
+}
+
+// 双击列表：热键+句式回填（录制框捕获态同步置位，直接改句式即可重新添加）
+void HpBackfillSelected()
+{
+    int sel = (int)SendMessageW(g_hHpList, LB_GETCURSEL, 0, 0);
+    if (sel < 0) return;
+    auto entries = LoadEntries();
+    if (sel >= (int)entries.size()) return;
+    g_capMods = entries[sel].mods;
+    g_capVk = entries[sel].vk;
+    SetDlgItemTextW(g_hHpWnd, IDC_HP_HOTEDIT,
+                    FormatHotkey(g_capMods, g_capVk).c_str());
+    SetDlgItemTextW(g_hHpWnd, IDC_HP_PHRASE, entries[sel].phrase.c_str());
+    SetDlgItemTextW(g_hHpWnd, IDC_HP_STATUS, L"已回填，可编辑后重新添加");
+    SetFocus(GetDlgItem(g_hHpWnd, IDC_HP_PHRASE));
 }
 
 // 热键录制框：KEYDOWN/SYSKEYDOWN 捕获（Ctrl/Alt/Shift 组合实时判定），
@@ -312,6 +333,13 @@ LRESULT CALLBACK HpWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case IDC_HP_ADD: HpAdd(); return 0;
         case IDC_HP_DEL: HpDeleteSelected(); return 0;
         case IDC_HP_CLOSE: ShowWindow(hwnd, SW_HIDE); return 0;
+        default:
+            if (HIWORD(wParam) == LBN_DBLCLK && LOWORD(wParam) == IDC_HP_LIST)
+            {
+                HpBackfillSelected(); // 双击条目回填（改后重加）
+                return 0;
+            }
+            break;
         }
         break;
     case WM_CTLCOLORSTATIC:

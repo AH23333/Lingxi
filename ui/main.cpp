@@ -12,6 +12,9 @@
 #include "usagestats.h"
 #include "hotphraseui.h"
 #include "phraseui.h"
+#include "blockedui.h"
+#include "autobackup.h"
+#include "clipboardui.h"
 #include "symbolpanel.h"
 #include "engine/predictor.h"
 #include "../common/log.h"
@@ -378,6 +381,18 @@ std::wstring lingxi::BuildDiagnosticsText()
     }
     _snwprintf_s(buf, _TRUNCATE, L"打字统计：%ls\n",
                  lingxi::BuildStatsBrief().c_str());
+    t += buf;
+    // 数据全景：目标/词典类/备份/剪贴板（批次 D 诊断增强）
+    _snwprintf_s(buf, _TRUNCATE,
+        L"每日目标：%u 字/日（0=关闭）　屏蔽词：%zu 条　自定义短语：%zu 条\n",
+        (unsigned)s.dailyCharGoal,
+        lingxi::LoadBlockedWords().size(),
+        lingxi::LoadPhraseEntries().size());
+    t += buf;
+    _snwprintf_s(buf, _TRUNCATE,
+        L"每日备份：%u 份（保留 14）　剪贴板历史：%zu 条（上限 50）\n",
+        (unsigned)lingxi::DailyBackupCount(),
+        lingxi::ClipboardHistoryCount());
     t += buf;
     return t;
 }

@@ -12,11 +12,13 @@
 // （与 usagestats 同约定）。
 //
 #include <string>
+#include <cstdint>
 
 namespace lingxi {
 
 void AutoBackupTick();       // 高频路径节流入口：当日已备份则空操作
 bool AutoBackupNow();        // 立即全量备份（false=沙箱停用/无文件可备/写失败）
 std::wstring BackupsDirW();  // backups 根目录（托盘"打开备份文件夹"用）
+uint32_t DailyBackupCount(); // daily-* 目录份数（--diagnostics 摘要用）
 
 } // namespace lingxi
