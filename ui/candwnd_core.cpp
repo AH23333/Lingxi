@@ -207,6 +207,7 @@ void CandWindow::Show(const RECT& caretScreen, const std::vector<std::wstring>& 
     // 让候选立即接管绘制——否则 1s 内候选帧被画成"中/英"大气泡，定时器到期
     // 再把刚到的候选整窗清光（用户报"切换提示吃掉候选"根因）。
     _toastMode = false;
+    _toastText.clear();
     LeaveCriticalSection(&_cs);
     KillTimer(_hwnd, 1);
     HideTip(); // 候选帧接管窗口（跨线程：tooltip 仅 ShowWindow 隐藏，安全）
@@ -221,6 +222,7 @@ void CandWindow::SetPage(uint32_t ver, uint32_t pageStart)
     EnterCriticalSection(&_cs);
     // 与 Show() 同因：翻页指令期间 toast 态必须让位（清态+杀定时器）
     _toastMode = false;
+    _toastText.clear();
     if (ver == _ver && pageStart < _cands.size() && pageStart != _pageStart)
     {
         _pageStart = pageStart;
@@ -243,6 +245,7 @@ void CandWindow::ShowModeToast(bool english)
     EnterCriticalSection(&_cs);
     _toastMode = true;
     _toastEnglish = english;
+    _toastText.clear(); // 文字气泡残留会让本提示画成上次的文字
     _dark = dark;
     LeaveCriticalSection(&_cs);
 
@@ -268,6 +271,53 @@ void CandWindow::ShowModeToast(bool english)
                      // （不置位则纯 toast 场景到期不隐藏、MSG_HIDE 守卫拦不住）
     HideTip();
     SetTimer(_hwnd, 1, 1000, NULL);
+}
+
+// 通用文字气泡（R8 每日目标达成提醒）：与 ShowModeToast 同态机——
+// WM_TIMER(1) 到期隐藏、Show()/SetPage() 候选接管清态、_visible 置位；
+// 差异仅两点：宽度随文字自适应（_toastFont 实测），驻留 1.6s。
+void CandWindow::ShowTextToast(const wchar_t* text)
+{
+    if (!_hwnd || !text || !*text) return;
+    std::wstring t = text;
+    int w = 78;
+    {
+        HDC hdc = GetDC(_hwnd);
+        if (hdc)
+        {
+            HGDIOBJ old = SelectObject(hdc, _toastFont);
+            SIZE sz{};
+            if (GetTextExtentPoint32W(hdc, t.c_str(), (int)t.size(), &sz) && sz.cx > 0)
+                w = sz.cx + 28;
+            SelectObject(hdc, old);
+            ReleaseDC(_hwnd, hdc);
+        }
+    }
+    int h = 58;
+    EnterCriticalSection(&_cs);
+    _toastMode = true;
+    _toastText = std::move(t);
+    LeaveCriticalSection(&_cs);
+    int x = _lastX, y = _lastY;
+    if (_caret.right != 0 || _caret.bottom != 0)
+    {
+        x = _caret.left;
+        y = _caret.bottom + 4;
+    }
+    HMONITOR mon = MonitorFromRect(&_caret, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{ sizeof(mi) };
+    if (GetMonitorInfoW(mon, &mi))
+    {
+        if (y + h > mi.rcWork.bottom) y = _caret.top - h - 4;
+        if (y < mi.rcWork.top) y = mi.rcWork.top;
+        x = max(mi.rcWork.left, min(x, mi.rcWork.right - w));
+    }
+    SetWindowPos(_hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
+    UiApplyRoundCorners(_hwnd, w, h);
+    InvalidateRect(_hwnd, NULL, TRUE);
+    _visible = true; // 同 ShowModeToast：到期隐藏路径依赖此标记
+    HideTip();
+    SetTimer(_hwnd, 1, 1600, NULL);
 }
 
 void CandWindow::Hide()
@@ -375,6 +425,7 @@ LRESULT CandWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             EnterCriticalSection(&_cs);
             bool wasToast = _toastMode;
             _toastMode = false;
+            _toastText.clear(); // 文字气泡到期同样清内容（防残留进下次模式气泡）
             LeaveCriticalSection(&_cs);
             if (!wasToast) return 0;
         }

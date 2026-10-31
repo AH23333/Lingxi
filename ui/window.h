@@ -29,6 +29,9 @@ public:
     void SetPage(uint32_t ver, uint32_t pageStart);
     // 中/英文模式切换的短暂提示：在光标附近显示“中/英”，约 1 秒后自动消失。
     void ShowModeToast(bool english);
+    // 通用文字气泡（R8 每日目标达成提醒）：复用 toast 态机（定时器到期隐藏、
+    // 候选帧接管清态），宽度随文字自适应，约 1.6 秒自动消失。
+    void ShowTextToast(const wchar_t* text);
 
     void SetPickHandler(std::function<void(uint32_t ver, uint32_t index)> handler)
     {
@@ -103,6 +106,7 @@ private:
     bool _visible = false;
     bool _toastMode = false;   // 正在显示中/英文模式提示
     bool _toastEnglish = false;
+    std::wstring _toastText;   // 文字气泡内容（非空=文字气泡；空=中/英模式气泡）
     int _hoverRow = -1;        // 鼠标悬停的页内行号（-1 无），用于高亮
     bool _trackingMouse = false;
     int _hoverBtn = 0;         // 悬停中的工具条按钮（Btn 枚举值，0=None）

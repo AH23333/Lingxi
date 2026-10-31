@@ -15,6 +15,7 @@
 
 #include "../common/log.h"
 #include "../common/settings.h"
+#include "autobackup.h"
 #include "blockedui.h"
 #include "usagestats.h"
 
@@ -131,6 +132,8 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
         AppendMenuW(menu, MF_STRING, 2010, L"导出设置备份...");
         AppendMenuW(menu, MF_STRING, 2011, L"导入设置备份...");
+        AppendMenuW(menu, MF_STRING, 2019, L"立即备份全部数据");
+        AppendMenuW(menu, MF_STRING, 2020, L"打开备份文件夹");
         AppendMenuW(menu, MF_STRING, 2013, L"重新加载用户词典");
         AppendMenuW(menu, MF_STRING, 2018, L"屏蔽词管理...");
         AppendMenuW(menu, MF_STRING, 2014, L"打开数据文件夹");
@@ -268,6 +271,23 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         case 2011:
             ImportSettingsBackup(hwnd);
             break;
+        case 2019: // 立即备份全部数据（绕过"每日一次"短路，托盘显式动作）
+        {
+            if (AutoBackupNow())
+                MessageBoxW(hwnd, (L"已备份全部数据到：\n" + BackupsDirW()).c_str(),
+                            L"立即备份", MB_OK | MB_ICONINFORMATION);
+            else
+                MessageBoxW(hwnd, L"备份失败（无数据文件，或文件被占用）。",
+                            L"立即备份", MB_OK | MB_ICONWARNING);
+            break;
+        }
+        case 2020: // 打开备份文件夹（每日自动备份 + 立即备份的落点）
+        {
+            std::wstring dir = BackupsDirW();
+            CreateDirectoryW(dir.c_str(), NULL);
+            ShellExecuteW(NULL, L"open", dir.c_str(), NULL, NULL, SW_SHOWNORMAL);
+            break;
+        }
         case 2003:
             PostQuitMessage(0);
             break;

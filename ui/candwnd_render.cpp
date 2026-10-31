@@ -186,26 +186,32 @@ void CandWindow::OnPaint()
 
     // 中/英文模式提示气泡：居中大字，1 秒后由 WM_TIMER 关闭
     bool toast = false, toastEn = false, dark = true;
+    std::wstring toastText;
     {
         EnterCriticalSection(&_cs);
         toast = _toastMode;
         toastEn = _toastEnglish;
         dark = _dark;
+        toastText = _toastText; // 非空=文字气泡（R8 目标达成提醒等）
         LeaveCriticalSection(&_cs);
     }
     if (toast)
     {
-        COLORREF bg = toastEn ? (dark ? RGB(44, 44, 44) : kUiFlyoutBg)
-                              : _accent;
+        bool textToast = !toastText.empty();
+        COLORREF bg = textToast ? (dark ? RGB(44, 44, 44) : kUiFlyoutBg)
+                      : toastEn ? (dark ? RGB(44, 44, 44) : kUiFlyoutBg)
+                                : _accent;
         HBRUSH hb = CreateSolidBrush(bg);
         FillRect(hdc, &rc, hb);
         DeleteObject(hb);
         HGDIOBJ old = SelectObject(hdc, _toastFont);
         SetBkMode(hdc, TRANSPARENT);
-        SetTextColor(hdc, toastEn ? (dark ? RGB(228, 228, 228) : kUiText)
-                                  : RGB(255, 255, 255));
-        DrawTextW(hdc, toastEn ? L"英" : L"中", -1, &rc,
-                  DT_SINGLELINE | DT_CENTER | DT_VCENTER);
+        SetTextColor(hdc, textToast ? (dark ? RGB(228, 228, 228) : kUiText)
+                      : toastEn ? (dark ? RGB(228, 228, 228) : kUiText)
+                                : RGB(255, 255, 255));
+        DrawTextW(hdc, textToast ? toastText.c_str()
+                  : toastEn ? L"英" : L"中", -1, &rc,
+                  DT_SINGLELINE | DT_CENTER | DT_VCENTER | (textToast ? DT_END_ELLIPSIS : 0));
         SelectObject(hdc, old);
         COLORREF border = dark ? RGB(66, 66, 66) : kUiFlyoutBorder;
         HBRUSH hbd = CreateSolidBrush(border);

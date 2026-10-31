@@ -12,6 +12,8 @@
 #include <cstring>
 #include <mutex>
 
+#include "../common/settings.h"
+
 namespace lingxi {
 
 namespace {
@@ -130,6 +132,9 @@ void LoadLocked()
             else if (strncmp(k, "activeDays=", 11) == 0) g_data.activeDays = (uint32_t)v;
             else if (strncmp(k, "streak=", 7) == 0) g_data.streakDays = (uint32_t)v;
             else if (strncmp(k, "lastDay=", 8) == 0) g_data.lastDayKey = (uint32_t)v;
+            else if (strncmp(k, "peakChars=", 10) == 0) g_data.peakDayChars = v;
+            else if (strncmp(k, "peakDay=", 8) == 0) g_data.peakDayKey = (uint32_t)v;
+            else if (strncmp(k, "goalDay=", 8) == 0) g_data.goalReachedDay = (uint32_t)v;
         }
         pos = eol + 1;
     }
@@ -142,12 +147,13 @@ void SaveLocked()
     _snprintf_s(b, _TRUNCATE,
         "v=1\r\nday=%u\r\ndayPicks=%llu\r\ndayChars=%llu\r\n"
         "totalPicks=%llu\r\ntotalChars=%llu\r\nactiveDays=%u\r\n"
-        "streak=%u\r\nlastDay=%u\r\n",
+        "streak=%u\r\nlastDay=%u\r\npeakChars=%llu\r\npeakDay=%u\r\ngoalDay=%u\r\n",
         (unsigned)g_data.dayKey, (unsigned long long)g_data.dayPicks,
         (unsigned long long)g_data.dayChars,
         (unsigned long long)g_data.totalPicks, (unsigned long long)g_data.totalChars,
         (unsigned)g_data.activeDays, (unsigned)g_data.streakDays,
-        (unsigned)g_data.lastDayKey);
+        (unsigned)g_data.lastDayKey, (unsigned long long)g_data.peakDayChars,
+        (unsigned)g_data.peakDayKey, (unsigned)g_data.goalReachedDay);
     WriteTextFile(StatsFilePath(), b);
     g_pending = 0;
 }
@@ -187,7 +193,21 @@ void StatsAddPick(const wchar_t* word)
     g_data.totalPicks++;
     g_data.dayChars += cjk;
     g_data.totalChars += cjk;
+    if (g_data.dayChars > g_data.peakDayChars) // 历史最高单日：实时刷新（R8）
+    {
+        g_data.peakDayChars = g_data.dayChars;
+        g_data.peakDayKey = today;
+    }
     if (++g_pending >= 20) SaveLocked(); // 节流落盘：崩溃最多丢 20 次
+}
+
+void StatsMarkGoalReached(uint32_t dayKey)
+{
+    std::lock_guard<std::mutex> lk(g_mtx);
+    LoadLocked();
+    if (g_disabled || g_data.goalReachedDay == dayKey) return;
+    g_data.goalReachedDay = dayKey;
+    SaveLocked();
 }
 
 void StatsFlush()
@@ -223,17 +243,34 @@ std::wstring BuildStatsText()
                L"退出时保存。）\r\n";
     wchar_t day[16];
     FormatDayKey(d.dayKey, day, 16);
+    wchar_t peakDay[16];
+    FormatDayKey(d.peakDayKey, peakDay, 16);
     wchar_t buf[512];
     _snwprintf_s(buf, _TRUNCATE,
         L"灵犀输入法 · 打字统计\r\n\r\n"
         L"【今日 %ls】\r\n· 选词：%llu 次\r\n· 上屏：%llu 个汉字\r\n\r\n"
         L"【累计】\r\n· 选词：%llu 次\r\n· 上屏：%llu 个汉字\r\n"
-        L"· 活跃天数：%u 天（连续 %u 天）\r\n",
+        L"· 活跃天数：%u 天（连续 %u 天）\r\n"
+        L"· 历史最高单日：%llu 个汉字（%ls）\r\n",
         day,
         (unsigned long long)d.dayPicks, (unsigned long long)d.dayChars,
         (unsigned long long)d.totalPicks, (unsigned long long)d.totalChars,
-        (unsigned)d.activeDays, (unsigned)d.streakDays);
-    return std::wstring(buf) +
+        (unsigned)d.activeDays, (unsigned)d.streakDays,
+        (unsigned long long)d.peakDayChars, peakDay);
+    std::wstring text(buf);
+    // 每日目标进度行（R8）：目标=0 关闭不显示；达成后带 ✓ 标记
+    uint32_t goal = LoadSettings().dailyCharGoal;
+    if (goal > 0)
+    {
+        unsigned pct = d.dayChars >= goal ? 100 :
+                       (unsigned)(d.dayChars * 100 / goal);
+        wchar_t g[96];
+        _snwprintf_s(g, _TRUNCATE, L"\r\n【今日目标】%llu / %u 字（%u%%）%ls\r\n",
+                     (unsigned long long)d.dayChars, (unsigned)goal, pct,
+                     d.dayChars >= goal ? L"✓ 已达成" : L"");
+        text += g;
+    }
+    return text +
         L"\r\n（口径：候选窗选词上屏；每 20 次选词落盘，退出时保存。"
         L"清零不可恢复。）\r\n";
 }

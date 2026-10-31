@@ -7,9 +7,11 @@
 #include "uiinternal.h" // 含 BuildDiagnosticsText（main.cpp 实现，导出诊断报告复用）
 
 #include <windows.h>
+#include <commdlg.h>
 #include <string>
 
 #include "../common/log.h"
+#include "../common/settings.h"
 #include "usagestats.h"
 
 namespace lingxi {
@@ -24,6 +26,75 @@ constexpr int kStatsBarH = 48;        // 底部按钮条高
 constexpr int IDC_STATS_REFRESH = 360;
 constexpr int IDC_STATS_RESET = 361;
 constexpr int IDC_STATS_EXPORT = 362;
+constexpr int IDC_STATS_CSV = 363;    // 统计快照 CSV 导出（R8）
+
+// YYYYMMDD → "2026-10-31"（0 → "-"）
+void FormatStatDay(uint32_t key, wchar_t* out, size_t cch)
+{
+    if (key == 0) { wcscpy_s(out, cch, L"-"); return; }
+    _snwprintf_s(out, cch, _TRUNCATE, L"%u-%02u-%02u",
+                 key / 10000, (key / 100) % 100, key % 100);
+}
+
+// 导出统计快照 CSV（R8）：指标/数值 两列，UTF-8 带 BOM（Excel 直开中文
+// 不乱码），\r\n 行尾；另存为对话框选位置，取消不写。
+void StatsExportCsv(HWND h)
+{
+    UsageData d = StatsSnapshot();
+    wchar_t path[MAX_PATH] = L"lingxi-stats.csv";
+    OPENFILENAMEW ofn{ sizeof(ofn) };
+    ofn.hwndOwner = h;
+    ofn.lpstrFilter = L"CSV 文件 (*.csv)\0*.csv\0所有文件 (*.*)\0*.*\0";
+    ofn.lpstrFile = path;
+    ofn.nMaxFile = MAX_PATH;
+    ofn.lpstrDefExt = L"csv";
+    ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
+    if (!GetSaveFileNameW(&ofn)) return;
+    wchar_t day[16], peak[16];
+    FormatStatDay(d.dayKey, day, 16);
+    FormatStatDay(d.peakDayKey, peak, 16);
+    wchar_t body[640];
+    _snwprintf_s(body, _TRUNCATE,
+        L"指标,数值\r\n"
+        L"统计日期,%ls\r\n"
+        L"今日选词次数,%llu\r\n"
+        L"今日上屏汉字数,%llu\r\n"
+        L"累计选词次数,%llu\r\n"
+        L"累计上屏汉字数,%llu\r\n"
+        L"活跃天数,%u\r\n"
+        L"连续使用天数,%u\r\n"
+        L"历史最高单日汉字数,%llu\r\n"
+        L"最高单日日期,%ls\r\n"
+        L"今日目标(字),%u\r\n",
+        day,
+        (unsigned long long)d.dayPicks, (unsigned long long)d.dayChars,
+        (unsigned long long)d.totalPicks, (unsigned long long)d.totalChars,
+        (unsigned)d.activeDays, (unsigned)d.streakDays,
+        (unsigned long long)d.peakDayChars, peak,
+        (unsigned)LoadSettings().dailyCharGoal);
+    std::string u8 = "\xEF\xBB\xBF"; // BOM
+    int n = WideCharToMultiByte(CP_UTF8, 0, body, -1, NULL, 0, NULL, NULL);
+    if (n > 1)
+    {
+        std::string s((size_t)n - 1, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, body, -1, &s[0], n, NULL, NULL);
+        u8 += s;
+    }
+    bool ok = false;
+    HANDLE hf = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                            FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hf != INVALID_HANDLE_VALUE)
+    {
+        DWORD written = 0;
+        ok = WriteFile(hf, u8.data(), (DWORD)u8.size(), &written, NULL) &&
+             written == u8.size();
+        CloseHandle(hf);
+    }
+    MessageBoxW(h, ok ? (L"统计 CSV 已导出到：\n" + std::wstring(path)).c_str()
+                      : L"导出失败（无法写入文件）。",
+                L"导出统计 CSV", MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONWARNING));
+    LX_LOG(L"ui", L"统计 CSV 导出 ok=%d path=%ls", (int)ok, path);
+}
 
 void StatsRefreshText()
 {
@@ -106,9 +177,11 @@ LRESULT CALLBACK StatsWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         HWND b1 = GetDlgItem(h, IDC_STATS_REFRESH);
         HWND b2 = GetDlgItem(h, IDC_STATS_RESET);
         HWND b3 = GetDlgItem(h, IDC_STATS_EXPORT);
+        HWND b4 = GetDlgItem(h, IDC_STATS_CSV);
         if (b1) MoveWindow(b1, 12, y, 100, 32, TRUE);
         if (b2) MoveWindow(b2, 120, y, 100, 32, TRUE);
         if (b3) MoveWindow(b3, 228, y, 160, 32, TRUE);
+        if (b4) MoveWindow(b4, 396, y, 110, 32, TRUE);
         return 0;
     }
     if (msg == WM_COMMAND)
@@ -129,6 +202,9 @@ LRESULT CALLBACK StatsWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             return 0;
         case IDC_STATS_EXPORT:
             StatsExportReport(h);
+            return 0;
+        case IDC_STATS_CSV:
+            StatsExportCsv(h);
             return 0;
         }
         return 0;
@@ -173,7 +249,7 @@ void ShowUsageStatsWindow(HINSTANCE hInst)
     wc.lpszClassName = L"LingxiStats";
     RegisterClassW(&wc);
 
-    const int W = 460, H = 400;
+    const int W = 560, H = 400;
     POINT pt;
     GetCursorPos(&pt);
     HMONITOR mon = MonitorFromPoint(pt, MONITOR_DEFAULTTONEAREST);
@@ -200,11 +276,12 @@ void ShowUsageStatsWindow(HINSTANCE hInst)
     SendMessageW(g_hStatsEdit, WM_SETFONT, (WPARAM)g_statsFont, TRUE);
     SetWindowTextW(g_hStatsEdit, BuildStatsText().c_str());
     SendMessageW(g_hStatsEdit, EM_SETSEL, 0, 0);
-    // 底部按钮条：刷新 / 清零 / 导出诊断报告
-    struct { int id; const wchar_t* text; int x, w; } btns[3] = {
+    // 底部按钮条：刷新 / 清零 / 导出诊断报告 / 导出 CSV
+    struct { int id; const wchar_t* text; int x, w; } btns[4] = {
         { IDC_STATS_REFRESH, L"刷新", 12, 100 },
         { IDC_STATS_RESET, L"清零...", 120, 100 },
         { IDC_STATS_EXPORT, L"导出诊断报告...", 228, 160 },
+        { IDC_STATS_CSV, L"导出 CSV...", 396, 110 },
     };
     for (const auto& b : btns)
     {

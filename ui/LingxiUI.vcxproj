@@ -70,6 +70,7 @@
     <ClCompile Include="helpwnd.cpp" />
     <ClCompile Include="statswnd.cpp" />
     <ClCompile Include="settingsbackup.cpp" />
+    <ClCompile Include="autobackup.cpp" />
     <ClCompile Include="usagestats.cpp" />
     <ClCompile Include="hotphraseui.cpp" />
     <ClCompile Include="phraseui.cpp" />
@@ -86,6 +87,7 @@
     <ClInclude Include="uiinternal.h" />
     <ClInclude Include="candwnd_internal.h" />
     <ClInclude Include="usagestats.h" />
+    <ClInclude Include="autobackup.h" />
     <ClInclude Include="hotphraseui.h" />
     <ClInclude Include="phraseui.h" />
     <ClInclude Include="blockedui.h" />
