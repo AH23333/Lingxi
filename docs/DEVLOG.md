@@ -959,5 +959,15 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **疑点排除**：tray 2020 打开备份文件夹已先 CreateDirectoryW（无缺陷）；RotateOldBackups 已校验 FILE_ATTRIBUTE_DIRECTORY；StatsMarkGoalReached 落盘失败时内存 goalReachedDay 已置位不会重复弹 toast；BackupInto"全源缺失"路径（全新安装首选拷空）由"成败都认账"覆盖，次日全量补齐。
 - 门禁：build Debug 零错 + engine_test 沙箱 **224/0** + fix_readings 缺口 0，全后台。
 
+### 批次 C：剪贴板历史窗（`66bb3d0`）
+
+- **新自包含模块 ui/clipboardui.{h,cpp}**（autobackup/usagestats 模式：自己的文件 IO 与监听窗，不依赖 uiinternal.h）：隐藏监听窗（**普通隐藏 POPUP 而非 HWND_MESSAGE 消息专用窗**——WM_CLIPBOARDUPDATE 虽是直投而非广播，消息专用窗场景文档未承诺）+ AddClipboardFormatListener，全局复制文本自动入史。
+- **捕获口径**：纯空白跳过；单条 ≤2000 字符截断；与最近一条相同跳过（历史窗复制回声去重）；已存在前移不重记；上限 50 条。
+- **存储 clipboard.dat**：magic LXCB + 版本 + 条数 + 记录 [u32 字节长][i64 本地时间][UTF-8]；加载全程边界校验（截断文件保留已读部分）；保存 .tmp+MoveFileExW 原子替换（0677401 审计同模式）。
+- **节流**：捕获每 5 次落盘 + ClipboardFlush（WM_ENDSESSION/WM_DESTROY）补写；删除/清空立即落盘。
+- **历史窗**（blockedui 模板）：列表（"MM-DD HH:MM 预览"，换行折叠空格、64 字符省略号）+ 只读全文预览框（选中实时刷新，空态/未选态文案）+ 复制选中/删除选中/清空/关闭；**双击条目直接复制回剪贴板**；Esc 三路关窗（窗体/列表/预览子类化）。
+- **接线**：托盘 2021"剪贴板历史...（Ctrl+Alt+V）"；全局热键 Ctrl+Alt+V（kTrayHotkeyClip=5，占用容错）；kHelpText 全量同步；沙箱停用监听与窗口。
+- 门禁：build Debug 零错 + engine_test 沙箱 **224/0** + fix_readings 缺口 0，全后台。
+
 
 
