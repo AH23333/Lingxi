@@ -77,8 +77,32 @@ std::wstring Utf8ToW(const std::string& s)
 HWND g_hHpWnd = nullptr;
 HWND g_hHpList = nullptr;
 WNDPROC g_oldHotEditProc = nullptr;
+WNDPROC g_oldHpEditProc = nullptr;
+WNDPROC g_oldHpListProc = nullptr;
 uint32_t g_capMods = 0; // 录制框当前捕获（0 = 未捕获）
 uint32_t g_capVk = 0;
+
+// Esc 关窗（焦点在短语框/列表时子类化拦截；与"关闭"同语义=隐藏复用）。
+// 注意：热键录制框（HotEditProc）的 Esc 语义是清空录制，不在此列。
+LRESULT CALLBACK HpEscEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE)
+    {
+        ShowWindow(GetParent(h), SW_HIDE);
+        return 0;
+    }
+    return CallWindowProcW(g_oldHpEditProc, h, msg, wp, lp);
+}
+
+LRESULT CALLBACK HpEscListProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE)
+    {
+        ShowWindow(GetParent(h), SW_HIDE);
+        return 0;
+    }
+    return CallWindowProcW(g_oldHpListProc, h, msg, wp, lp);
+}
 
 // WinUI 风格：微软雅黑 UI 12pt（进程内复用）
 HFONT HpFont()
@@ -129,23 +153,25 @@ std::vector<HotPhrase> LoadEntries()
     while (out.size() < kMaxHotPhrases)
     {
         size_t eol = text.find(L'\n', pos);
+        bool last = (eol == std::wstring::npos); // 先记 EOF，过滤分支不得跳过收尾 break
         std::wstring line = text.substr(pos,
-            (eol == std::wstring::npos ? text.size() : eol) - pos);
-        pos = (eol == std::wstring::npos) ? text.size() : eol + 1;
+            (last ? text.size() : eol) - pos);
+        pos = last ? text.size() : eol + 1;
         if (!line.empty() && line.back() == L'\r') line.pop_back();
         if (!line.empty() && line[0] == L'\xFEFF') line.erase(0, 1); // BOM
         size_t tab = line.find(L'\t');
-        if (tab == std::wstring::npos) continue;
         size_t comma = line.find(L',');
-        if (comma == std::wstring::npos || comma > tab) continue;
-        HotPhrase hp;
-        hp.mods = (uint32_t)wcstoul(line.substr(0, comma).c_str(), NULL, 10);
-        hp.vk = (uint32_t)wcstoul(line.substr(comma + 1, tab - comma - 1).c_str(), NULL, 10);
-        hp.phrase = line.substr(tab + 1);
-        hp.mods &= (MOD_ALT | MOD_CONTROL | MOD_SHIFT); // 归一化：丢弃杂位
-        if (hp.vk && !hp.phrase.empty() && (hp.mods & (MOD_CONTROL | MOD_ALT)))
-            out.push_back(std::move(hp));
-        if (eol == std::wstring::npos) break;
+        if (tab != std::wstring::npos && comma != std::wstring::npos && comma < tab)
+        {
+            HotPhrase hp;
+            hp.mods = (uint32_t)wcstoul(line.substr(0, comma).c_str(), NULL, 10);
+            hp.vk = (uint32_t)wcstoul(line.substr(comma + 1, tab - comma - 1).c_str(), NULL, 10);
+            hp.phrase = line.substr(tab + 1);
+            hp.mods &= (MOD_ALT | MOD_CONTROL | MOD_SHIFT); // 归一化：丢弃杂位
+            if (hp.vk && !hp.phrase.empty() && (hp.mods & (MOD_CONTROL | MOD_ALT)))
+                out.push_back(std::move(hp));
+        }
+        if (last) break;
     }
     return out;
 }
@@ -301,6 +327,13 @@ LRESULT CALLBACK HpWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         SetBkColor((HDC)wParam, kUiCard);
         SetTextColor((HDC)wParam, kUiText);
         return (LRESULT)GetStockObject(WHITE_BRUSH);
+    case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE)
+        {
+            ShowWindow(hwnd, SW_HIDE); // 窗体自身持焦点时 Esc 关窗
+            return 0;
+        }
+        break;
     case WM_CLOSE:
         ShowWindow(hwnd, SW_HIDE);
         return 0;
@@ -369,6 +402,7 @@ void ShowHotPhraseWindow(HINSTANCE hInst, HWND hParent)
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
         pad, y, W - pad * 2 - 12, listH, g_hHpWnd, (HMENU)(INT_PTR)IDC_HP_LIST, hInst, NULL);
     SendMessageW(g_hHpList, WM_SETFONT, (WPARAM)font, TRUE);
+    g_oldHpListProc = (WNDPROC)SetWindowLongPtrW(g_hHpList, GWLP_WNDPROC, (LONG_PTR)HpEscListProc);
     y += listH + 12;
 
     mkLabel(L"组合键（在框内按下，如 Ctrl+Alt+1；Esc 清空）：", pad, y, W - pad * 2);
@@ -383,6 +417,7 @@ void ShowHotPhraseWindow(HINSTANCE hInst, HWND hParent)
         WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
         pad + 212, y, W - pad * 2 - 212 - 12, rowH, g_hHpWnd, (HMENU)(INT_PTR)IDC_HP_PHRASE, hInst, NULL);
     SendMessageW(hPh, WM_SETFONT, (WPARAM)font, TRUE);
+    g_oldHpEditProc = (WNDPROC)SetWindowLongPtrW(hPh, GWLP_WNDPROC, (LONG_PTR)HpEscEditProc);
     y += rowH + 8;
 
     int bx = pad;

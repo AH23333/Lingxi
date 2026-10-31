@@ -73,6 +73,29 @@ std::wstring Utf8ToW(const std::string& s)
 
 HWND g_hPhWnd = nullptr;
 HWND g_hPhList = nullptr;
+WNDPROC g_oldPhEditProc = nullptr;
+WNDPROC g_oldPhListProc = nullptr;
+
+// Esc 关窗（焦点在输入框/列表时子类化拦截；与"关闭"同语义=隐藏复用）
+LRESULT CALLBACK PhEscEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE)
+    {
+        ShowWindow(GetParent(h), SW_HIDE);
+        return 0;
+    }
+    return CallWindowProcW(g_oldPhEditProc, h, msg, wp, lp);
+}
+
+LRESULT CALLBACK PhEscListProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
+{
+    if (msg == WM_KEYDOWN && wp == VK_ESCAPE)
+    {
+        ShowWindow(GetParent(h), SW_HIDE);
+        return 0;
+    }
+    return CallWindowProcW(g_oldPhListProc, h, msg, wp, lp);
+}
 
 HFONT PhFont()
 {
@@ -219,6 +242,13 @@ LRESULT CALLBACK PhWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         SetBkColor((HDC)wParam, kUiCard);
         SetTextColor((HDC)wParam, kUiText);
         return (LRESULT)GetStockObject(WHITE_BRUSH);
+    case WM_KEYDOWN:
+        if (wParam == VK_ESCAPE)
+        {
+            ShowWindow(hwnd, SW_HIDE); // 窗体自身持焦点时 Esc 关窗
+            return 0;
+        }
+        break;
     case WM_CLOSE:
         ShowWindow(hwnd, SW_HIDE);
         return 0;
@@ -238,20 +268,22 @@ std::vector<PhraseEntry> LoadPhraseEntries()
     while (out.size() < kMaxPhraseEntries)
     {
         size_t eol = text.find(L'\n', pos);
+        bool last = (eol == std::wstring::npos); // 先记 EOF，过滤分支不得跳过收尾 break
         std::wstring line = text.substr(pos,
-            (eol == std::wstring::npos ? text.size() : eol) - pos);
-        pos = (eol == std::wstring::npos) ? text.size() : eol + 1;
+            (last ? text.size() : eol) - pos);
+        pos = last ? text.size() : eol + 1;
         if (!line.empty() && line.back() == L'\r') line.pop_back();
         if (!line.empty() && line[0] == L'\xFEFF') line.erase(0, 1); // BOM
         size_t tab = line.find(L'\t');
-        if (tab == std::wstring::npos) continue;
-        PhraseEntry e;
-        e.abbrev = line.substr(0, tab);
-        e.phrase = line.substr(tab + 1);
-        if (!NormalizeAbbrev(e.abbrev) || e.phrase.empty() || e.phrase.size() > kMaxPhraseLen)
-            continue;
-        out.push_back(std::move(e));
-        if (eol == std::wstring::npos) break;
+        if (tab != std::wstring::npos)
+        {
+            PhraseEntry e;
+            e.abbrev = line.substr(0, tab);
+            e.phrase = line.substr(tab + 1);
+            if (NormalizeAbbrev(e.abbrev) && !e.phrase.empty() && e.phrase.size() <= kMaxPhraseLen)
+                out.push_back(std::move(e));
+        }
+        if (last) break;
     }
     return out;
 }
@@ -310,6 +342,7 @@ void ShowPhraseWindow(HINSTANCE hInst, HWND hParent)
         WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOTIFY | LBS_NOINTEGRALHEIGHT,
         pad, y, W - pad * 2 - 12, listH, g_hPhWnd, (HMENU)(INT_PTR)IDC_PH_LIST, hInst, NULL);
     SendMessageW(g_hPhList, WM_SETFONT, (WPARAM)font, TRUE);
+    g_oldPhListProc = (WNDPROC)SetWindowLongPtrW(g_hPhList, GWLP_WNDPROC, (LONG_PTR)PhEscListProc);
     y += listH + 12;
 
     mkLabel(L"缩写（2-16 位字母）：", pad, y, 200);
@@ -323,6 +356,9 @@ void ShowPhraseWindow(HINSTANCE hInst, HWND hParent)
         WS_CHILD | WS_VISIBLE | ES_AUTOHSCROLL,
         pad + 212, y, W - pad * 2 - 212 - 12, rowH, g_hPhWnd, (HMENU)(INT_PTR)IDC_PH_TEXT, hInst, NULL);
     SendMessageW(hTx, WM_SETFONT, (WPARAM)font, TRUE);
+    // 两个 EDIT 同类共享原类过程，同一份 g_oldPhEditProc
+    g_oldPhEditProc = (WNDPROC)SetWindowLongPtrW(hAb, GWLP_WNDPROC, (LONG_PTR)PhEscEditProc);
+    SetWindowLongPtrW(hTx, GWLP_WNDPROC, (LONG_PTR)PhEscEditProc);
     y += rowH + 8;
 
     int bx = pad;

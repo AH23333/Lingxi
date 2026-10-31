@@ -882,3 +882,13 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - 门禁：build 零错；regress ALL PASS（regress-2180511821）；smoke1 15/15 + smoke2 8/8；probe 基线全符。
 - **假红实录（PITFALLS #19/#33/#60 时序抖动类，非新坑）**：首跑 regress 双红（deep_test 内部 3 连败：attempt1 pinyin-settle 红连锁 25 FAIL、attempt2/3 仅 T10/T12 各 2 FAIL；e2e 三次 settle 失败点各异）。原样复跑即绿（deep_test 首试直绿；e2e 第 3 次过——**绿跑前两试仍 settle 红**，抖动未消失）。**纠偏：与"手清宿主"无因果**——regress.cmd 94/107 行本就先 taskkill 再跑各套件，两跑起点同为零宿主；非代码回归（改动仅菜单项+文件 IO 助手，TSF/管道/引擎路径零触碰）。教训：settle 类双红先原样复跑一次再排查，勿抢因果。
 
+## 2026-10-31 · 三管理窗 Esc 统一 + 行解析 EOF 死循环修复
+
+两线并一轮：交互收尾（Esc 通则）+ smoke3 暴露的真实挂死 bug 修复，引擎/公共 API 零改动。
+
+- **三窗 Esc 统一**：blockedui（BlEscEditProc/BlEscListProc + g_oldBlEditProc/g_oldBlListProc）、phraseui（PhEsc*，两 EDIT 共享 g_oldPhEditProc）、hotphraseui（HpEsc*，**录制框保留 Esc=清空录制语义**——录制流中 Esc 另有含义不清空词框）——列表框 Esc=隐藏复用窗体（与 X 按钮同路），输入框焦点时 Esc 经子类化同样隐藏；三窗 WndProc WM_KEYDOWN Esc case 齐备。帮助文本（helpwnd.cpp kHelpText）词典与学习段 +3 行：自定义短语/快捷短语 Esc 说明 + "管理窗 Esc"通则。
+- **挂死修复（PITFALLS #69，本批核心）**：smoke3 首跑实证——屏蔽窗首次"添加"后宿主 UI 线程 100% CPU 死循环（SendMessage 全无响应）。无 cdb 环境下自建取证链（tmp/threaddiag.cs：16 对齐 CONTEXT → Rip 采样 → dbghelp 跨进程符号化 → 项目帧过滤栈扫描）定位 blockedui.cpp LoadBlockedWords 行循环：EOF 虚拟空行命中 `continue` 旁路收尾 `break`，pos 停滞 → 死循环；SaveBlockedWords 尾 `\r\n` 使"首添加后 RefreshBlList 必挂"成为确定性路径。同型三处修齐（blockedui/phraseui/hotphraseui，统一"先记 last 再过滤"结构）；userdictwnd 与引擎解析器核查安全。
+- **工装**：tmp/smoke1.ps1 热键环境护栏（RegisterHotKey 探测 1409 → 第 7 步降级 SKIP；本轮 StarMark 已退出故 15/15 真命中）；tmp/smoke3.ps1 屏蔽词走查 18 项新增（开窗/添加三端断言/重复添加/删除/清空确认/Esc 双路/复用/文件备份恢复）——dup 步须重填词框（首次成功添加即清框），首跑唯一红项即此脚本 bug；tmp/threaddiag.cs 线程取证器（`threaddiag.exe <pid> [tid] [samples]`，后续任何线程级取证可复用）。
+- 门禁：build 零错；engine_test 220 / fix_readings / deep_test 34/34 / e2e exit=0；smoke1 15/15 + smoke2 8/8 + smoke3 18/18；probe 基线全符（gylg=4 候 / gylgl=供应链管理 1 候 / xian 首选西安）。
+- 假红实录（PITFALLS #70）：regress 首跑 deep_test 25 FAIL + e2e 三连败——taskkill 后 DLL 重生宿主的 ~12s 初始化窗口被 deep_test 全程撞上（宿主就绪后单独复跑 34/34 直绿）；e2e 另被 Steam 弹窗/用户活跃终端抢前台与输入法状态竞争，最终 exit=0 收尾（pinyin mode settle 过）。
+

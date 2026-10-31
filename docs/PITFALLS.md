@@ -399,3 +399,22 @@
 - **根因**：SetForegroundWindow 有前台锁——仅前台进程/最近收输入的进程有权设置前台；e2e 由 IDE（ZCode）内隐藏 console 拉起，无前台权 → 调用**静默失败** → TSF AssociateFocus 不绑定（CTF 键盘路由依赖真实 Win32 焦点）→ GetFocus 恒 NULL。前夜恰逢其他窗口持前台时侥幸通过。诊断关键：foreWnd 类名 Chrome_WidgetWin_1 一度误导向 Chrome——Electron/CEF 应用全用此类名，按窗口 PID 反查才知是 IDE 本尊。
 - **正确做法**：无人值守测试宿主抢前台一律 AttachThreadInput(myTid, foreTid, TRUE) → SetForegroundWindow/SetFocus → detach（tools/e2e/e2e.cpp ForceForeground，`20b9f9f`）；修后同环境 e2e attempt 1 直绿。窗口类名 ≠ 进程名——Chrome_WidgetWin_1 也属于 Edge/Electron IDE，先 GetWindowThreadProcessId 反查再下结论。
 - **规约**：涉及真实焦点路由（TSF/键盘前台）的自动化，"前台权"是环境输入的一部分——跨会话结果突变先查谁持前台（GetForegroundWindow+PID 归属），再疑代码。
+
+### 68. 第三方应用抢注全局热键——宿主 RegisterHotKey 静默降级，smoke 门禁假红 ⭐⭐
+- **症状**：smoke1 稳定 14/15（仅"help window opens via Ctrl+Alt+H"红）；宿主日志双注册失败"组合键被其他程序占用"（Ctrl+Alt+P 与 H 均 ERROR_ALREADY_EXISTS 1409）；时间线锁定：最后绿 11:47 → StarMark.UI 11:49:08 启动 → 首红 11:58。
+- **根因**：全局热键是**独占系统资源**——第三方应用（StarMark）启动即抢注 Ctrl+Alt+P/H，宿主 RegisterHotKey 静默走降级路径（托盘中键仍可开帮助——功能没坏，只是热键没了）；smoke 断言"热键必中"把环境冲突当代码缺陷。第三方应用不可杀，冲突无法消解只能检测降级。
+- **正确做法**：smoke1.ps1 在 taskkill 宿主后、启动前探测 `RegisterHotKey(NULL, id, MOD_CONTROL|MOD_ALT|MOD_NOREPEAT, 'H')`：返回 1409 → 该步降级 SKIP（环境占用），0 → 照常断言并 UnregisterHotKey 还场。探测必须抢在宿主启动前（宿主自身注册会占位假阴）。
+- **规约**：全局热键类断言必须有环境预检+SKIP 降级；热键红先探测归属（0=可用/1409=被占）再疑代码；"降级路径可用"（托盘中键）与"热键命中"分开断言，前者测代码后者测环境。
+
+### 69. 行解析 continue 旁路 EOF break——UI 线程 100% CPU 死循环挂死（三处同型）⭐⭐⭐
+- **症状**：屏蔽词管理窗首次"添加"后整窗永久无响应；UI 线程单核 100% Running（3s CPU=2.97s）持续数分钟；探针 list count=0/status=[] 全为假零。smoke2 走查同型路径侥幸未触（phrases/hotphrases 文件当时不存在）。
+- **根因**：LoadBlockedWords 行循环 `if (line.empty() || ...) continue;` 在 **EOF 虚拟空行**命中时跳过收尾 `if (eol==npos) break;`，而 pos 已停在 text.size() 永不推进 → 死循环。SaveBlockedWords 每词尾写 `\r\n`，"文件以 \n 结尾"恒真 → **首添加后 RefreshBlList 必挂**；开窗不挂纯因当时 blocked.txt 不存在（ReadFileBytes 早退）。同型潜伏三处：blockedui/phraseui/hotphraseui 各自 Load*；安全对照：userdictwnd `while(pos<text.size())`（pos 推进不变量挂循环条件）与引擎 `Split(raw,'\n')` range-for。
+- **修法**：三处统一"先记 EOF 再过滤"——`bool last=(eol==npos)` 提前到循环体首行，过滤改嵌套 if 不用 continue，收尾 `if (last) break;` 结构上不可旁路。
+- **取证链（无 cdb/windbg 环境的线程级取证，工具沉淀 tmp/threaddiag.cs）**：①**探针假零**——SendMessageTimeoutW 不查返回值，out 参数保持初值 → count=0/status=[] 假象（SMTO_ABORTIFHUNG 对已挂线程立即返 FALSE）；探活必须查返回值或用原生 SendMessage 验证。②**CONTEXT 16 字节对齐**——GetThreadContext 要求缓冲 16 对齐，.NET/PS 堆对象仅 8 对齐 → ERROR_NOACCESS(998) 随机出现；AllocHGlobal+手工对齐后稳定。③**x64 CONTEXT 布局**——ContextFlags/MxCsr 为 DWORD64@0x30/0x38，Rip@**0xF8**，XMM 区@0x100（误读 0x100 得 0x68007400000000 = UTF-16 'h''t' 的 XMM 残留，一度像线索实为陷阱）。④**dbghelp 跨进程符号化**——SymInitialize+SymLoadModuleExW(宿主 exe+PDB)+SymFromAddr/SymGetLineFromAddrW64 → 函数名+源码行号；栈扫描按"[D:\...\LingxiIme"行号前缀过滤掉 CRT/std 内联噪声帧；栈上残留函数指针（BlEscEditProc+0x0）不是真返回地址，按帧语义甄别。⑤C# 结构体 P/Invoke 三坑：`base` 是关键字、out 参数失败路径未赋值、IntPtr 无 ToInt64()。
+- **规约**：行解析循环写法守则——EOF break 不可被过滤 continue 旁路（先记 last，或循环条件挂 pos<size 推进不变量）；"保存必写尾 \n"+"EOF 虚拟空行 continue"组合是确定性挂死配方，CR 时一眼扫；UI 线程 100% 单核≠死锁（死锁 CPU≈0），先采样 RIP 再谈锁。
+
+### 70. regress taskkill→DLL 重生宿主的 ~12s 初始化窗口——deep_test/e2e 大面积假红 ⭐⭐
+- **症状**：regress 首跑 deep_test 25 FAIL（composition 全空、noRaw=1）/e2e 三连败，engine_test/fix_readings 照绿；宿主就绪后单独复跑 deep_test 34/34 直绿、e2e exit=0。
+- **根因**：regress.cmd 94/107 行 taskkill 宿主后立即起套件；7 进程 IME DLL 1 秒内重生宿主（#66），新宿主引擎+LLM 初始化 ~12s（LoadUserDict+BuildUserInitIndex+模型加载）——deep_test 全程撞未就绪窗口（组合全空如引擎未挂载）。e2e 另受用户活跃会话干扰：前台被 Steam 弹窗（SDL_app）/用户终端（CASCADIA）轮番抢、系统输入法状态与用户实时打字互相竞争（"pinyin mode settle"项）。
+- **正确做法**：deep_test/e2e 红时先核宿主 StartTime+CPU 是否刚重生（<15s 勿信），再单独复跑该套件（宿主就绪后）；用户活跃时段的 settle/焦点类断言天然抖动，attempt 级重试内仍红则等静置窗口或降级（e2e 自带 LINGXI_PINYIN=0 跳过 pinyin 段的合法开关）。
+- **规约**：宿主依赖型套件缺就绪门（forward event 存在≠引擎就绪）是 regress.cmd 设计债；"刚 taskkill 过宿主"后 15s 内的套件结果不可信；环境干扰三源排序：宿主就绪态→前台归属→输入法全局态，全部排除后才轮到代码。
