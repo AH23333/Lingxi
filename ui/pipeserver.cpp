@@ -8,6 +8,7 @@
 #include "uitheme.h"
 #include "autobackup.h"
 
+#include <atomic>
 #include <thread>
 
 namespace lingxi {
@@ -704,19 +705,26 @@ void PipeServer::ApplyLearn(ClientCtx* c, uint32_t ver, uint32_t index)
     AutoBackupTick();           // 每日数据备份（当日已备/沙箱内部短路，µs 级）
     // 每日字数目标达成提醒（R8 统计增强）：达成当日仅一次候选窗气泡；
     // 目标 0=关闭；沙箱宿主统计全零天然不触发。
+    // goal 读取每 16 次选词才刷新一次缓存：LoadSettings 是全量注册表读
+    // （约 30 项），每次选词都读纯属热路径浪费；原子量防多客户端线程
+    // 竞态，读到新旧值均无害（达成检测本身幂等）。
+    static std::atomic<uint32_t> s_goalChecks{0};
+    static std::atomic<uint32_t> s_goalCache{0};
+    if ((++s_goalChecks & 15) == 1)
+        s_goalCache.store(LoadSettings().dailyCharGoal);
     if (_wnd && !word.empty())
     {
-        Settings st = LoadSettings();
-        if (st.dailyCharGoal > 0)
+        uint32_t goal = s_goalCache.load();
+        if (goal > 0)
         {
             UsageData ud = StatsSnapshot();
-            if (ud.dayChars >= st.dailyCharGoal && ud.goalReachedDay != ud.dayKey)
+            if (ud.dayChars >= goal && ud.goalReachedDay != ud.dayKey)
             {
                 StatsMarkGoalReached(ud.dayKey);
                 _wnd->ShowTextToast(L"今日目标达成");
                 LX_LOG(L"pipe", L"每日目标达成提醒 day=%u chars=%llu goal=%u",
                        (unsigned)ud.dayKey, (unsigned long long)ud.dayChars,
-                       (unsigned)st.dailyCharGoal);
+                       (unsigned)goal);
             }
         }
     }

@@ -5,6 +5,8 @@
 //
 #include "autobackup.h"
 
+#include "../common/log.h"
+
 #include <windows.h>
 #include <mutex>
 #include <string>
@@ -44,20 +46,17 @@ std::wstring DataDirW()
     return std::wstring(exe);
 }
 
-uint32_t TodayDayKey()
+// 单次取时同时给目录后缀与日期键：两次独立 GetLocalTime 在午夜边界会撕裂
+// （suffix 取在 23:59:59.9、dayKey 取在 00:00:00.1 → "认账日期"与"实际备份
+// 目录"差一天，午夜后首次选词被短路，当日漏备份）。
+void TodayBoth(std::wstring& suffix, uint32_t& dayKey)
 {
     SYSTEMTIME st{};
     GetLocalTime(&st);
-    return (uint32_t)st.wYear * 10000 + st.wMonth * 100 + st.wDay;
-}
-
-std::wstring TodaySuffix()
-{
     wchar_t day[16];
-    SYSTEMTIME st{};
-    GetLocalTime(&st);
     _snwprintf_s(day, _TRUNCATE, L"%04u%02u%02u", st.wYear, st.wMonth, st.wDay);
-    return day;
+    suffix = day;
+    dayKey = (uint32_t)st.wYear * 10000 + st.wMonth * 100 + st.wDay;
 }
 
 bool RemoveDirRecursive(const std::wstring& dir)
@@ -103,7 +102,10 @@ void RotateOldBackups(const std::wstring& root)
         RemoveDirRecursive(root + L"\\" + names[i]);
 }
 
-// 备份全部数据文件到 dayDir（存在才拷；FALSE=覆盖式当日幂等）。
+// 备份全部数据文件到 dayDir（存在才拷；FALSE=覆盖式，中断后重跑即补拷）。
+// 成功后写 done.flag 完成标记——跨重启幂等的认账依据是标记而非目录存在：
+// 目录存在可能是上次进程被杀留下的半截备份，按目录认账会让当日备份
+// 永久残缺（缺陷：拷到 2/5 个文件时被杀 → 新实例见目录在 → 直接跳过）。
 // 返回：至少成功拷贝一个文件且无失败。
 bool BackupInto(const std::wstring& dayDir)
 {
@@ -124,6 +126,12 @@ bool BackupInto(const std::wstring& dayDir)
         else
             ok = false; // 个别文件被占用不视为整体失败，但如实上报
     }
+    if (any && ok)
+    {
+        HANDLE h = CreateFileW((dayDir + L"\\done.flag").c_str(), GENERIC_WRITE,
+                               0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
+    }
     return any && ok;
 }
 
@@ -139,11 +147,18 @@ bool AutoBackupNow()
     std::lock_guard<std::mutex> lk(g_mtx);
     EnsureSandboxChecked();
     if (g_sandbox) return false;
+    std::wstring suffix;
+    uint32_t today = 0;
+    TodayBoth(suffix, today);
     const std::wstring root = BackupsDirW();
     CreateDirectoryW(root.c_str(), NULL);
-    bool ok = BackupInto(root + L"\\daily-" + TodaySuffix());
+    bool ok = BackupInto(root + L"\\daily-" + suffix);
+    if (!ok)
+        LX_LOG(L"backup", L"手动备份未完成（文件被占用或无数据文件）");
+    // 成败都认账当日：手动失败由用户看返回值，打字路径不再重试同一失败
+    // （避免每次选词一次文件系统风暴；重启后 done.flag 缺失会自动补拷）。
+    g_doneDay = today;
     RotateOldBackups(root);
-    if (ok) g_doneDay = TodayDayKey();
     return ok;
 }
 
@@ -152,20 +167,27 @@ void AutoBackupTick()
     std::lock_guard<std::mutex> lk(g_mtx);
     EnsureSandboxChecked();
     if (g_sandbox) return;
-    uint32_t today = TodayDayKey();
+    std::wstring suffix;
+    uint32_t today = 0;
+    TodayBoth(suffix, today);
     if (g_doneDay == today) return; // 高频路径短路：今日已备
-    // 进程重启后首次：当日目录已存在（更早实例备的）则直接认账，幂等
-    std::wstring dayDir = BackupsDirW() + L"\\daily-" + TodaySuffix();
+    std::wstring dayDir = BackupsDirW() + L"\\daily-" + suffix;
+    // 进程重启后首次：认账依据=完成标记（更早实例完整备份过），
+    // 不是目录存在——半截备份（无标记）会走到下面补拷全量。
     if (g_doneDay == 0 &&
-        GetFileAttributesW(dayDir.c_str()) != INVALID_FILE_ATTRIBUTES)
+        GetFileAttributesW((dayDir + L"\\done.flag").c_str()) != INVALID_FILE_ATTRIBUTES)
     {
         g_doneDay = today;
         return;
     }
     const std::wstring root = BackupsDirW();
     CreateDirectoryW(root.c_str(), NULL);
-    if (BackupInto(dayDir))
-        g_doneDay = today;
+    // 成败都认账当日：失败（个别文件被占用等）若不认账，每次选词都会
+    // 重跑 5×GetFileAttributes + 5×CopyFileW + 轮换枚举的文件系统风暴；
+    // 当日放弃，重启后因 done.flag 缺失自动补试。
+    if (!BackupInto(dayDir))
+        LX_LOG(L"backup", L"每日备份未完成，当日不再重试 day=%u", (unsigned)today);
+    g_doneDay = today;
     RotateOldBackups(root);
 }
 

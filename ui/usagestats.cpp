@@ -41,16 +41,25 @@ std::wstring StatsFilePath()
     return std::wstring(exe) + L"usage.txt";
 }
 
+// 原子写：先落 .tmp 再改名替换（与引擎字典文件同模式）——
+// CREATE_ALWAYS 直写有两个撕裂窗口：进程中途被杀留下半截 usage.txt（下次
+// 启动解析出部分值）；写入期间备份 CopyFileW / 诊断导出恰好读到空/半截文件。
 bool WriteTextFile(const std::wstring& path, const std::string& text)
 {
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL,
+    const std::wstring tmp = path + L".tmp";
+    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, NULL,
                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) return false;
     DWORD written = 0;
     bool ok = WriteFile(h, text.data(), (DWORD)text.size(), &written, NULL) &&
               written == text.size();
     CloseHandle(h);
-    return ok;
+    if (!ok)
+    {
+        DeleteFileW(tmp.c_str());
+        return false;
+    }
+    return MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
 }
 
 // YYYYMMDD → 前一天（纯日期回退：闰年二月/跨月/跨年）
