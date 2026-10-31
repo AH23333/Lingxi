@@ -1133,3 +1133,28 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 
 - 门禁：build Debug 零错（ImeCore.dll+LingxiUI.exe 全链接）+ engine_test 沙箱 **254/0** + fix_readings 缺口 0，全后台（宿主未动，用户使用期零打扰）。
 - 真机验证押后（runbook 第 6 步，宿主重启后）：v 模式全链（含双拼不触发/退格重触发/Build32 DLL 侧键位）+ 搜索框焦点流转（激活/五路退出/回车上屏后续打字）+ 视觉走查（搜索行布局/长条目小字号）。runbook 回归预期同步 254。
+## 2026-11-01 · 轮 14：前台收口 runbook 执行——smoke5 首跑 12/17 诊断出 1 真 bug + 4 工装坑全修
+
+用户宣告电脑空闲，执行押后的前台收口（宿主重启→build32→regress→smoke 套件）。
+
+### runbook 1-3 步：全量门禁绿
+
+- 宿主重启到新二进制；build32 补齐（Debug32\ImeCore.dll 含 v 模式 composition.cpp 改动）；regress **ALL PASS**（engine_test 254/0 + fix_readings + deep_test + e2e，e2e attempt 1 直绿）。
+
+### smoke5 首跑 12/17——三层根因，一层比一层深
+
+- **工装层 1（H5-H9 五红，脚本驱动法缺陷）**：SetWindowTextW 跨进程赋值不触发 EN_UPDATE（EDIT 输入通知只在 WM_CHAR 用户路径发出）——实时查找链根本没被驱动到，"功能坏了"是假象；配套的 EM_GETSEL out 参跨进程解引用无效（指针在宿主空间写，PS 侧读回恒 0 初值）。修法：TypeInto（EM_SETSEL 0,-1 全选 + 逐字符 WM_CHAR）模拟真实击键；SelOf 空参读返回值（LOWORD/HIWORD 打包）。固化 PITFALLS **#81/#82**。
+- **工装层 2（G5 同款，测试模式撞产品语义）**：5 次复制同一 marker 命中"回声去重"（与最近一条相同跳过）且 g_pending 不增——不满节流 5 次永落盘。修法：5 个互异 marker 使 pending 必跨阈值（首个 marker 随任何一次全量序列化上盘）。
+- **产品层（真 bug，`9bfe8cf` 修复）**：修好脚本后 G5 仍红——活体探针实证真机宿主的 clipboard.dat 零更新，全部捕获落在 tmp\regress-*\userdata 沙箱目录。根因三乘积：regress 的 APPDATA 重定向 + LINGXI_SETTINGS_NS=test 被 e2e 期间 DLL 重生的宿主**带出测试生命周期**，而 main.cpp 生产路径清 LINGXI_SETTINGS_NS（护设置键）后，clipboardui/autobackup 的惰性沙箱自检全部误判"非沙箱"——剪贴板历史与自动备份写进 regress 临时 APPDATA，用户真实数据停更（与 #64 同类但更阴：改写数据流向）。修法：settings 增 SnapshotTestSpawned/WasTestSpawned 三态快照（单一事实源），main.cpp 清除变量前先快照，两模块改读快照。固化 PITFALLS **#83**。修复验证：regress 复跑后新沙箱 userdata 下仅引擎侧 usage/userdict，宿主零写入；干净宿主 5 连拷真实 clipboard.dat 落盘。
+- 工装小坑：git -F 提交标题被 PS 5.1 Out-File 的 BOM 污染（amend 修正），固化 PITFALLS **#84**。
+
+### 真机验证结果（全绿）
+
+- **smoke5 17/17**：G1-G5 无痕门禁（诊断翻转/无痕期不落盘/关无痕恢复记录）；H1-H12 帮助窗查找全链（F3 开查找行/WM_CHAR 输入即跳转 (17,19)/Enter 续找 86/F3 再续 119/未找到反馈/输入复位/Esc 只关查找行/重开状态复位）。
+- **smoke1 15/15 + smoke2 8/8** 复跑绿（新二进制 + 干净宿主回归护栏）。
+- 门禁：build Debug/build32 零错；engine_test **254/0**；fix_readings 缺口 0；regress ALL PASS。
+
+### 押后（runbook 第 6 步）
+
+- 肉眼验收清单须用户在场：v 模式全链（双拼不触发/退格重触发/Build32 DLL 侧键位）、搜索框焦点流转（激活/五路退出/回车上屏后续打字）、频闪 v2/暗色跟随/帮助 Ctrl+F/无痕开关/剪贴板窗视觉走查。
+- 运维修辞：regress 后若宿主为 e2e 派生（剪贴板/备份沙箱停用是**正确**语义），taskkill 重启即恢复生产捕获——runbook 已加"regress 后、smoke 前重启宿主"步骤。

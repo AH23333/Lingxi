@@ -477,3 +477,27 @@
 - **根因**：命令解析优先级别名>函数，gl 是 Get-Location 内置别名且大小写不敏感。
 - **修法**：错误码封装命名避开内置别名（LastErr），或直接内联 Marshal::GetLastWin32Error。
 - **规约**：自定义函数名先对 `Get-Command -CommandType Alias` 核重。
+
+### 81. SetWindowTextW（WM_SETTEXT）不触发 EN_UPDATE——跨进程"输入"驱动 EDIT 控件全静默 ⭐⭐
+- **症状**：smoke5 H5-H9 五连红：SetWindowTextW 查找框后实时查找/未找到反馈/复位全无反应，曾误判"查找功能没做出来"。
+- **根因**：EDIT 控件的 EN_UPDATE/EN_CHANGE 只在**用户敲键路径**（WM_CHAR 等文本变更消息）发出；WM_SETTEXT 是程序性赋值，按设计不产生输入通知——跨进程"替用户打字"用 SetWindowTextW 等于没打。
+- **修法**：真实击键模拟 = SendMessage(EM_SETSEL, 0, -1) 全选备替换 + 逐字符 PostMessage(WM_CHAR, ch)；EN_UPDATE/EN_CHANGE 照常发出，通知链全通。
+- **规约**：驱动 EDIT 类通知功能前先分清"程序赋值"与"用户输入"两条消息路径——断言依赖输入通知（EN_UPDATE/EN_CHANGE/BN_CLICKED）的自动化必须走 WM_CHAR 流，SetWindowTextW 只适合断言纯文本内容。
+
+### 82. EM_GETSEL out 参数跨进程解引用无效——选区读数恒 0 假象 ⭐⭐
+- **症状**：smoke5 H5-H7 选区读数恒 (0,0)，而窗口行为（按钮文案/续找推进）证明选区实际在动——测量全假。
+- **根因**：EM_GETSEL 的 wParam/lParam 是**接收进程地址空间**的指针，系统不为该消息做跨进程编组——宿主往自己空间里"你的指针值"处写，PS 侧变量从未被写（写偏了还可能崩宿主）；读回 0 纯属初值幸存。
+- **修法**：空参读法 `SendMessageW(h, EM_GETSEL, NULL, NULL)`——返回值 DWORD 低字=起点高字=终点（位置须 <65535，长文先核长度）；零指针参数、无编组需求，跨进程安全。
+- **规约**：跨进程窗口消息凡带指针参数（EM_GETSEL/LB_GETTEXT 类）一律不可直接用——改空参返回值打包读法，或 SendMessageTimeout + 回读断言验证写入方归属。
+
+### 83. regress APPDATA 重定向 × DLL 重生宿主 × 惰性沙箱自检顺序——用户真实数据停更 ⭐⭐⭐
+- **症状**：smoke5 G5 假失败顺藤摸瓜：真机宿主的 clipboard.dat 自前夜后零更新，捕获的探针全落在 tmp\regress-*\userdata\ 下（沙箱目录）；自动备份同病（backups 停走）。
+- **根因三乘积**：①regress.cmd 设 `APPDATA=%OUT%\userdata` + `LINGXI_SETTINGS_NS=test`（词典沙箱初衷）；②e2e 期间 taskkill 后 7 进程 IME DLL 重生 LingxiUI，宿主继承两变量**活到测试结束后**（#66 同款）；③main.cpp 生产路径清 LINGXI_SETTINGS_NS 护设置键（10-29 事故修复），但 clipboardui/autobackup 的沙箱自检是**惰性读环境**——发生在清除之后，误判"非沙箱"→ 剪贴板捕获/备份开进沙箱 APPDATA，用户真实文件永久停更。
+- **修法（`9bfe8cf`）**：settings 新增 SnapshotTestSpawned/WasTestSpawned 三态缓存（单一事实源）；main.cpp 清除变量**前**先快照；两模块改读快照不再各自读环境。e2e 派生宿主从此剪贴板/备份全停（沙箱正确语义）。
+- **规约**：清除式防御（clear env）与惰性自检（lazy read env）组合必出时序洞——先快照再清除，消费方读快照；环境沙箱的边界是**进程边界+重生链**，任何"测试设的环境变量"都要假设会被常驻进程带出测试生命周期（#64 的 APPDATA 版本，比 NS 版更阴：它改写数据流向而非 merely 读旧值）。
+
+### 84. PS 5.1 Out-File -Encoding utf8 带 BOM——git commit -F 标题首字符成 ﻿ ⭐
+- **症状**：`git log --oneline` 新提交标题显示 ﻿fix:...，BOM 混进 subject；此前提交无此问题。
+- **根因**：PS 5.1 `Out-File -Encoding utf8` 恒写 BOM（PS 7 才有 utf8NoBOM）；git -F 原样吃进，首行 BOM 落进 subject。
+- **修法**：写 git message 文件用 `[IO.File]::WriteAllText(path, text, (New-Object Text.UTF8Encoding($false)))`；已发生则 `git commit --amend`（未推送时）重建。
+- **规约**：git -F 文件写法（#76）补一条——UTF-8 无 BOM 显式编码；提交后 `git log --format='%h %s' -1` 肉眼核首字符。
