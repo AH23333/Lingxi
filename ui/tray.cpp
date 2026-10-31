@@ -4,7 +4,8 @@
 // - 隐藏消息窗口（LingxiUIMainWnd）承载托盘回调/热键/定时器；
 //   explorer 重启自动恢复图标（TaskbarCreated）。
 // - 左键：开/关设置窗；右键：菜单；中键：使用帮助。
-// - Ctrl+Alt+P：切换暂停预测；Ctrl+Alt+H：打开使用帮助。
+// - Ctrl+Alt+P：切换暂停预测；Ctrl+Alt+H：打开使用帮助；
+//   Ctrl+Alt+V：剪贴板历史。
 //
 #include "settingsui.h"
 #include "uiinternal.h"
@@ -17,6 +18,7 @@
 #include "../common/settings.h"
 #include "autobackup.h"
 #include "blockedui.h"
+#include "clipboardui.h"
 #include "usagestats.h"
 
 namespace lingxi {
@@ -27,6 +29,7 @@ constexpr wchar_t kMainWndClass[] = L"LingxiUIMainWnd";
 constexpr UINT WM_APP_TRAY = WM_APP + 10; // 托盘回调消息
 constexpr int kTrayHotkeyPause = 3; // RegisterHotKey 热键 ID（Ctrl+Alt+P 切暂停；与 main.cpp 侧 ID 不同窗不冲突）
 constexpr int kTrayHotkeyHelp = 4;  // Ctrl+Alt+H 打开使用帮助
+constexpr int kTrayHotkeyClip = 5;  // Ctrl+Alt+V 剪贴板历史
 
 HWND g_hMain = nullptr;
 UINT g_taskbarCreatedMsg = 0;
@@ -136,6 +139,7 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         AppendMenuW(menu, MF_STRING, 2020, L"打开备份文件夹");
         AppendMenuW(menu, MF_STRING, 2013, L"重新加载用户词典");
         AppendMenuW(menu, MF_STRING, 2018, L"屏蔽词管理...");
+        AppendMenuW(menu, MF_STRING, 2021, L"剪贴板历史...（Ctrl+Alt+V）");
         AppendMenuW(menu, MF_STRING, 2014, L"打开数据文件夹");
         AppendMenuW(menu, MF_STRING, 2015, L"恢复默认设置...");
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
@@ -191,6 +195,9 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
             break;
         case 2018: // R6 屏蔽词管理窗（blocked.txt 与用户词典同通道热载）
             ShowBlockedWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE), hwnd);
+            break;
+        case 2021: // 剪贴板历史窗（全局复制自动入史，双击写回剪贴板）
+            ShowClipboardWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE), hwnd);
             break;
         case 2014:
         {
@@ -327,6 +334,12 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             ShowHelpWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
             LX_LOG(L"ui", L"Ctrl+Alt+H 打开使用帮助");
         }
+        // Ctrl+Alt+V：全局热键打开剪贴板历史（复制中不间断：选条目直接回贴）
+        else if (wParam == (WPARAM)kTrayHotkeyClip)
+        {
+            ShowClipboardWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE), hwnd);
+            LX_LOG(L"ui", L"Ctrl+Alt+V 打开剪贴板历史");
+        }
         return 0;
     case WM_TIMER:
         // "暂停 30 分钟"到期：自动恢复预测（用户中途手动切换过则定时已被清）
@@ -341,11 +354,14 @@ LRESULT CALLBACK MainWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         return 0;
     case WM_ENDSESSION:
-        StatsFlush(); // 注销/关机：未落盘的打字统计（≤20 次）补写
+        ClipboardFlush(); // 注销/关机：节流计数内未落盘的剪贴板捕获补写
+        StatsFlush();     // 注销/关机：未落盘的打字统计（≤20 次）补写
         return 0;
     case WM_DESTROY:
+        ClipboardFlush(); // 退出前补写剪贴板历史（含节流内捕获）
         UnregisterHotKey(hwnd, kTrayHotkeyPause);
         UnregisterHotKey(hwnd, kTrayHotkeyHelp);
+        UnregisterHotKey(hwnd, kTrayHotkeyClip);
         RemoveTrayIcon();
         return 0;
     }
@@ -404,6 +420,12 @@ void InitTrayAndSettings(HINSTANCE hInst)
     if (!RegisterHotKey(g_hMain, kTrayHotkeyHelp,
                         MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (UINT)'H'))
         LX_LOG(L"ui", L"Ctrl+Alt+H 热键注册失败（组合键被其他程序占用）");
+    // 剪贴板历史：隐藏监听窗 + AddClipboardFormatListener（沙箱内部停用）
+    InitClipboardCapture(hInst);
+    // 全局热键 Ctrl+Alt+V 打开剪贴板历史（同款容错）
+    if (!RegisterHotKey(g_hMain, kTrayHotkeyClip,
+                        MOD_CONTROL | MOD_ALT | MOD_NOREPEAT, (UINT)'V'))
+        LX_LOG(L"ui", L"Ctrl+Alt+V 热键注册失败（组合键被其他程序占用）");
 }
 
 } // namespace lingxi
