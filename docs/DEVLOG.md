@@ -919,4 +919,32 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **newtask-verify.ps1 v2**：SendMessageW 增加 string/StringBuilder 重载（v1 裸 string→IntPtr 编组静默失败）；WM_COMMAND wparam 字序修正（LOWORD=控件ID、HIWORD=通知码）；**删除围栏**——搜索框过滤隔离测试词条，匹配数≠1 一律拒删；导航坐标 GetDpiForWindow 换算（PITFALLS #73）。
 - **用户词典误删事故（v1 脚本）已向用户披露**：514→513（文件序末位真实词条，三重工装缺陷叠加所致，不可恢复），引擎自学习可重建。
 
+## 2026-10-31 · 30+ 功能自主开发批（用户授权"一直开发"，仅后台门禁）
+
+用户授权持续自主开发 30+ 新功能且不占用前台——所有验证只走后台门禁（build 零错/engine_test 沙箱/fix_readings），e2e/smoke/真机走查押后至用户空闲统一补跑。先提交 R7 批建干净基线（`ef67921`），再按"后台可验性"排序开发。
+
+### 批次 H：引擎便民格式批（`1e57398`）
+
+- **rq 大写日期**：CnUppercaseDate（二〇二六年十月三十一日——年逐位读、月日口语读法"十月三十一日"）+ 无补零格式（%u年%u月%u日）。
+- **组合格式**：rqsj 新增"日期 星期X"；sj 新增中文时分（14时30分）+ 12 小时中文（下午2时30分）；xq 新增"礼拜X"。
+- **emoji 融合表 +15 社交高频词**：收到👌/好的👍/再见👋/抱歉😞/没关系🤗/开心😊/难过😔/无聊🥱/睡觉😴/吃饭🍚/庆祝🎊/成功✅/失败❌/注意❗ 等。
+- **engine_test P11 扩展断言块**：rq 含〇/sj 含时/xq 含礼拜/rqsj 含星期（Report 数 220→224）。
+- 门禁：build 零错 + engine_test 沙箱 **224/0** + fix_readings 缺口 0，全后台。
+
+### 批次 B：数据每日自动备份（`d919215` 内，与批次 A 合并提交）
+
+- **新文件 ui/autobackup.{h,cpp}**（自包含模块，usagestats 模式：自己的文件 IO、不依赖 uiinternal.h）：`AutoBackupTick`（ApplyLearn 选词公共落点触发，当日短路 + 跨重启幂等查当日目录存在）/`AutoBackupNow`/`BackupsDirW`；备份五文件（userdict/blocked/phrases/hotphrases/usage.txt，存在才拷）到 `%APPDATA%\LingxiIme\backups\daily-YYYYMMDD\`；**轮换保留 14 份**（daily-* 字典序=时间序，RemoveDirRecursive 删最旧）；沙箱（LINGXI_SETTINGS_NS 非空）自动停用。
+- **托盘菜单**：2019"立即备份全部数据"（MessageBox 反馈份数）+ 2020"打开备份文件夹"（ShellExecuteW）。
+- 设计动机：词典误删事故（512→513）暴露用户数据零兜底——每日首次打字自动全量快照，误操作/文件损坏可回溯 14 天。
+
+### 批次 A：打字统计增强 + 每日目标提醒（`d919215`）
+
+- **settings**：新增 `dailyCharGoal`（默认 500 字，0=关闭；Load/Save/SaveDiff 三处）。
+- **usagestats 扩展**：UsageData 新增 peakDayChars/peakDayKey/goalReachedDay（解析 peakChars=/peakDay=/goalDay= 键值行）；StatsAddPick 实时刷新单日峰值；`StatsMarkGoalReached(dayKey)` 防当日重复提醒；BuildStatsText 增"历史最高单日"行 + "【今日目标】X/Y 字（Z%）✓已达成"进度行（读 goal 设置）。
+- **候选窗通用文字气泡 `ShowTextToast`**（window.h 声明 + candwnd_core.cpp 实现）：复用 toast 态机（WM_TIMER(1) 到期隐藏 / Show/SetPage/ShowModeToast 候选接管清态 / _visible 置位），宽度随文字自适应（_toastFont 实测 +28px padding），驻留 1.6s；**五处清 _toastText 防残留**（Show/SetPage/ShowModeToast/WM_TIMER 到期/OnPaint 读取）；OnPaint toast 分支渲染 _toastText（非空画文字深浅适配，空画中/英原样）。
+- **ApplyLearn 目标达成检测**（pipeserver.cpp，锁外）：dailyCharGoal>0 && dayChars>=goal && goalReachedDay!=dayKey → StatsMarkGoalReached + `ShowTextToast(L"今日目标达成")` + 日志；沙箱宿主统计全零天然不触发。
+- **统计窗 CSV 导出**（statswnd.cpp，IDC_STATS_CSV=363"导出 CSV..."）：GetSaveFileNameW 另存对话框；指标/数值两列 11 行（日期/今日与累计选词与汉字/活跃/连续/峰值/目标）；UTF-8 带 BOM（Excel 直开中文不乱码）+ \r\n 行尾；窗宽 460→560 容纳第四按钮。
+- 门禁：build Debug 零错 + engine_test 沙箱 **224/0** + fix_readings 缺口 0，全后台。
+- 工装坑固化 PITFALLS #76：PowerShell 嵌套 `\"` 先被 PS 剥一层、MSBuild（.NET 规则）把 `\"` 当引号转义吞掉 `/v:m /nologo`——git 长 message 改 `-F 文件`、MSBuild 尾反斜杠属性写 `\\`；engine_test 末行"=== 结果: PASS=.. ==="在重定向下被 wcstombs C locale 转换截断只剩"=== "——门禁计数改 `Select-String '\[PASS\]'` 统计。
+
 

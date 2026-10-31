@@ -448,3 +448,9 @@
 - **根因**：tools/build.cmd 22-32 行：运行中 exe 被锁定无法覆盖，脚本把旧产物改名让位（重命名合法），链接器写全新 exe——构建成功是真的，但"正在运行的进程"加载的是改名旧件，PID 不变继续旧代码。
 - **正确做法**：构建后核 Get-Process StartTime vs exe LastWriteTime 判"运行宿主是否含新代码"；要上新二进制必须重启宿主（taskkill 后 7 进程 DLL 会自动重生拉起新 exe）。
 - **规约**：常驻进程项目的构建门禁绿=产物正确，≠部署完成；"热替换"必须显式重启+PID/StartTime 复核。
+
+### 76. PowerShell 嵌套引号剥 `\"`——git 多段 message 与 MSBuild 尾反斜杠参数双双碎裂 ⭐
+- **症状**：① `git commit -m "...\"导出 CSV...\"..."` 中文引号转义被剥，message 拆成几十个 pathspec 报"did not match any files"；② `msbuild ... "/p:SolutionDir=%CD%\"` 报 MSB4184 路径非法字符——SolutionDir 吞掉了后续 `/v:m /nologo`（.NET 命令行解析把 `\"` 当"引号转义"）。
+- **根因**：PowerShell 5.1 → cmd 原生进程传参时 `\"` 先被 PS 剥一层；cmd 忽略 `\` 不转义、而 MSBuild（.NET 规则）把 `\"` 视为字面引号——同一条命令经过**两套转义规则**，嵌套引号必碎。
+- **修法**：① git 长中文 message 一律 `-F 文件`（tmp/ 下临时文件，UTF-8）；② MSBuild 带尾反斜杠的属性写 `\\`（`"/p:SolutionDir=%CD%\\"`），或落成 .cmd 脚本跑；顺带：wprintf 中文在重定向下经 wcstombs 按 C locale 转换失败会**整行截断**（engine_test 末行"=== 结果: PASS=.. FAIL=.. ==="只剩"=== "），门禁计数改用 `Select-String '\[PASS\]' | Measure` 统计，别信尾行。
+- **规约**：Windows 下跨 shell 组装含引号/反斜杠的命令行，一律走脚本文件（.cmd/-F）或环境变量，禁止在 PowerShell 单行里嵌套 `\"`。
