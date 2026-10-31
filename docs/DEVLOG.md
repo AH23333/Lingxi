@@ -1112,3 +1112,24 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **service.cpp（946 行）发现 1 真缺陷（已修）**：`_assocShown`/`_assocReq` 由管道线程 OnCandidates 在 _cs 内写，但宿主 UI 线程 6 处无锁裸访问（InsertCandidate 点选连发读+收尾清、OnTestKeyDown 联想撤销双写、空格认领读、HandlePinyinKey 联想选词道读），且 service.cpp 原注释声称"OnCandidates 皆在宿主 UI 线程"与 pipeclient 实际线程模型不符。修法（`46bfa75`）：按 CandidatesVisible() 房风新增 IsAssocShown()/ClearAssocState() 锁式访问器，6 处裸访问全改走 _cs，修正假注释；无行为变更。其余干净：RequestSession 同步优先降级异步；ActivateEx 失败回退 Deactivate；OnEndEdit 自插入守卫（_fSelfInsert 窗口+_lastSelfInsertTick 400ms/500ms 双兜底）；SendCtx ver 递增；OnCandidates ver 检查+rerank 保 _pageStart+cover 平行数组；WM_APP_LX_PICK wParam=index/lParam=ver 与 HandlePickFromUI(ver,index) 参数序匹配；WM_APP_LX_INSERT delete 恒执行；WaitForLatestCandidates ResetEvent 竞态仅致有界等待退化，非缺陷。
 - **composition.cpp（1118 行）干净**：SafeGetTextExt SEH 内纯 POD 局部（无 C++ 展开对象，tfSel.range 释放配对）；组合引用计数全配对（_pComposition/_pRange 增减平衡，AbortCompositionState 先摘引用再 SEH、内层二级异常仅泄漏 COM 引用已注释）；翻页导航全键位（PageUp/Down/Left/Right/Home/End/减号句号）与 _pageStart 权威账一致；空格/Tab 提交道 WaitForLatestCandidates(400ms) 三面门（Test 认领→Handle 提交→InsertCandidate 复验）；无组合模式 PinyinStart/Append/Shrink 内存串路径与组合路径等价。微瑕不修：HandlePinyinKey 联想选词道 `_verCands == _verSent` 在锁外读（InsertCandidate 锁内复验兜底，良性竞态）。
 - 结论：**ime/ 6 文件深审完毕，全仓（ui/common/ui.engine/ime）深审收口**。真缺陷累计 8 处全修（轮 5×1+轮 6×2+轮 7×2+轮 10×2+轮 12×1）。门禁：build Debug 零错；engine_test 沙箱 **234/0**；fix_readings --check 缺口 0。DLL 侧改动须宿主重启后真机验证（smoke 双套件+肉眼验收，押后至用户空闲前台收口）。
+
+## 2026-11-01 · 轮 13：三功能批（符号面板搜索框 + v 模式数字大写/金额/计算器）
+
+### v 模式——数字大写/金额/计算器（`c3acaa4`，全拼专属）
+
+- **触发口径**：组合 "v"+calc 字符（IsCalcQuery）；双拼 v=声母(zh) 不触发（`!LoadSettings().shuangpin` 门三处一致：PinyinKeyEaten/HandlePinyinKey/引擎拦截）。误入（"va"）自动脱离，退格删回 "v" 可重触发。
+- **ui/engine/calcnum.{h,cpp}（新）**：IntToCn 四位分组（万亿/亿/万单位、零折叠——整组零与低位组前导零合并一个"零"、组值<1000 补零、小写"一十"→"十"归约、前导零剥、16 位上限超限返空跳候选）；RmbFrom 元角分/整矩阵（00→整/30→角/03→零 X 分/0.03→"叁分"/34→角分，全零→零元整）；CalcParser 递归下降（+ - * / 括号一元负号、除零=非法、字面量 1e300 溢出保护）；FormatDouble（近整数折叠、%.6f 去尾零、|r|≥1e16 返空）。纯数字判定的旧实现"无点即纯数字"曾把 "(1+2)*3" 误判为纯数字串（表达式断言全挂），修为全字符数字+至多一个点的逐字符扫描。
+- **接线**：pinyin.cpp Predict 入口拦截（cover=整串消耗，提交后全清）+ Learn 拒收 IsCalcQuery 键（防自学习污染词典）；pipeserver.cpp rerank 门加 `!IsCalcQuery`（确定性候选重排纯浪费，省 LLM 调用）；composition.cpp：CalcKeyChar 美式键位映射（无 Shift 数字/OEM_MINUS'-'/OEM_PERIOD'.'/OEM_2'/'，Shift+8/9/0=*()/、OEM_PLUS'+'）、PinyinKeyEaten 在 PinyinActive 分支 switch 前插 calc 门（压住数字选词/翻页/标点路径）、HandlePinyinKey 在 VK_OEM_7 块后插 calc 追加块（空格/回车仍走原 switch：空格上屏首选结果，回车原样上屏表达式）。
+- **engine_test P5v 段 13 断言**：触发口径/零折叠（壹亿零伍/壹万零壹拾）/一十归约+前导零/金额矩阵六例/全零/计算器（(1+2)*3、10/4=2.5、负数负前缀）/非法三例（除零/语法错/17 位超界）/引擎集成（Predict 拦截+整串 cover）/Learn 拒收。Report 234→**247**。
+
+### 符号面板搜索框（`1571dc0`）
+
+- **ui/symsearch.{h,cpp}（新，AGENTS.md 新功能新文件规矩）**：自包含关键词表 ~530 条（拼音全拼/中文/英文，与面板分类同序）+ SymbolSearch——空格分词多词 AND、整词 2 分/子串 1 分稳定排序（"mao"：🐱/猫整词在前，"maohao 冒号"子串在后）、结果上限 96（面板 12 行）。emoji 全部 \u 转义（批次 I 规矩：防 VS16 不可见字符编辑丢失）。
+- **symbolpanel.cpp 集成（搜索行常驻）**：GridY()=标签行+搜索行+边距，网格整体下移 30px（kSearchH 常驻占位，非搜索态也显示搜索框+CUE 占位）。**激活态机**：面板本体保持 WS_EX_NOACTIVATE（网格点击不抢焦点行为不变）；点击 EDIT（子类化 WM_LBUTTONDOWN/WM_MOUSEACTIVATE）→EnterSearch：临时摘 NOACTIVATE+SetForegroundWindow+SetFocus（真实 EDIT 需要 WM_CHAR 流，NOACTIVATE 下击键全漏给宿主），g_prevFore 锚点；退出五路——Esc 两段（清词→ExitSearch 还前台）/回车上屏首个结果/点标签/网格插入/WM_ACTIVATE WA_INACTIVE 失活兜底（别人抢走前台时静默退出不抢回）。ExitSearch 先置 g_searching=false 再清 EDIT（EN_CHANGE 由闸忽略）再还前台（WM_ACTIVATE 免疫自触发）。**插入链路与焦点无关**（管道 SendInsertText，四管理窗已验证焦点被夺后仍可插入宿主）——这是敢抢前台的架构前提。
+- **绘制**：搜索态接管 CurCat()（62×8 结果格，>2 字符长条目 13px 小字号 g_fontTiny 防溢出）；标签选中药丸隐藏（网格区由结果接管）；★收藏角标搜索结果照标；空态三态提示（空查询用法/无匹配/最近收藏空）；滚轮换标签在搜索态禁用（结果滚动留后续）。EM_SETCUEBANNER(0x1501) 按值直发（工程 WINVER 下 winuser.h 未暴露宏）。WM_DESTROY 全量复位（g_searching/EDIT 句柄/子类指针/g_prevFore/结果 store——残句柄是下次开面板的崩溃源）。
+- **engine_test P5s 段 7 断言**：整词排序（mao→🐱 首）/拼音整词（douhao→，）/多词 AND（mao tou ying→仅🦉）/中文（爱心→❤️）/颜文字 24 条/空查询/进度条可达。Report 247→**254**。
+
+### 门禁与押后
+
+- 门禁：build Debug 零错（ImeCore.dll+LingxiUI.exe 全链接）+ engine_test 沙箱 **254/0** + fix_readings 缺口 0，全后台（宿主未动，用户使用期零打扰）。
+- 真机验证押后（runbook 第 6 步，宿主重启后）：v 模式全链（含双拼不触发/退格重触发/Build32 DLL 侧键位）+ 搜索框焦点流转（激活/五路退出/回车上屏后续打字）+ 视觉走查（搜索行布局/长条目小字号）。runbook 回归预期同步 254。
