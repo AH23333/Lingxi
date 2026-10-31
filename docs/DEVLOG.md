@@ -1074,3 +1074,14 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **pipeserver.cpp（745 行）全文干净**：SEH 三外壳 C2712 合规（POD 参数传递）；单实例 FILE_FLAG_FIRST_PIPE_INSTANCE 冲突 ExitProcess；客户端 shared_ptr 引用计数管句柄生命周期（断线不死锁不悬垂）；CTX 双格式 V2/V1 长度自洽判别、损坏帧丢弃；有界队列 8+每客户端去重+防抖合并（多客户端下被弃应用帧丢弃属良性设计——该应用必已 Deactivate）；预测期零持锁；两阶段重排 gen+rrSeq 双代序闸+400ms 观察窗+900ms 预算+RerankStillCurrent 二次核对；cover 与 cands 平行校验三处一致；B1 学习键=消耗前缀。微瑕不修：Stop() 不 join 分离的重排线程（仅退出路径，进程拆除兜底）。
 - **statswnd.cpp（297 行）全文干净**：CSV/诊断报告导出按结果弹窗（与轮 7 静默失败修复同口径，本文件本就正确）；清零确认对话框；Esc 双路（正文子类化+窗口本体）；单例 IsWindow 复用；子类化指针复建正确（SetWindowLongPtrW 返回原始 EDIT proc）。
 - 结论：至此 ui 层全部窗口/交互/管线文件完成深度审计（轮 2-8 累计 17 文件，真缺陷 6 处全部已修）。门禁：build Debug 零错 + engine_test **234/0** + fix_readings 缺口 0，全后台。
+
+### 深度审计轮 9（common 层五小件 + candwnd_core + autobackup，7 文件零缺陷）
+
+- **pipe_util.cpp（210 行）全文干净**：管道 DACL 限定当前用户 SID（SDDL D:(A;;GA;;SID)）失败回退默认 DACL；ERROR_PIPE_BUSY 500ms 重试；帧累加器读法（want+64 超读下一帧/total 上限 1MB 拒非法帧/多余字节保留/transferred==0 判管道关）；WriteFrame 超时取消+transferred 全量校验。微瑕不修：GetUserSA 的 s_init 非原子（实际调用拓扑单线程，至多重复分配一次）。
+- **proto.h（159 行）干净**：pack(1) 结构体与 pipeserver 双格式解析端逐字段自洽（MsgCtx=32B/V1=28B，长度算式两侧一致）；AppendStr u16 钳 0xFFFF；ReadStr/ReadPod 越界全检；NextPageStart 夹取纯函数。
+- **settings.cpp（255 行）全文干净**：沙盒键名白名单 [A-Za-z0-9_-] 严检（非法宁可不隔离）；33 键加载逐键范围消毒（越界保默认）；ToggleMode/ShiftToggle 双键兼容派生对称写；SaveSettingsDiff 单键 diff 防"整页回写"覆盖未同步状态；GetString 双读尺寸法+2KB 上限+NUL 截断；负坐标 DWORD 往返正确。
+- **log.h（127 行）干净**：LX_LOGV 宏 if 短路（关闭时参数表达式不求值）；常量初始化门控避开 magic static Debug 检查；文件日志 CS 串行+1MB 轮转 .old 留档+UTF-16 原生写（读取须 -Encoding Unicode，PITFALLS 口径一致）。
+- **punct.h/settings.h 干净**：标点映射纯函数 out[3] 界内（最长 2 字符+翻号状态翻转）；Settings 默认值全部落在 LoadSettings 消毒区间内（16∈[12,32]/0xFF/1≤4/100∈[70,100]…逐项核过）。
+- **candwnd_core.cpp（489 行）全文干净**：Shutdown 刻意不 DeleteCriticalSection 的退出竞态论证（存活线程踩已删 CS，泄漏无害）；LayoutAndPosition 锚定三级回退链（caret→鼠标位→记忆位）+工作区双轴钳制+同步补画防残影；Show/SetPage 的 ver 保页语义与 DLL 侧 rerank 判定对称；WM_TIMER 陈旧定时器 wasToast 守卫；CurrentPageRangeLocked 规整边界（start>total 回 0/start≥total 末整页）。轮 4 微瑕记录复核：ShowModeToast 自赋值死代码仍在（不修维持原判）。
+- **autobackup.cpp（208 行）全文干净**：TodayBoth 单次 GetLocalTime 防午夜撕裂（suffix/dayKey 同源）；done.flag 幂等认账（半截备份无标记→重启补拷，目录存在不认账——注释里记录的缺陷修复实现正确）；成败都记 g_doneDay 防选词热路径文件系统风暴；轮换字典序=时间序保 14 份；g_mtx 串行打字路径与手动路径；沙箱探测单次。
+- 结论：common 层（IPC/协议/设置/日志/标点）+ 候选窗核心生命周期 + 每日备份全部干净，真缺陷 0。门禁：build Debug 零错 + engine_test **234/0** + fix_readings 缺口 0，全后台。
