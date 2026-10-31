@@ -1059,3 +1059,10 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **ngram.cpp（390 行）全文干净**：StripContinuationEcho 下溢边界逐一验（k≥2 守卫下 maxK<2 零迭代不落 k--）；DedupCompletions ②前缀堆叠双分支（n 延伸 kn/kn 延伸 n）两方向对称；ChainPredictor midWord/pureAscii 路由与 B4 ASCII 过滤兜底全对。微瑕：注释"前 5"对 kMaxCands=9 漂移。
 - **main.cpp（595 行）全文干净**：装配序安全（托盘创建先于 g_hooks 赋值，但菜单展示必在消息泵启动后=赋值已完成）；chain 持有 sharedLlm 所有权、delete engine 单点释放；六处 CLI 早退 LocalFree 全对称；singleton Mutex/hReady/NotifyThreadParam static 生命周期全部正确；g_hotPhrases 仅 UI 线程读写（注释声明与实际调用点核对一致）。
 - 门禁：build Debug 零错 + engine_test 沙箱 **234/0**（LLM 无模型沙箱不可达=编译级回归）+ fix_readings 缺口 0，全后台。
+
+### 深度审计轮 7（备份/导出静默失败 2 处真缺陷已修 + tray/userdictwnd 干净）
+
+- **settingsbackup.cpp 真缺陷（已修，268ee54）**：ExportSettingsBackup 随行文件（用户词典/热键短语/屏蔽词）读成功但写失败仅记日志，弹窗仍报"已导出"——虚假信心（备份不完整用户不知）；ImportSettingsBackup 用户已确认恢复但写失败同静默（词典/短语/屏蔽词未被覆盖却报"已导入"）。修复=sidecarFail/restoreFail 计数，任一>0 弹 WARNING 明示"备份不完整/当前文件未被覆盖"，日志加 fail 字段；源文件不存在=正常（新装）不告警。
+- **userdictwnd.cpp 真缺陷（已修，268ee54）**：UdExport 读源失败或写目标失败完全静默——与 settingsbackup 同根因（用户误以为已备份）。修复=失败弹 WARNING"未生成备份文件"。其余 753 行全文干净：删除/升降频按内容匹配+索引回退+落空刷新（引擎并发重写防漂移）；WriteFileBytes tmp+MoveFileEx 原子写与引擎双写者共存；右键词典操作全路径（删全读音条目/Pin +10000/降频钳位 1/新增键推导全拼守卫/写失败 false+日志）；UdAddWord 键归一化与引擎 NormKey 口径一致。微瑕不修：UdClearAll 忽略写结果（安全方向，RefreshUdList 让用户看到真相）、删除路径恒真 if(removed)、Nudge 漂移早退未刷新列表。
+- **tray.cpp（422 行）全文干净**：托盘资源配对（NIM_ADD/NIM_DELETE 对称）、定时器三清点、热键三注销、ENDSESSION 双 flush、菜单命令全分发核对。微瑕不修：60 分钟到期日志文案写"30 分钟"（仅日志文案，菜单/弹窗文案正确）、卸载脚本路径限开发目录。
+- 门禁：build Debug 零错 + engine_test **234/0** + fix_readings 缺口 0，全后台（regress 含 taskkill 宿主项押后空闲收口）。
