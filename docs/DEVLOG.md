@@ -1096,3 +1096,10 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **hotphraseui.cpp（487 行）全文干净**：录制框 KEYDOWN/SYSKEYDOWN 捕获、Esc=清空录制与关窗 Esc 语义分离（注释明示）；加载侧 mods 掩码归一+Ctrl|Alt 强制+vk 非零；键占用去重（mods+vk 全等）；两 EDIT 共享原类过程同份 g_oldHpEditProc 合法（同类控件）；NotifyHotPhrasesChanged 供备份导入侧外部触发。
 - **blockedui.cpp（435 行）全文干净**：unordered_set 去重；长度/条数双侧钳制；BlockWord 公共路径统一（窗口添加与候选右键屏蔽同路，结果枚举全分支映射 UI 提示）；清空确认；UnblockWord 逐条精确匹配。微瑕不修（跨四窗同型）：phraseui/hotphraseui/blockedui 的 CTLCOLOR WHITE_BRUSH 色差与 clipboardui 同型。
 - 结论：轮 10 收口——帮助窗/符号面板/剪贴板历史/自定义短语/快捷短语/屏蔽词/设置窗全文完成，ui 层深审再无未读文件。本轮 2 真缺陷（裸滚轮误改字号/hover 药丸滞留）全修，轮 2-10 累计真缺陷 **7 处全部已修**。门禁：build Debug 零错 + engine_test **234/0** + fix_readings 缺口 0，全后台（smoke 双套件按 runbook 押后空闲收口）。
+
+### 深度审计轮 11（predictor.h + pipe_util.h + guids + usagestats 全文，收零散尾件，零缺陷）
+
+- **predictor.h（99 行）干净**：纯接口契约无实现——cover 平行数组约定（size()==cands.size() 才有效/元素 0=未知）、Rerank 失败返空=保序、MarkBroken 本会话永久熔断、chain 所有权（析构逐一 delete）语义与轮 5/6/8 已审实现逐条对得上。
+- **usagestats.cpp（302 行）全文干净（轮 3 只审过解析段，本轮补全文）**：PrevDayKey 仅以 TodayKey（SYSTEMTIME 来源 m∈[1,12]）入参，文件脏值只做相等比较不进日期回退——mdays 数组无越界路径；"day=" vs "dayPicks=" 前缀 strncmp 索引 3 处区分不串键；BOM 双读法（raw.compare(0,3,...) 短串安全）；.tmp+MoveFileExW 原子写（注释写明撕裂窗口两场景）；节流 20 次落盘+StatsFlush 退出补写；跨天 streak 用纯 YYYYMMDD 回退无时区问题；peakDayChars 实时刷新。
+- **pipe_util.h/guids.h/guids.cpp 琐碎干净**：声明与轮 9 已审 pipe_util.cpp 一致；guids.cpp 唯一实例化点 initguid 模式正确（先 <initguid.h> 再本头，其余 TU 只得 extern 声明）。
+- 结论：ui/ + common/ + ui/engine/ 全部源文件深审完毕。**发现最后一块空白：ime/（ImeCore TSF DLL）6 文件从未深审**，轮 12 起进入 DLL 侧（dllmain/service/composition/editsession/pipeclient）。门禁：engine_test 沙箱 **234/0**（本轮零代码改动，构建基线承轮 10）。
