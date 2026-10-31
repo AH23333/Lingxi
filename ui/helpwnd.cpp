@@ -87,7 +87,7 @@ std::wstring BuildHelpText()
     static const wchar_t* kSkinNames[] = { L"翠绿", L"青碧", L"橙", L"红", L"金", L"茶棕", L"玫粉" };
     static const wchar_t* kToggleNames[] = { L"关闭", L"Shift", L"Shift 或 Ctrl",
                                              L"CapsLock", L"仅 Ctrl" };
-    static const wchar_t* kDarkNames[] = { L"跟随应用", L"浅色", L"深色" };
+    static const wchar_t* kDarkNames[] = { L"跟随系统", L"浅色", L"深色" };
     wchar_t cfg[4096];
     _snwprintf_s(cfg, _TRUNCATE,
         L"%s"

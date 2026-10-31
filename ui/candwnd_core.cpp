@@ -264,6 +264,8 @@ void CandWindow::ShowModeToast(bool english)
     SetWindowPos(_hwnd, HWND_TOPMOST, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW);
     UiApplyRoundCorners(_hwnd, w, h);
     InvalidateRect(_hwnd, NULL, TRUE);
+    _visible = true; // toast 也在显示：1s 到期完整隐藏路径依赖此标记
+                     // （不置位则纯 toast 场景到期不隐藏、MSG_HIDE 守卫拦不住）
     HideTip();
     SetTimer(_hwnd, 1, 1000, NULL);
 }
@@ -364,9 +366,18 @@ LRESULT CandWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         }
         KillTimer(hwnd, (UINT_PTR)wParam);
         HideTip();
-        EnterCriticalSection(&_cs);
-        _toastMode = false;
-        LeaveCriticalSection(&_cs);
+        // 陈旧定时器守卫（"词框偶发不出现"根因之一）：toast 1s 到期瞬间用户开
+        // 始打字，Show() 已清 _toastMode + KillTimer，但 WM_TIMER 已投递到本
+        // 线程队列、KillTimer 撤不掉已投递消息——随后派发时若不查 _toastMode
+        // 会把刚显示的候选完整隐藏（"切换中英后整 1s 打字，头一两键无候选"）。
+        // _toastMode 仍真=真 toast 到期走隐藏；已假=候选帧已接管，直接返回。
+        {
+            EnterCriticalSection(&_cs);
+            bool wasToast = _toastMode;
+            _toastMode = false;
+            LeaveCriticalSection(&_cs);
+            if (!wasToast) return 0;
+        }
         // toast 结束必须走**完整隐藏语义**：裸 SW_HIDE 会留下 _visible=true，
         // 下次 Show 跳过显示路径且旧 toast 大色块作为上一帧闪进候选窗（残影观感）
         if (_visible)

@@ -892,3 +892,31 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - 门禁：build 零错；engine_test 220 / fix_readings / deep_test 34/34 / e2e exit=0；smoke1 15/15 + smoke2 8/8 + smoke3 18/18；probe 基线全符（gylg=4 候 / gylgl=供应链管理 1 候 / xian 首选西安）。
 - 假红实录（PITFALLS #70）：regress 首跑 deep_test 25 FAIL + e2e 三连败——taskkill 后 DLL 重生宿主的 ~12s 初始化窗口被 deep_test 全程撞上（宿主就绪后单独复跑 34/34 直绿）；e2e 另被 Steam 弹窗/用户活跃终端抢前台与输入法状态竞争，最终 exit=0 收尾（pinyin mode settle 过）。
 
+## 2026-10-31 · R7 频闪根治二 + 外观跟随系统 + 词框偶发不出现竞态修复
+
+### 频闪根治二：ScrollWindowEx 像素级滚动（客观门禁全过，用户肉眼验收待定）
+
+- **v1 双缓冲复盘**：只保护父窗自绘面；滚动时组合框/静态文本/开关等子控件在 MoveWindow(FALSE)+全窗失效后**各自独立重画、逐个跳现**——真频闪源。
+- **v2 方案**：`ScrollSettingsTo` 统一滚动入口——`ScrollWindowEx(SW_SCROLLCHILDREN|SW_INVALIDATE)` 把现有画面（含子控件像素）BLT 平移、子窗同步位移、只失效新露窄条，**滚动期子控件零重画**；导航列与页脚带从 BLT 矩形排除（固定区），页脚单独父窗失效重画（无子控件参与不引频闪）。WM_VSCROLL/WM_MOUSEWHEEL 全走它。
+- 门禁：build 零错；scrolltest v2 PASS（0→375→0，修脚本 wDown 编码 PITFALLS #74）；smoke1 15/15 + smoke2 8/8；probe 基线新鲜复验。
+
+### 外观"跟随应用"改"跟随系统" + 设置页双主题（R7 任务①）
+
+- **失效根因**：darkTheme 走 MsgHello 协议字段而 pipeclient.cpp:112 硬编码 0——"跟随应用"永远浅色（PITFALLS #72：跟随语义的信号源在链路上恒不可得）。
+- **新文件 ui/uitheme.{h,cpp}**（挂 vcxproj，AGENTS 纪律 1）：SystemDarkMode（HKCU\...\Themes\Personalize!AppsUseLightTheme 直读，µs 级实时）/EffectiveDark(darkMode 0/1/2)/UiPalette 双主题调色板（浅=uistyle.h 令牌原值，深=Win11 同级灰阶暗变体）/UiSolidBrush 画刷缓存/UiApplyTitleBarDark（DWMWA_USE_IMMERSIVE_DARK_MODE(20)，不支持静默忽略）。
+- **接线**：pipeserver 候选窗 `dark=EffectiveDark(st.darkMode)`；settingsui 全链路（PaintSettings 调色板化/WM_CTLCOLOR* 四路/DrawToggle/标题栏深浅/WM_SETTINGCHANGE("ImmersiveColorSet") 即时跟随）；文案四处同步（settingsui fillDark/helpwnd kDarkNames/settings.h 注释/README×2）。
+- 门禁：build 零错；regress ALL PASS；smoke1 15/15 + smoke2 8/8。
+
+### 词框偶发不出现：三处竞态修复（R7 任务③，e2e/smoke 待用户停机补跑）
+
+- **A（主根因，PITFALLS #71）**：toast 1s 定时器到期瞬间用户开始打字——`Show()`（预测线程）清 _toastMode+KillTimer(1)，但 WM_TIMER 已投递 UI 线程队列、KillTimer 撤不掉；陈旧 WM_TIMER 随后派发把刚显示的候选完整隐藏（`if(_visible)` 恰被 Show 置 true）——"切换中英后整 1s 打字，头一两键无候选"机制。修复：WM_TIMER 加 _toastMode 守卫，已接管直接返回不清场。
+- **B**：`ShowModeToast` 不置 `_visible=true`——纯 toast 到期不隐藏（卡空框）、`Hide()` 的 `!_visible` 守卫拦不住。修复：显示后置位。
+- **C**：`PredictProc` 取 `_queue.back()` 后全局 `_queue.clear()`——7+ 进程各挂 DLL，切换应用瞬间旧应用尾巴帧吃掉新应用首帧。修复：只清同客户端条目，其余客户端帧留队列由后续轮次处理。
+- 门禁：build 零错（注意 PITFALLS #75：宿主运行中构建照常成功但运行宿主仍旧二进制）；e2e/smoke/宿主热替换待用户停机后统一补跑，与频闪/主题批一并提交。
+
+### 工装与事故
+
+- **newtask-verify.ps1 v2**：SendMessageW 增加 string/StringBuilder 重载（v1 裸 string→IntPtr 编组静默失败）；WM_COMMAND wparam 字序修正（LOWORD=控件ID、HIWORD=通知码）；**删除围栏**——搜索框过滤隔离测试词条，匹配数≠1 一律拒删；导航坐标 GetDpiForWindow 换算（PITFALLS #73）。
+- **用户词典误删事故（v1 脚本）已向用户披露**：514→513（文件序末位真实词条，三重工装缺陷叠加所致，不可恢复），引擎自学习可重建。
+
+

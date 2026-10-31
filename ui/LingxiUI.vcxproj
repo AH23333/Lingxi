@@ -64,6 +64,7 @@
     <ClCompile Include="candwnd_interact.cpp" />
     <ClCompile Include="pipeserver.cpp" />
     <ClCompile Include="settingsui.cpp" />
+    <ClCompile Include="uitheme.cpp" />
     <ClCompile Include="tray.cpp" />
     <ClCompile Include="userdictwnd.cpp" />
     <ClCompile Include="helpwnd.cpp" />
@@ -90,6 +91,7 @@
     <ClInclude Include="blockedui.h" />
     <ClInclude Include="symbolpanel.h" />
     <ClInclude Include="uistyle.h" />
+    <ClInclude Include="uitheme.h" />
     <ClInclude Include="engine\predictor.h" />
   </ItemGroup>
   <ItemGroup>

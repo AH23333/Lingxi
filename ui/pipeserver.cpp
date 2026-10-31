@@ -5,6 +5,7 @@
 #include "../common/settings.h"
 #include "../common/log.h"
 #include "usagestats.h"
+#include "uitheme.h"
 
 #include <thread>
 
@@ -423,7 +424,16 @@ void PipeServer::PredictProc()
                 {
                     e = _queue.back();
                     have = true;
-                    _queue.clear(); // 更旧的请求一律丢弃
+                    // 只丢同客户端的更旧请求（"词框偶发不出现"诱因之二）：
+                    // 多应用各挂 DLL（7+ 管道客户端），全局 clear() 会把其他
+                    // 应用的帧静默吃掉——切换应用瞬间旧应用的尾巴帧挤掉新应用
+                    // 的首帧。其余客户端的帧留在队列，由后续循环轮次处理
+                    //（信号量每次 enqueue 已释放，空转轮自然消耗，无饥饿）。
+                    for (auto it = _queue.begin(); it != _queue.end();)
+                    {
+                        if (it->c == e.c) it = _queue.erase(it);
+                        else ++it;
+                    }
                 }
                 LeaveCriticalSection(&_cs);
             }
@@ -513,7 +523,9 @@ void PipeServer::PredictProc()
             e.c->active = true;
             LeaveCriticalSection(&_cs);
         }
-        bool dark = (st.darkMode == 0) ? e.dark : (st.darkMode == 2);
+        // R7：明暗统一走 EffectiveDark（0 跟随系统=直读系统主题，旧"跟随应用"
+        // 依赖 MsgHello.darkTheme 而 DLL 端恒发 0，跟随模式永远浅色，已退役）
+        bool dark = EffectiveDark(st.darkMode);
         // B2：拼音请求把组合串传给候选窗首行回显（纯 UI 内部，不走协议）。
         // 0 候选拼音帧也显示（echo-only 窗）：v 临时英文（"v"/"vlog"）与无效
         // 拼音（"zhx"）没有候选但组合串需要回显，0 反馈=用户体感"按键失灵"。

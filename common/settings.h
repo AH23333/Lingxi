@@ -14,7 +14,7 @@ struct Settings
     bool pinyinEnabled = true;    // 拼音组合模式（zh-CN profile 字母上屏汉字）
     uint32_t candidateCount = 9;  // 候选上限（1..9，数字键 1-9 对应）
     uint32_t candidateFontSize = 16; // 候选字号（12..32，按 DPI 缩放）
-    uint32_t darkMode = 0;        // 0 跟随应用 1 浅色 2 深色
+    uint32_t darkMode = 0;        // 0 跟随系统 1 浅色 2 深色（R7：跟随=宿主直读系统主题）
     bool enCompletion = true;     // 英文逐键补全（词中前缀替换）
     bool paused = false;          // 暂停预测：完全直通，不出任何候选（临时需要时用）
     bool cnPunct = true;          // 中文标点：中文模式下 . , / ; 等映射为全角标点

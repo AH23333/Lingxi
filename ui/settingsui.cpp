@@ -29,6 +29,7 @@
 #include "../common/log.h"
 #include "../common/settings.h"
 #include "uistyle.h"
+#include "uitheme.h"
 
 namespace lingxi {
 
@@ -343,9 +344,10 @@ int LayoutSettings()
             int textW = cardW - cardPad * 2 - (row.ctl ? Scaled(row.ctlW) + Scaled(24) : 0);
             if (row.lab)
                 MoveWindow(row.lab, x0 + cardPad, y + (row.desc ? Scaled(8) : Scaled(11)),
-                           textW, Scaled(22), TRUE);
+                           textW, Scaled(22), FALSE); // bRepaint=FALSE：滚动热路径免子控件
+                                                     // 擦除+重绘风暴（频闪源），父窗失效统一刷
             if (row.desc)
-                MoveWindow(row.desc, x0 + cardPad, y + Scaled(33), textW, Scaled(18), TRUE);
+                MoveWindow(row.desc, x0 + cardPad, y + Scaled(33), textW, Scaled(18), FALSE);
             if (row.ctl)
             {
                 int ctlH = 0;
@@ -358,7 +360,7 @@ int LayoutSettings()
                 default: break;
                 }
                 MoveWindow(row.ctl, x0 + cardW - cardPad - Scaled(row.ctlW),
-                           y + (rh - ctlH) / 2, Scaled(row.ctlW), ctlH, TRUE);
+                           y + (rh - ctlH) / 2, Scaled(row.ctlW), ctlH, FALSE);
             }
             y += rh;
             first = false;
@@ -375,7 +377,7 @@ int LayoutSettings()
 void PaintSettings(HWND hwnd)
 {
     PAINTSTRUCT ps;
-    HDC hdc = BeginPaint(hwnd, &ps);
+    HDC wndDc = BeginPaint(hwnd, &ps);
     RECT rc{};
     GetClientRect(hwnd, &rc);
     int cw = rc.right, ch = rc.bottom;
@@ -385,7 +387,14 @@ void PaintSettings(HWND hwnd)
         return;
     }
 
-    HBRUSH bg = CreateSolidBrush(kUiBg);
+    // 双缓冲：整窗先画进内存位图，末尾一次 BitBlt。滚轮/滚动条连续全量
+    // 失效时直接上屏会暴露"逐元素绘制"中间态（频闪第二段可见期）。
+    HDC hdc = CreateCompatibleDC(wndDc);
+    HBITMAP memBmp = CreateCompatibleBitmap(wndDc, cw, ch);
+    HGDIOBJ oldMem = SelectObject(hdc, memBmp);
+
+    const UiPalette& pal = UiPaletteFor(EffectiveDark(LoadSettings().darkMode));
+    HBRUSH bg = CreateSolidBrush(pal.bg);
     FillRect(hdc, &rc, bg);
     DeleteObject(bg);
 
@@ -395,7 +404,7 @@ void PaintSettings(HWND hwnd)
     HGDIOBJ oldFont = SelectObject(hdc, g_hFontNav);
 
     // 导航标题
-    SetTextColor(hdc, kUiText);
+    SetTextColor(hdc, pal.text);
     RECT ntr{ Scaled(18), Scaled(14), navW, Scaled(44) };
     DrawTextW(hdc, L"灵犀输入法", -1, &ntr, DT_LEFT | DT_VCENTER | DT_SINGLELINE);
 
@@ -409,7 +418,7 @@ void PaintSettings(HWND hwnd)
         bool sel = i == g_curPage;
         if (sel || i == g_navHover)
         {
-            GdipRoundRect(hdc, item, sel ? RGB(229, 229, 229) : RGB(238, 238, 238), 8);
+            GdipRoundRect(hdc, item, sel ? pal.navPill : pal.navPillHover, 8);
         }
         if (sel)
         {
@@ -433,10 +442,10 @@ void PaintSettings(HWND hwnd)
     // 白卡（8px 圆角 + 1px 浅描边，GDI+ 抗锯齿）
     int rr = Scaled(16);
     for (auto& card : g_pages[g_curPage].cards)
-        GdipRoundRect(hdc, card.rc, kUiCard, rr, kUiCardBorder, 1);
+        GdipRoundRect(hdc, card.rc, pal.card, rr, pal.cardBorder, 1);
 
     // 卡片标题 + 行分隔线
-    HPEN lpen = CreatePen(PS_SOLID, 1, RGB(238, 238, 238));
+    HPEN lpen = CreatePen(PS_SOLID, 1, pal.sep);
     HGDIOBJ lp = SelectObject(hdc, lpen);
     for (auto& card : g_pages[g_curPage].cards)
     {
@@ -459,12 +468,17 @@ void PaintSettings(HWND hwnd)
 
     // 底部提示（内容区左下，不随滚动）
     SelectObject(hdc, g_hFontDesc);
-    SetTextColor(hdc, kUiText2);
+    SetTextColor(hdc, pal.text2);
     RECT ftr{ x0, ch - Scaled(34), cw - Scaled(16), ch - Scaled(10) };
     DrawTextW(hdc, L"修改即时生效并自动保存 · 重建输入法后需重启应用加载新版",
               -1, &ftr, DT_LEFT | DT_VCENTER | DT_SINGLELINE | DT_END_ELLIPSIS);
 
     SelectObject(hdc, oldFont);
+
+    BitBlt(wndDc, 0, 0, cw, ch, hdc, 0, 0, SRCCOPY);
+    SelectObject(hdc, oldMem);
+    DeleteObject(memBmp);
+    DeleteDC(hdc);
     EndPaint(hwnd, &ps);
 }
 
@@ -509,6 +523,33 @@ void UpdateSettingsScrollbar(int contentH)
     SetScrollInfo(g_hSettings, SB_VERT, &si, TRUE);
 }
 
+// 像素级滚动（频闪根治）：ScrollWindowEx 把现有画面 BLT 平移（子控件像素
+// 随内容一起搬走），子窗由 SW_SCROLLCHILDREN 同步位移，只失效新露出的窄条。
+// 此前"MoveWindow 重排 + 全窗失效重绘"路线的频闪真根因：父窗双缓冲只保护
+// 自绘面，组合框/静态文本等子控件在父窗 BitBlt 之后各自独立重画、逐个跳现。
+// 导航列与页脚提示带是固定区，从 BLT 矩形排除；页脚带单独补失效，随 WM_PAINT
+// 双缓冲重画（纯父窗像素，无子控件参与，不引入频闪）。
+void ScrollSettingsTo(HWND hwnd, int pos)
+{
+    int oldY = g_scrollY;
+    g_scrollY = pos;
+    RECT rcScroll{};
+    GetClientRect(hwnd, &rcScroll);
+    int footBand = Scaled(40);
+    rcScroll.left = Scaled(kNavW);
+    rcScroll.bottom -= footBand;
+    if (rcScroll.bottom > rcScroll.top)
+    {
+        ScrollWindowEx(hwnd, 0, oldY - pos, &rcScroll, NULL, NULL, NULL,
+                       SW_SCROLLCHILDREN | SW_INVALIDATE);
+        RECT rcFoot = rcScroll;
+        rcFoot.top = rcFoot.bottom;
+        rcFoot.bottom += footBand;
+        InvalidateRect(hwnd, &rcFoot, TRUE);
+    }
+    UpdateSettingsScrollbar(LayoutSettings()); // 排布对齐（同坐标幂等）+滚动条同步
+}
+
 // ---- Win11 风格 owner-draw：药丸开关 / 强调色按钮 ----
 
 // Win11 开关（ToggleSwitch）：44×24 热区内绘 40×20 全圆角药丸——
@@ -518,8 +559,9 @@ void DrawToggle(const DRAWITEMSTRUCT* dis)
 {
     HDC hdc = dis->hDC;
     RECT rc = dis->rcItem;
-    // 控件背景补白（BUTTON 默认 BTNFACE 擦除会露灰，须盖成卡片白）
-    HBRUSH hCard = CreateSolidBrush(kUiCard);
+    // 控件背景补白（BUTTON 默认 BTNFACE 擦除会露灰，须盖成卡片底）
+    const UiPalette& pal = UiPaletteFor(EffectiveDark(LoadSettings().darkMode));
+    HBRUSH hCard = CreateSolidBrush(pal.card);
     FillRect(hdc, &rc, hCard);
     DeleteObject(hCard);
 
@@ -533,8 +575,8 @@ void DrawToggle(const DRAWITEMSTRUCT* dis)
     // GDI+ 抗锯齿药丸（GDI RoundRect 无 AA，真机边缘锯齿）
     if (on)
         GdipRoundRect(hdc, pr, accent, pillH / 2);
-    else // 关：1px 灰描边（浅灰底在白卡上要有可见边界）
-        GdipRoundRect(hdc, pr, RGB(234, 234, 234), pillH / 2, kUiControlEdge, 1);
+    else // 关：1px 灰描边（药丸底在卡片上要有可见边界）
+        GdipRoundRect(hdc, pr, pal.toggleOff, pillH / 2, pal.controlEdge, 1);
 
     // 滑钮：12px 圆（开=白居右；关=深灰居左），GDI+ 抗锯齿
     int knob = MulDiv(12, g_setDpi, 96);
@@ -542,7 +584,7 @@ void DrawToggle(const DRAWITEMSTRUCT* dis)
                 : pr.left + MulDiv(4, g_setDpi, 96);
     int ky = pr.top + (pillH - knob) / 2;
     GdipFillEllipse(hdc, RECT{ kx, ky, kx + knob, ky + knob },
-                    on ? RGB(255, 255, 255) : RGB(90, 90, 90));
+                    on ? pal.btnText : pal.toggleKnobOff);
 }
 
 // 强调色按钮：皮肤色圆角底 + 白字（按下加深 25%）
@@ -597,6 +639,13 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
             if (HIWORD(wParam) == EN_CHANGE) SaveFromControls();
             return 0;
         case IDC_CMB_DARK:
+            if (HIWORD(wParam) == CBN_SELCHANGE)
+            {
+                SaveFromControls();
+                // 明暗切换即时反映标题栏（窗体/子控件由保存后的全窗失效重画）
+                UiApplyTitleBarDark(hwnd, EffectiveDark(LoadSettings().darkMode));
+            }
+            return 0;
         case IDC_CMB_FONTSIZE:
         case IDC_CMB_SKIN:
         case IDC_CMB_UIFONT:
@@ -625,14 +674,9 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         PaintSettings(hwnd); // 导航/卡片/标题/分隔线/底部提示统一绘制
         return 0;
     case WM_ERASEBKGND:
-    {
-        // 中性底一次铺满即可：导航/卡片/文本全部在 WM_PAINT 里绘制
-        HDC hdc = (HDC)wParam;
-        RECT rc{};
-        GetClientRect(hwnd, &rc);
-        FillRect(hdc, &rc, g_hBgBrush);
+        // 跳过系统擦除：InvalidateRect(TRUE) 触发的"立即铺底"是滚动频闪的
+        // 第一段可见期；背景改由 WM_PAINT 内存位图整帧铺满（双缓冲）
         return 1;
-    }
     case WM_LBUTTONDOWN:
     {
         // 导航项命中→换页：回顶重排全刷（其余区域点击走默认，不夺编辑焦点）
@@ -738,9 +782,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         if (pos > maxPos) pos = maxPos;
         if (pos != g_scrollY)
         {
-            g_scrollY = pos;
-            UpdateSettingsScrollbar(LayoutSettings());
-            InvalidateRect(hwnd, NULL, TRUE); // 卡片/控件整体随滚动重绘
+            ScrollSettingsTo(hwnd, pos);
         }
         return 0;
     }
@@ -758,12 +800,19 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         if (pos > maxPos) pos = maxPos;
         if (pos != g_scrollY)
         {
-            g_scrollY = pos;
-            UpdateSettingsScrollbar(LayoutSettings());
-            InvalidateRect(hwnd, NULL, TRUE);
+            ScrollSettingsTo(hwnd, pos);
         }
         return 0;
     }
+    case WM_SETTINGCHANGE:
+        // 系统深浅色切换广播（"ImmersiveColorSet"）：跟随系统时设置页/标题栏
+        // 即时跟随；强制浅/深模式不受影响（EffectiveDark 不读系统主题）
+        if (lParam && wcscmp((const wchar_t*)lParam, L"ImmersiveColorSet") == 0)
+        {
+            UiApplyTitleBarDark(hwnd, EffectiveDark(LoadSettings().darkMode));
+            InvalidateRect(hwnd, NULL, TRUE);
+        }
+        return 0;
     case WM_GETMINMAXINFO:
     {
         // 宽度下限=最窄可读；高度任意（超出靠纵向滚动）；上限防失控
@@ -775,29 +824,39 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         return 0;
     }
     case WM_CTLCOLORSTATIC:
-        // 卡片上的静态文本：白底主文本；行描述（g_descWnds）：白底次级文本
+    {
+        // 卡片上的静态文本：卡片底主文本；行描述（g_descWnds）：卡片底次级文本
+        const UiPalette& pal = UiPaletteFor(EffectiveDark(LoadSettings().darkMode));
         for (HWND h : g_descWnds)
         {
             if ((HWND)lParam == h)
             {
-                SetBkColor((HDC)wParam, kUiCard);
-                SetTextColor((HDC)wParam, kUiText2);
-                return (LRESULT)g_hCardBrush;
+                SetBkColor((HDC)wParam, pal.card);
+                SetTextColor((HDC)wParam, pal.text2);
+                return (LRESULT)UiSolidBrush(pal.card);
             }
         }
-        SetBkColor((HDC)wParam, kUiCard);
-        SetTextColor((HDC)wParam, kUiText);
-        return (LRESULT)g_hCardBrush;
+        SetBkColor((HDC)wParam, pal.card);
+        SetTextColor((HDC)wParam, pal.text);
+        return (LRESULT)UiSolidBrush(pal.card);
+    }
     case WM_CTLCOLORBTN:
-        // owner-draw 勾选框背景擦除（默认 BTNFACE 会露灰，须给卡片白刷）
-        SetBkColor((HDC)wParam, kUiCard);
-        SetTextColor((HDC)wParam, kUiText);
-        return (LRESULT)g_hCardBrush;
+    {
+        // owner-draw 开关背景擦除（默认 BTNFACE 会露灰，须给卡片底刷）
+        const UiPalette& pal = UiPaletteFor(EffectiveDark(LoadSettings().darkMode));
+        SetBkColor((HDC)wParam, pal.card);
+        SetTextColor((HDC)wParam, pal.text);
+        return (LRESULT)UiSolidBrush(pal.card);
+    }
     case WM_CTLCOLOREDIT:
     case WM_CTLCOLORLISTBOX:
-        SetBkColor((HDC)wParam, kUiCard);
-        SetTextColor((HDC)wParam, kUiText);
-        return (LRESULT)g_hCardBrush;
+    {
+        // 输入框/下拉列表：卡片底（深浅主题跟随）
+        const UiPalette& pal = UiPaletteFor(EffectiveDark(LoadSettings().darkMode));
+        SetBkColor((HDC)wParam, pal.card);
+        SetTextColor((HDC)wParam, pal.text);
+        return (LRESULT)UiSolidBrush(pal.card);
+    }
     case WM_KEYDOWN:
         // Esc 隐藏设置窗（与标题栏关闭同语义；焦点在子控件时不触发）
         if (wParam == VK_ESCAPE)
@@ -915,7 +974,9 @@ void CreateSettingsWindow(HINSTANCE hInst)
 
     g_hSettings = CreateWindowExW(WS_EX_COMPOSITED, kSettingsWndClass, L"灵犀输入法设置",
                                    WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU |
-                                   WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME,
+                                   WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_THICKFRAME |
+                                   WS_CLIPCHILDREN, // 父绘裁掉子控件区：滚动时父 BitBlt
+                                   // 不再压过子控件表面（COMPOSITED 同面合成频闪源）
                                    CW_USEDEFAULT, CW_USEDEFAULT,
                                    MulDiv(900, scale, 96), MulDiv(680, scale, 96),
                                    NULL, NULL, hInst, NULL);
@@ -926,6 +987,9 @@ void CreateSettingsWindow(HINSTANCE hInst)
         return;
     }
     LX_LOG(L"ui", L"设置窗句柄 OK，继续子控件构建（诊断）");
+
+    // 标题栏深浅随生效主题（R7：跟随系统/强制深色时变暗）
+    UiApplyTitleBarDark(g_hSettings, EffectiveDark(LoadSettings().darkMode));
 
     // 恢复上次位置/尺寸（隐藏时落盘）；无效（未记录/显示器拔了/
     // 分辨率变了）则回退默认尺寸+居中
@@ -1085,11 +1149,11 @@ void CreateSettingsWindow(HINSTANCE hInst)
     addPage(L"外观");
     addCard(L"候选窗");
     auto fillDark = [](HWND h) {
-        for (const wchar_t* s : { L"跟随应用", L"浅色", L"深色" })
+        for (const wchar_t* s : { L"跟随系统", L"浅色", L"深色" })
             ComboBox_AddString(h, s);
     };
     g_hCmbDark = mkCombo(IDC_CMB_DARK, fillDark);
-    mkRow(L"明暗", L"候选窗跟随应用主题或强制浅色/深色", g_hCmbDark, CK_COMBO, 150);
+    mkRow(L"明暗", L"跟随系统深浅色，或强制浅色/深色（候选窗与设置页）", g_hCmbDark, CK_COMBO, 150);
     auto fillFont = [](HWND h) {
         for (uint32_t z : {12u, 14u, 16u, 18u, 20u, 24u, 28u, 32u})
         {
