@@ -732,10 +732,12 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         break;
     }
     case WM_MOUSELEAVE:
+        // TME_LEAVE 一次性：离开即失效，无论 hover 态如何都须重挂，
+        // 否则"内容区移出→再悬停导航→离窗"收不到 LEAVE，hover 药丸滞留
+        g_trackingMouse = false;
         if (g_navHover != -1)
         {
             g_navHover = -1;
-            g_trackingMouse = false;
             RECT navRc{ 0, 0, Scaled(kNavW), Scaled(56) + (int)g_pages.size() * Scaled(36) };
             InvalidateRect(hwnd, &navRc, FALSE);
         }

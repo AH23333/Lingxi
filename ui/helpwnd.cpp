@@ -335,20 +335,31 @@ LRESULT CALLBACK HelpWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
     }
     if (msg == WM_MOUSEWHEEL)
     {
-        // Ctrl+滚轮调帮助正文字号（12..28；速查页长文可读性，浏览器缩放手势同款）
-        int nh = g_helpFontH + ((short)GET_WHEEL_DELTA_WPARAM(wp) > 0 ? 1 : -1);
-        if (nh < 12) nh = 12;
-        if (nh > 28) nh = 28;
-        if (nh != g_helpFontH)
+        // Ctrl+滚轮调帮助正文字号（12..28；速查页长文可读性，浏览器缩放手势同款）。
+        // 审计轮 10 修复：原实现不检查 Ctrl——焦点在按钮等处（滚轮消息落到
+        // 顶层窗）时裸滚轮误改字号，与帮助文本"Ctrl + 滚轮"条款不符。
+        if (GetKeyState(VK_CONTROL) & 0x8000)
         {
-            g_helpFontH = nh;
-            if (g_helpFont) DeleteObject(g_helpFont);
-            g_helpFont = CreateFontW(-g_helpFontH, 0, 0, 0, FW_NORMAL, 0, 0, 0,
-                                     DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0,
-                                     L"Microsoft YaHei UI");
+            int nh = g_helpFontH + ((short)GET_WHEEL_DELTA_WPARAM(wp) > 0 ? 1 : -1);
+            if (nh < 12) nh = 12;
+            if (nh > 28) nh = 28;
+            if (nh != g_helpFontH)
+            {
+                g_helpFontH = nh;
+                if (g_helpFont) DeleteObject(g_helpFont);
+                g_helpFont = CreateFontW(-g_helpFontH, 0, 0, 0, FW_NORMAL, 0, 0, 0,
+                                         DEFAULT_CHARSET, 0, 0, CLEARTYPE_QUALITY, 0,
+                                         L"Microsoft YaHei UI");
+                HWND edit = (HWND)GetWindowLongPtrW(h, GWLP_USERDATA);
+                if (edit) SendMessageW(edit, WM_SETFONT, (WPARAM)g_helpFont, TRUE);
+                LX_LOG(L"ui", L"帮助窗字号调整为 %d", g_helpFontH);
+            }
+        }
+        else
+        {
+            // 非缩放手势：滚轮转发正文（焦点在按钮等处时也能正常滚动文本）
             HWND edit = (HWND)GetWindowLongPtrW(h, GWLP_USERDATA);
-            if (edit) SendMessageW(edit, WM_SETFONT, (WPARAM)g_helpFont, TRUE);
-            LX_LOG(L"ui", L"帮助窗字号调整为 %d", g_helpFontH);
+            if (edit) SendMessageW(edit, WM_MOUSEWHEEL, wp, lp);
         }
         return 0;
     }
