@@ -947,4 +947,17 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - 门禁：build Debug 零错 + engine_test 沙箱 **224/0** + fix_readings 缺口 0，全后台。
 - 工装坑固化 PITFALLS #76：PowerShell 嵌套 `\"` 先被 PS 剥一层、MSBuild（.NET 规则）把 `\"` 当引号转义吞掉 `/v:m /nologo`——git 长 message 改 `-F 文件`、MSBuild 尾反斜杠属性写 `\\`；engine_test 末行"=== 结果: PASS=.. ==="在重定向下被 wcstombs C locale 转换截断只剩"=== "——门禁计数改 `Select-String '\[PASS\]'` 统计。
 
+### 深度审计：批次 A/B 数据完整性缺陷修复（`0677401`）
+
+用户指令"继续深入分析挖掘潜在问题"——对已提交批次做代码级审计（读实现全文、列缺陷清单、逐项核验），确认 5 项真实缺陷修复、4 项疑点排除：
+
+- **usage.txt 非原子写（高）**：WriteTextFile CREATE_ALWAYS 直写有两个撕裂窗口——进程中途被杀留半截文件（下次启动解析出部分值）；写入期间备份 CopyFileW/诊断导出恰好读到空/半截文件。改 **.tmp+MoveFileExW REPLACE_EXISTING**（与引擎字典文件同模式），失败删临时文件。
+- **备份跨重启幂等认半截（高）**：原认账依据"当日目录存在"——进程在 BackupInto 中途被杀（拷到 2/5 文件）后新实例按目录认账，当日备份永久残缺。改 **done.flag 完成标记**：BackupInto 成功才写；幂等检查查标记而非目录；无标记（半截）重跑覆盖式补拷全量。
+- **备份失败重试风暴（中）**：BackupInto 失败不置 g_doneDay → 个别文件被占用时**每次选词**重跑 5×GetFileAttributes+5×CopyFileW+轮换枚举。改**成败都认账当日**+LX_LOG 告警；重启后因标记缺失自动补试（原子写落地后 CopyFileW 撞 SaveLocked 写入窗口这一失败源已消除）。
+- **午夜取时撕裂（低）**：TodaySuffix/TodayDayKey 两次独立 GetLocalTime 在 00:00 边界错开 → "认账日期"与"备份目录"差一天、午夜后首日漏备份。合并 **TodayBoth 单次取时**。
+- **ApplyLearn 每选词全量读注册表（中）**：LoadSettings 约 30 项 RegGetValueW 跑在选词热路径。改 **16 次选词刷新一次的 std::atomic 缓存**（注册表 IO 降 94%；达成检测幂等，多客户端线程读到新旧值均无害）。
+- **疑点排除**：tray 2020 打开备份文件夹已先 CreateDirectoryW（无缺陷）；RotateOldBackups 已校验 FILE_ATTRIBUTE_DIRECTORY；StatsMarkGoalReached 落盘失败时内存 goalReachedDay 已置位不会重复弹 toast；BackupInto"全源缺失"路径（全新安装首选拷空）由"成败都认账"覆盖，次日全量补齐。
+- 门禁：build Debug 零错 + engine_test 沙箱 **224/0** + fix_readings 缺口 0，全后台。
+
+
 
