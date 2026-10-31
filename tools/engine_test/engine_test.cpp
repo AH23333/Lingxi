@@ -1198,6 +1198,24 @@ int wmain()
                             w.find(L"/") != std::wstring::npos) { alt = true; break; }
                     Report(alt, "R3 rq alt formats", L"");
                 }
+                // R7b 扩展格式：rq 大写日期（〇）、sj 中文时分、xq 礼拜、rqsj 日期+星期
+                {
+                    struct ExtCase { const wchar_t* input; const wchar_t* must; const wchar_t* name; };
+                    const ExtCase kExt[] = {
+                        { L"rq", L"〇", L"rq uppercase cn date" },
+                        { L"sj", L"时", L"sj chinese hms" },
+                        { L"xq", L"礼拜", L"xq libai alias" },
+                        { L"rqsj", L"星期", L"rqsj date+weekday" },
+                    };
+                    for (const auto& ec : kExt)
+                    {
+                        lingxi::Prediction r = py->Predict(ec.input);
+                        bool hit = false;
+                        for (const auto& w : r.cands)
+                            if (w.find(ec.must) != std::wstring::npos) { hit = true; break; }
+                        Report(hit, "R3 extended formats", ec.name);
+                    }
+                }
             }
 
             // P12. R2 自定义短语：缩写整串命中注入置顶，热载增删生效

@@ -183,12 +183,37 @@ bool CorrectSyllableTypo(const std::string& s, std::string& out)
 // 本地时间实时生成注入置顶；数字为主，年/月/日/星期 简繁同形，走通用
 // 繁化链无害。学习/Boost 均不作用于注入候选（确定性便民，不参与调频）。
 // ---------------------------------------------------------------------------
+
+// R7b 大写日期（合同/票据场景）：年逐位转写（2026→二〇二六），月/日按
+// 口语读法（十月、三十一日，不补零）。仅 rq 触发注入，不影响常规候选。
+std::wstring CnUppercaseDate(const SYSTEMTIME& st)
+{
+    static const wchar_t* kCnDigit[] = {
+        L"〇", L"一", L"二", L"三", L"四", L"五", L"六", L"七", L"八", L"九"
+    };
+    wchar_t ys[8];
+    _snwprintf_s(ys, _TRUNCATE, L"%u", st.wYear);
+    std::wstring y;
+    for (const wchar_t* p = ys; *p; ++p)
+        y += kCnDigit[*p - L'0'];
+    auto cn2 = [](unsigned v) -> std::wstring // 1..31
+    {
+        if (v < 10) return kCnDigit[v]; // 等长返回，下面两条覆盖 10..31
+        if (v == 10) return L"十";
+        if (v < 20) return std::wstring(L"十") + kCnDigit[v - 10];
+        return std::wstring(kCnDigit[v / 10]) + L"十" +
+               ((v % 10) ? std::wstring(kCnDigit[v % 10]) : std::wstring());
+    };
+    return y + L"年" + cn2(st.wMonth) + L"月" + cn2(st.wDay) + L"日";
+}
+
 std::vector<std::wstring> BuildDateTimeCands(const std::string& in)
 {
     std::vector<std::wstring> out;
     SYSTEMTIME st{};
     GetLocalTime(&st);
     wchar_t d[48], t[32], t2[40], b[48];
+    static const wchar_t* kDay[] = { L"日", L"一", L"二", L"三", L"四", L"五", L"六" };
     _snwprintf_s(d, _TRUNCATE, L"%u年%02u月%02u日", st.wYear, st.wMonth, st.wDay);
     _snwprintf_s(t, _TRUNCATE, L"%02u:%02u", st.wHour, st.wMinute);
     _snwprintf_s(t2, _TRUNCATE, L"%02u:%02u:%02u", st.wHour, st.wMinute, st.wSecond);
@@ -196,30 +221,40 @@ std::vector<std::wstring> BuildDateTimeCands(const std::string& in)
     {
         out.push_back(std::wstring(d) + L" " + t);
         out.push_back(std::wstring(d) + L" " + t2);
+        _snwprintf_s(b, _TRUNCATE, L"%ls 星期%ls", d, kDay[st.wDayOfWeek]);
+        out.push_back(b);
     }
     else if (in == "rq")
     {
         out.push_back(d);
+        out.push_back(CnUppercaseDate(st)); // 大写：二〇二六年十月三十一日
         _snwprintf_s(b, _TRUNCATE, L"%u-%02u-%02u", st.wYear, st.wMonth, st.wDay);
         out.push_back(b);
         _snwprintf_s(b, _TRUNCATE, L"%u/%02u/%02u", st.wYear, st.wMonth, st.wDay);
         out.push_back(b);
+        _snwprintf_s(b, _TRUNCATE, L"%u年%u月%u日", st.wYear, st.wMonth, st.wDay);
+        out.push_back(b); // 无补零：2026年5月3日（单数字月/日场景）
     }
     else if (in == "sj")
     {
         out.push_back(t);
         out.push_back(t2);
+        _snwprintf_s(b, _TRUNCATE, L"%u时%u分", st.wHour, st.wMinute);
+        out.push_back(b); // 中文时分：14时30分
         unsigned h12 = st.wHour % 12;
         if (h12 == 0) h12 = 12;
         _snwprintf_s(b, _TRUNCATE, L"%ls%u:%02u",
                      st.wHour < 12 ? L"上午" : L"下午", h12, st.wMinute);
         out.push_back(b);
+        _snwprintf_s(b, _TRUNCATE, L"%ls%u时%u分",
+                     st.wHour < 12 ? L"上午" : L"下午", h12, st.wMinute);
+        out.push_back(b); // 12 小时中文：下午2时30分
     }
     else if (in == "xq")
     {
-        static const wchar_t* kDay[] = { L"日", L"一", L"二", L"三", L"四", L"五", L"六" };
         out.push_back(std::wstring(L"星期") + kDay[st.wDayOfWeek]);
         out.push_back(std::wstring(L"周") + kDay[st.wDayOfWeek]);
+        out.push_back(std::wstring(L"礼拜") + kDay[st.wDayOfWeek]);
     }
     return out;
 }
@@ -275,6 +310,12 @@ const std::unordered_map<std::wstring, std::wstring>& EmojiFusionMap()
         { L"生气", L"😡" },   { L"礼物", L"🎁" },   { L"电话", L"📞" },
         { L"邮件", L"📧" },   { L"警告", L"⚠️" },   { L"问号", L"❓" },
         { L"感叹号", L"❗" }, { L"小猫", L"🐱" },   { L"小狗", L"🐶" },
+        // R7b 扩充（社交高频）：确认/告别/情绪/生活场景
+        { L"收到", L"👌" },   { L"好的", L"👍" },   { L"再见", L"👋" },
+        { L"抱歉", L"😞" },   { L"没关系", L"🤗" }, { L"开心", L"😊" },
+        { L"难过", L"😔" },   { L"无聊", L"🥱" },   { L"睡觉", L"😴" },
+        { L"吃饭", L"🍚" },   { L"庆祝", L"🎊" },   { L"成功", L"✅" },
+        { L"失败", L"❌" },   { L"注意", L"❗" },
     };
     return m;
 }
