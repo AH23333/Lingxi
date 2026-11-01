@@ -106,8 +106,9 @@ void LoadLocked()
 {
     if (g_loaded) return;
     g_loaded = true;
-    wchar_t ns[64] = {};
-    if (GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", ns, 64) > 0)
+    // 读 main.cpp 的快照（而非直读环境变量）：生产宿主启动即清 LINGXI_SETTINGS_NS，
+    // e2e 派生的宿主若惰性读环境会误判生产，把打字统计写进 regress 临时 APPDATA
+    if (WasTestSpawned())
     {
         g_disabled = true;
         return;
