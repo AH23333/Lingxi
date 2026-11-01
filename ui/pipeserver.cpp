@@ -172,6 +172,9 @@ void PipeServer::AcceptProc()
         ClientPtr c = std::make_shared<ClientCtx>();
         c->hPipe = h;
         c->owner = this;
+        EnterCriticalSection(&_cs);
+        _clients.push_back(c); // 客户端注册表：PickTargetClient 前台定位需遍历
+        LeaveCriticalSection(&_cs);
         auto* param = new ClientPtr(c); // 客户端线程持一份引用
         HANDLE t = CreateThread(NULL, 0, s_ClientProc, param, 0, NULL);
         if (!t)
@@ -216,6 +219,11 @@ void PipeServer::ClientProc(ClientPtr c)
         if (it->c == c) it = _queue.erase(it);
         else ++it;
     }
+    for (auto it = _clients.begin(); it != _clients.end();)
+    {
+        if (it->get() == c.get()) it = _clients.erase(it);
+        else ++it;
+    }
     LeaveCriticalSection(&_cs);
     if (wasActive) _wnd->Hide();
 
@@ -233,7 +241,10 @@ void PipeServer::HandleMsg(ClientPtr c, uint8_t type, const std::vector<uint8_t>
     {
         MsgHello m{};
         if (ReadPod(p, end, m))
+        {
             c->dark = m.darkTheme != 0;
+            c->pid = m.pid; // 宿主应用 PID：PickTargetClient 按前台进程定位
+        }
         break;
     }
     case MSG_ACTIVATE:
@@ -660,12 +671,51 @@ void PipeServer::SendCandidates(ClientCtx* c, uint32_t ver, const Prediction& pr
     WriteFrame(c->hPipe, MSG_CANDS, bodyOut.data(), (uint32_t)bodyOut.size(), 500);
 }
 
+// 目标客户端选择：候选窗点选/面板插入必须落进前台应用。_active 会被后台
+// 客户端抢占——Activate 置位、PredictProc 每次预测也改写；宿主重启后的
+// 重连风暴里最后激活者未必是前台应用（实锤：插入发往后台实例 → 该实例
+// GetFocus NULL → 文本静默丢失）。规则：优先取 MSG_HELLO 上报 PID 与前台
+// 窗口进程一致的客户端；前台仍是本宿主进程时（面板 ExitSearch 刚发出
+// SetForegroundWindow、激活在途）短等迁移；无匹配回退 _active。
+PipeServer::ClientPtr PipeServer::PickTargetClient()
+{
+    const DWORD myPid = GetCurrentProcessId();
+    DWORD fgPid = 0;
+    for (int i = 0;; i++)
+    {
+        HWND fg = GetForegroundWindow();
+        fgPid = 0;
+        if (fg) GetWindowThreadProcessId(fg, &fgPid);
+        if (fgPid != myPid || i >= 25) break; // 前台已离开宿主，或已等 ~500ms
+        Sleep(20);
+    }
+    bool viaFg = false;
+    ClientPtr pick;
+    if (fgPid && fgPid != myPid)
+    {
+        EnterCriticalSection(&_cs);
+        if (_active && _active->alive && _active->pid == fgPid) pick = _active;
+        if (!pick)
+            for (auto& c : _clients)
+                if (c->alive && c->pid == fgPid) { pick = c; break; }
+        LeaveCriticalSection(&_cs);
+        viaFg = pick != nullptr;
+    }
+    if (!pick)
+    {
+        EnterCriticalSection(&_cs);
+        if (_active && _active->alive) pick = _active;
+        LeaveCriticalSection(&_cs);
+    }
+    LX_LOG(L"ui", L"PickTarget fgPid=%u -> pid=%u %s", fgPid,
+           pick ? pick->pid : 0,
+           viaFg ? L"前台命中" : (pick ? L"回退_active" : L"无客户端"));
+    return pick;
+}
+
 void PipeServer::SendPick(uint32_t ver, uint32_t index)
 {
-    ClientPtr a;
-    EnterCriticalSection(&_cs);
-    a = _active;
-    LeaveCriticalSection(&_cs);
+    ClientPtr a = PickTargetClient();
     if (!a || !a->alive) return;
 
     MsgPick m{ ver, index };
@@ -673,17 +723,19 @@ void PipeServer::SendPick(uint32_t ver, uint32_t index)
     LX_LOG(L"ui", L"PICK ver=%u index=%u", ver, index);
 }
 
-// 符号面板：把符号文本发给当前活跃客户端，DLL 侧经封送窗口插入。
+// 符号面板：把符号文本发给目标客户端（前台应用优先），DLL 侧经封送窗口插入。
 void PipeServer::SendInsertText(const std::wstring& text)
 {
-    ClientPtr a;
-    EnterCriticalSection(&_cs);
-    a = _active;
-    LeaveCriticalSection(&_cs);
-    if (!a || !a->alive) return;
+    ClientPtr a = PickTargetClient();
+    if (!a || !a->alive)
+    {
+        LX_LOG(L"ui", L"SendInsertText 丢弃：无可用客户端");
+        return;
+    }
     std::vector<uint8_t> body;
     AppendStr(body, text);
     WriteFrame(a->hPipe, MSG_INSERT_TEXT, body.data(), (DWORD)body.size(), 200);
+    LX_LOG(L"ui", L"SendInsertText 已发 chars=%u pid=%u", (uint32_t)text.size(), a->pid);
 }
 
 // 选字反馈（键盘/鼠标）：按 ver 取最近一次拼音预测，用全局索引定位被选词，

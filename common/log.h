@@ -97,7 +97,10 @@ inline void LogLine(const wchar_t* tag, const wchar_t* fmt, ...)
     wchar_t ts[16];
     GetLogTimeStamp(ts, 16);
     wchar_t line[600];
-    _snwprintf_s(line, _TRUNCATE, L"[%s][Lingxi][%s] %s\n", ts, tag, buf);
+    // 行内带 PID：多进程（宿主/各应用 DLL）同写一份日志文件，无 PID 无法
+    // 区分 [ime]/[pipe] 行归属（插入落错实例的归因盲区）
+    _snwprintf_s(line, _TRUNCATE, L"[%s][%u][Lingxi][%s] %s\n", ts,
+                 GetCurrentProcessId(), tag, buf);
     OutputDebugStringW(line);
     AppendToFile(line);
 }
@@ -115,7 +118,8 @@ inline void LogLineV(const wchar_t* tag, const wchar_t* fmt, ...)
     wchar_t ts[16];
     GetLogTimeStamp(ts, 16);
     wchar_t line[600];
-    _snwprintf_s(line, _TRUNCATE, L"[%s][Lingxi][%s] %s\n", ts, tag, buf);
+    _snwprintf_s(line, _TRUNCATE, L"[%s][%u][Lingxi][%s] %s\n", ts,
+                 GetCurrentProcessId(), tag, buf);
     AppendToFile(line);
 }
 

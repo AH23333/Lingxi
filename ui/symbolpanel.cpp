@@ -5,6 +5,7 @@
 #include "symsearch.h"
 
 #include <windowsx.h>
+#include <imm.h>
 #include <stdio.h>
 #include <string>
 #include <vector>
@@ -323,8 +324,9 @@ extern std::function<void(const std::wstring&)> g_onInsert;
 // 常驻搜索框在标签行下。点击 EDIT 进入搜索态：临时摘 WS_EX_NOACTIVATE +
 // SetForegroundWindow 抢激活（真实 EDIT 需要 WM_CHAR 流，NOACTIVATE 下击键
 // 全漏给宿主），记录 g_prevFore；退出（Esc/回车上屏/点标签/插符号/失活）时
-// 复原 exstyle + 把前台还给原窗口。插入链路是管道 SendInsertText，与焦点
-// 无关（四管理窗已验证焦点被夺后仍可插入宿主）。
+// 复原 exstyle + 把前台还给原窗口。插入链路虽是管道 SendInsertText，但搜索
+// 期间面板持有前台、目标线程的 TSF 焦点为空 → 搜索态提交必须先 ExitSearch
+// 归还前台再发插入（DLL 侧 kInsertRetryTimer 定时重试兜底残余竞态）。
 constexpr int kSearchEditId = 0x5E31;
 std::vector<std::wstring> g_searchStore;
 std::vector<const wchar_t*> g_searchPtrs;
@@ -427,9 +429,12 @@ LRESULT CALLBACK SearchEditProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             if (g_searching && g_hPanel && !g_searchStore.empty())
             {
                 std::wstring item = g_searchStore[0];
+                // 先还前台再发插入：面板持前台时目标线程 TSF 焦点为空（GetFocus
+                // NULL 丢插入）→ ExitSearch 先把焦点复原链送进目标队列，插入帧
+                // 后到即可直接上屏。
+                ExitSearch(g_hPanel, true);
                 if (g_onInsert) g_onInsert(item);
                 AddRecent(item);
-                ExitSearch(g_hPanel, true);
             }
             return 0;
         }
@@ -552,12 +557,14 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         if (col >= 0 && col < cat.cols && x >= gx && idx >= 0 && idx < cat.count)
         {
             std::wstring item(cat.items[idx]);
+            bool wasSearching = g_searching;
+            bool addRecent = g_searching || g_cat != kDtTabIndex;
+            if (g_searching)
+                ExitSearch(h, true); // 先还前台再插入（次序修正同 VK_RETURN）
             if (g_onInsert) g_onInsert(item);
             // "最近"页记录（去重前移+落盘）；"日期时间"页不进最近（随开随算，长串也挤坏 38px 格）
-            if (g_searching || g_cat != kDtTabIndex) AddRecent(item);
-            if (g_searching)
-                ExitSearch(h, true); // 搜索结果上屏后退搜索（插入链路与焦点无关）
-            else if (g_cat == 0) InvalidateRect(h, NULL, FALSE); // 正看"最近"页则即时刷新
+            if (addRecent) AddRecent(item);
+            if (!wasSearching && g_cat == 0) InvalidateRect(h, NULL, FALSE); // 正看"最近"页则即时刷新
             // 插入后保留面板（便于连续输入）；点击符号不抢焦点
             return 0;
         }
@@ -835,6 +842,10 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
             ((LPCREATESTRUCTW)lp)->hInstance, NULL);
         if (g_hSearchEdit)
         {
+            // 搜索框禁用 IMM：会话中文 IME 激活时，普通 EDIT 聚焦会被 CUAS 接管组合
+            // （smoke6 实测：打 mao 全进拼音组合、首 Enter 走 PinyinCommitRaw、Esc 被
+            // 组合吞——随打随搜/两段 Esc 全废）。摘除 IMM 上下文让按键直落编辑框。
+            ImmAssociateContext(g_hSearchEdit, NULL);
             SendMessageW(g_hSearchEdit, WM_SETFONT, (WPARAM)g_fontEdit, TRUE);
             // EM_SETCUEBANNER(0x1501)：工程 WINVER 下 winuser.h 未暴露该宏，按 SDK 值直发
             SendMessageW(g_hSearchEdit, 0x1501 /*EM_SETCUEBANNER*/, FALSE,

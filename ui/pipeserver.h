@@ -53,6 +53,7 @@ private:
         std::atomic<uint32_t> rrSeq{ 0 }; // 重排序号：新触发使旧线程立即退出（合并防堆积）
         bool active = false;
         bool dark = false;
+        DWORD pid = 0;   // 宿主应用进程 PID（MSG_HELLO 上报；前台进程定位用）
         PipeServer* owner = nullptr;
         LearnRec lastLearn;
         std::vector<uint8_t> rxbuf; // 持久接收缓冲（跨 ReadFrame 保留多帧字节）
@@ -92,6 +93,10 @@ private:
     void ApplyLearn(ClientCtx* c, uint32_t ver, uint32_t index); // 选字反馈→自学习
     void Activate(const ClientPtr& c);
     void Deactivate(const ClientPtr& c);
+    // 目标客户端选择：前台应用进程优先（_active 会被后台客户端激活/输入
+    // 抢占——PredictProc 每次预测也改写它），无匹配回退 _active。
+    // SendPick/SendInsertText 用。
+    ClientPtr PickTargetClient();
     // 判定本客户端是否仍是该 (ver,gen,seq) 重排的合法接收者（_cs 内）
     bool RerankStillCurrent(ClientCtx* c, uint32_t ver, uint32_t gen, uint32_t seq);
 
@@ -106,6 +111,7 @@ private:
     CRITICAL_SECTION _cs{};
     bool _csInit = false;
     ClientPtr _active;
+    std::vector<ClientPtr> _clients; // 在连客户端注册表（_cs 保护）：前台定位遍历用
     std::deque<PendingPredict> _queue;
 };
 

@@ -180,6 +180,7 @@ void CPipeClient::HandleMessage(uint8_t type, const std::vector<uint8_t>& body)
     {
         std::wstring* s = new std::wstring();
         if (!ReadStr(p, end, *s)) { delete s; return; }
+        LX_LOG(L"pipe", L"MSG_INSERT_TEXT 收到 chars=%u marshal=%p", (uint32_t)s->size(), (void*)_hwndMarshal);
         if (_hwndMarshal)
             PostMessageW(_hwndMarshal, WM_APP_LX_INSERT, 0, (LPARAM)s);
         else

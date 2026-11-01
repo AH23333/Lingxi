@@ -24,6 +24,34 @@ static HRESULT RequestSession(ITfContext* pCtx, TfClientId cid, ITfEditSession* 
     return SUCCEEDED(hr) ? hrSession : hr;
 }
 
+// 兜底插入：TSF 焦点文档不可用时（TSF-unaware 应用的 CUAS 线程焦点关联会被
+// 面板搜索态的跨进程前台往返打断，实测 GetFocus NULL 而 Win32 焦点完好），
+// 退回本线程 Win32 焦点窗口直接送字符——EDIT/RICHEDIT 用 EM_REPLACESEL，
+// 其余窗口逐字符 WM_CHAR（等价正常键盘字符路径）。运行在本线程（封送窗口
+// WndProc / 定时器），GetFocus() 即目标线程焦点。
+static bool InsertViaWin32Focus(const std::wstring& text)
+{
+    HWND hFocus = GetFocus();
+    if (!hFocus)
+    {
+        // 本线程无 Win32 焦点（目标应用未复原，或消息落进后台实例）——
+        // 带 tid 供日志比对归属（PID 在行前缀）
+        LX_LOG(L"ime", L"Win32 兜底：本线程无焦点 fg=%p tid=%u",
+               (void*)GetForegroundWindow(), GetCurrentThreadId());
+        return false;
+    }
+    wchar_t cls[16] = {};
+    GetClassNameW(hFocus, cls, 16);
+    if (_wcsicmp(cls, L"Edit") == 0 || _wcsnicmp(cls, L"RichEd", 6) == 0)
+    {
+        SendMessageW(hFocus, EM_REPLACESEL, TRUE, (LPARAM)text.c_str());
+        return true;
+    }
+    for (wchar_t ch : text)
+        SendMessageW(hFocus, WM_CHAR, (WPARAM)ch, 0);
+    return true;
+}
+
 CTextService::CTextService()
 {
     InterlockedIncrement(&g_cComponents);
@@ -628,17 +656,27 @@ bool CTextService::InsertTextAtSelection(const std::wstring& text)
 {
     if (!_pThreadMgr) return false;
     ITfDocumentMgr* pDoc = nullptr;
-    if (FAILED(_pThreadMgr->GetFocus(&pDoc)) || !pDoc) return false;
+    if (FAILED(_pThreadMgr->GetFocus(&pDoc)) || !pDoc)
+    {
+        LX_LOG(L"ime", L"InsertText: 无焦点文档（GetFocus NULL）→ Win32 焦点窗口兜底");
+        return InsertViaWin32Focus(text);
+    }
     ITfContext* pCtx = nullptr;
     HRESULT hr = pDoc->GetTop(&pCtx);
     pDoc->Release();
-    if (FAILED(hr) || !pCtx) return false;
+    if (FAILED(hr) || !pCtx)
+    {
+        LX_LOG(L"ime", L"InsertText: GetTop 失败 hr=0x%08X", hr);
+        return false;
+    }
 
     _lastSelfInsertTick = GetTickCount64(); // 兜底抑制 Chromium 异步自插入的滞后 OnEndEdit
     CInsertSession* pSession = new CInsertSession(this, pCtx, text);
     HRESULT hrSession = RequestSession(pCtx, _tfClientId, pSession, TF_ES_READWRITE);
     pSession->Release();
     pCtx->Release();
+    if (FAILED(hrSession))
+        LX_LOG(L"ime", L"InsertText: 会话失败 hr=0x%08X", hrSession);
     return SUCCEEDED(hrSession);
 }
 
@@ -941,6 +979,25 @@ LRESULT CALLBACK CTextService::MarshalWndProc(HWND hwnd, UINT msg, WPARAM wParam
             // 激活过渡窗口的有限次延迟重检（见 DetectPinyinMode 自愈逻辑）
             svc->RequestModeDetect();
         }
+        else if (svc && wParam == (UINT_PTR)kInsertRetryTimer)
+        {
+            if (svc->_pendingInsert.empty())
+            {
+                KillTimer(hwnd, kInsertRetryTimer);
+                return 0;
+            }
+            if (svc->PinyinActive()) svc->AbortCompositionState();
+            svc->_fSelfInsert = TRUE;
+            bool okIns = svc->InsertTextAtSelection(svc->_pendingInsert);
+            svc->_fSelfInsert = FALSE;
+            if (okIns || ++svc->_insertRetryCount >= kInsertRetryMax)
+            {
+                LX_LOG(L"ime", L"INSERT 重试%s count=%d",
+                       okIns ? L"成功" : L"放弃（焦点未复原）", svc->_insertRetryCount);
+                svc->_pendingInsert.clear();
+                KillTimer(hwnd, kInsertRetryTimer);
+            }
+        }
         return 0;
     }
     if (msg == WM_APP_LX_INSERT)
@@ -949,11 +1006,25 @@ LRESULT CALLBACK CTextService::MarshalWndProc(HWND hwnd, UINT msg, WPARAM wParam
         auto* s = (std::wstring*)lParam;
         if (svc && s)
         {
+            LX_LOG(L"ime", L"INSERT 收到 chars=%u pinyin=%d", (uint32_t)s->size(), svc->PinyinActive() ? 1 : 0);
             if (svc->PinyinActive()) svc->AbortCompositionState();
             // 守卫整个自插入窗口，避免上屏后 OnEndEdit 误弹上下文预测
             svc->_fSelfInsert = TRUE;
-            svc->InsertTextAtSelection(*s);
+            bool okIns = svc->InsertTextAtSelection(*s);
             svc->_fSelfInsert = FALSE;
+            if (!okIns)
+            {
+                // 面板搜索态提交：插入消息可能先于目标应用的 TSF 焦点复原到达
+                // （GetFocus NULL）。暂存并定时重试；面板侧已改为先还前台再发。
+                svc->_pendingInsert = *s;
+                svc->_insertRetryCount = 0;
+                SetTimer(hwnd, kInsertRetryTimer, 30, NULL);
+                LX_LOG(L"ime", L"INSERT 失败，转定时重试 chars=%u", (uint32_t)s->size());
+            }
+        }
+        else
+        {
+            LX_LOG(L"ime", L"INSERT 丢弃 svc=%p s=%p", (void*)svc, (void*)s);
         }
         delete s;
         return 0;

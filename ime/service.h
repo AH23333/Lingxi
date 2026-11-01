@@ -23,6 +23,8 @@ constexpr LONG kCtxMaxChars = 300;          // 上下文窗口（光标前字符
 // WM_APP_LX_PICK 定义于 common/proto.h
 constexpr UINT WM_APP_LX_MODE = WM_APP + 2; // 封送窗口：消息泵空闲点安全检测拼音模式
 constexpr UINT_PTR kModeRetryTimer = 0xB17; // 封送窗口定时器：激活过渡窗口的有限次延迟重检
+constexpr UINT_PTR kInsertRetryTimer = 0xB18; // 封送窗口定时器：面板插入的目标焦点未复原重试
+constexpr int kInsertRetryMax = 20;        // 插入重试上限（30ms×20≈600ms 后放弃）
 
 // Ctrl 或 Alt 按下：应用快捷键组合（Ctrl+C/V/F、Alt+字母等），TIP 永不拦截。
 // Shift/Caps 不在此列——它们另有中英混排语义（见 PinyinKeyEaten/HandlePinyinKey）。
@@ -182,6 +184,10 @@ private:
     ULONGLONG _lastSelfInsertTick = 0;
     // 最近一次退格放行时间：用户在删除文本而非请求补全，短期内抑制 OnEndEdit 预测。
     ULONGLONG _lastBackspaceTick = 0;
+    // 面板插入重试（kInsertRetryTimer）：面板搜索态提交时持有前台，插入消息可能
+    // 先于目标应用的 TSF 焦点复原到达（GetFocus NULL）→ 暂存文本定时重试。
+    std::wstring _pendingInsert;
+    int _insertRetryCount = 0;
 
     // 候选缓存（_cs 保护；读线程写、UI 线程读写）
     CRITICAL_SECTION _cs{};
