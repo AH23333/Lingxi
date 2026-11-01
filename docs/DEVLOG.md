@@ -1179,3 +1179,37 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 
 - ui/ 余 5 个动作触发型 APPDATA 读写点（blockedui/hotphraseui/phraseui/userdictwnd/statswnd）与 #83 同风险类——写入由用户动作门控（非持续写），待逐窗定 UX 后统一挂 WasTestSpawned 门控。
 - 肉眼验收清单不变（runbook 第 7 步，须用户在场）。
+
+## 2026-11-01 · 轮 16：C4a 双层根因（宿主重启竞态 × _active 劫持）——smoke6 24/24 首次全绿
+
+前情：smoke6 连续 4 轮 23/24（唯一红 C4a 搜索态点选上屏）。本轮全量验证先撞回归轮 19/24，借 lingxi-ime.log.old 10359 行完成全链归因，产品+工装双侧修复后 smoke6 首次 24/24。
+
+### 回归轮 19/24 全链归因（lingxi-ime.log.old）
+
+- **宿主重启竞态**：kill 后仅等 800ms 即起新宿主——smoke 的 DLL 在管道就绪前重连失败，撞"无宿主自动拉起"路径自拉第二宿主（pipeclient.cpp:55，15:58:20.120），随后重连退避 ~10s 黑窗，门控在黑窗内 4 试连败。
+- **重连风暴劫持 `_active`**：15:58:30.568-33.606 九个用户应用 DLL 集中重连，各自 MsgActivate/MsgPredict 改写 `_active`——A1 raw 落错窗、A3 PICK 送错客户端。
+- **发现隐藏劫持向量**：PredictProc（pipeserver.cpp:~524）每次预测都重写 `_active`——不止 Activate，任何后台客户端预测流量都在抢插入/选词目标。
+- **归因盲区**：日志行尚无 PID，多进程同写难分归属，只能靠时间戳流推断——归因后第一步补 PID。
+
+### 产品修复
+
+- **log.h**：LogLine/LogLineV 行格式带 PID（`[ts][pid][Lingxi][tag]`）。
+- **pipeserver**：ClientCtx 增 pid（MSG_HELLO 上报，pipeclient.cpp:112 一直有值）；AcceptProc 注册/ClientProc 摘除 `_clients` 注册表（_cs 保护）；新增 `PickTargetClient()`——前台窗口进程 PID 匹配客户端（前台=宿主时 25×20ms 短等焦点迁移），无匹配回退 `_active`，决策全落日志（PickTarget fgPid=%u -> pid=%u 前台命中/回退）；SendPick/SendInsertText 改走前台路由——插入/选词不再依赖激活史。
+- **service.cpp**：InsertViaWin32Focus 无焦点时落日志（fg=%p tid=%u）。
+
+### 工装修复（tmp/smoke6.ps1，不随提交）
+
+- 管道可枚举前置检查（`\\.\pipe\` 列表含 lingxi-ime-ipc，20s 不见 exit 2）——宿主进程在跑 ≠ 监听就绪。
+- 门控每试失败后 Tap Esc 收残留组合再重试；门控最终失败 exit 2 中止整轮；A6 子门控同款。
+- 固化无竞态运行程序（PITFALLS #86）：kill → 轮询等进程消失（≤8s）→ 起宿主（LINGXI_LOG=1）→ 等 LingxiUIReady 事件 → settle 1.5s → 管道复核 → 用户静默检查 → 清日志 → 起测。
+
+### 验证与门禁（全绿）
+
+- **smoke6 24/24 首次全绿**（exit=0）：C4a 日志实证 `PickTarget fgPid=20020 -> pid=20020 前台命中 → SendInsertText 已发 chars=2 pid=20020 → [20020][ime] INSERT 收到 chars=2`——宿主侧前台短等给了焦点恢复时间，TSF 首试即成，DLL 重试/Win32 兜底零触发（纵深保留）。宿主 pid=20076、smoke 客户端 pid=20020，PID 标签全程可归因。
+- smoke1 16/16、smoke2 8/8；build Debug 零错；regress ALL PASS（engine_test 254/0 + fix_readings + deep_test + e2e attempt 1 直绿）。
+- build32：首次 LNK1168（Debug32\ImeCore.dll 被在用 32 位进程锁写）——rename 侧载解锁（#89，.locked 待持锁者退出自清）后完全链接成功，32 位全量编译零错。
+
+### 押后
+
+- 肉眼验收清单不变（runbook 第 7 步，须用户在场）。
+- ui/ 余 5 个动作触发型 APPDATA 读写点挂 WasTestSpawned 门控（轮 15 遗留）。

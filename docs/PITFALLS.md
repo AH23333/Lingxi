@@ -502,3 +502,33 @@
 - **根因**：PS 5.1 `Out-File -Encoding utf8` 恒写 BOM（PS 7 才有 utf8NoBOM）；git -F 原样吃进，首行 BOM 落进 subject。
 - **修法**：写 git message 文件用 `[IO.File]::WriteAllText(path, text, (New-Object Text.UTF8Encoding($false)))`；已发生则 `git commit --amend`（未推送时）重建。
 - **规约**：git -F 文件写法（#76）补一条——UTF-8 无 BOM 显式编码；提交后 `git log --format='%h %s' -1` 肉眼核首字符。
+
+### 85. lingxi-ime.log 是 UTF-16LE 无 BOM——PS 缺省 ANSI 读法静默全错 ⭐⭐
+- **症状**：对 lingxi-ime.log 跑 Select-String/Get-Content 期望行一无所获或中文全乱码——归因脚本看似跑了实则全程空转。
+- **根因**：common/log.h 落盘 UTF-16LE 不带 BOM；PS 5.1 缺省读取见无 BOM 按 ANSI 解码——宽字节流被逐字节错读，中文全毁，英文关键字也因零字节交错失配。1MB 轮转（.old）同编码。
+- **修法**：`[IO.File]::ReadAllText($log, [Text.Encoding]::Unicode)` 显式按 UTF-16LE 读，或 Get-Content -Encoding Unicode；归因前先验证读法能命中已知行。
+- **规约**：对未知编码文件先验 BOM/试读再 grep——"查不到"先怀疑读法再怀疑内容；宽字符日志 × 缺省 ANSI 读法是最阴的静默组合。
+
+### 86. kill 宿主 800ms 即起新宿主——管道未拆净/DLL 自拉宿主/重连退避 ~10s 三连竞态 ⭐⭐⭐
+- **症状**：smoke6 回归轮 19/24：门控 ~10s 连不上，四个 'a' 追加成 'aaaa'，随后九个用户应用 DLL 集中重连，A1/A3/C4a 全链假阴性。
+- **根因三乘积**：①Stop-Process 返回 ≠ 资源拆净——旧宿主仍持管道实例，800ms 等待不够；②杀宿主触发客户端 DLL"无宿主自动拉起"（pipeclient.cpp:55，实录 15:58:20.120 已拉起），与工装手工 Start-Process 两路赛跑，单实例守卫只留一个；③DLL 重连退避 ~10s——宿主就绪客户端仍黑窗，预测/激活/插入全断；恢复瞬间 MsgActivate 风暴集中改写路由状态（15:58:30.568-33.606 九客户端）。
+- **修法**：无竞态重启状态机：kill → 轮询等进程对象消失（≤8s）→ 起宿主（LINGXI_LOG=1）→ 等 `Local\LingxiUIReady` 事件 → settle 1.5s → 枚举 `\\.\pipe\` 复核 lingxi-ime-ipc 在列 → 用户静默检查 → 起测；工装管道 20s 不可枚举即 exit 2 中止。
+- **规约**："进程已杀"≠"管道已释放"≠"客户端已重连"——常驻宿主的重启必须按就绪状态机推进（进程消失→启动→就绪事件→管道可见→客户端沉降），禁止固定 sleep；杀宿主必然打断全部客户端连接，重连风暴是测试中段最大污染源。
+
+### 87. `_active` 双劫持向量（MsgActivate + PredictProc 每次预测）——后台客户端流量即抢走插入/选词目标 ⭐⭐⭐
+- **症状**：C4a 连续 4 轮 23/24 唯一红；重连风暴轮 A1 raw 落错窗、A3 PICK 送错客户端——SendPick/SendInsertText 投递目标被无关客户端劫走。
+- **根因**：pipeserver 以单一 `_active`（最后激活客户端）为路由键，且有两处改写——MsgActivate（多处写点）与 **PredictProc 每次预测**（pipeserver.cpp:~524）：任何后台窗口的打字预测都重写路由目标；多客户端宿主里"最后激活"≠"当前该收"。
+- **修法**：ClientCtx.pid（MSG_HELLO 一直有上报，pipeclient.cpp:112）+ `_clients` 注册表（AcceptProc 注册/ClientProc 摘除，_cs 保护）+ `PickTargetClient()`：按前台窗口进程 PID 匹配客户端（前台=宿主时 25×20ms 短等焦点迁移），无匹配回退 `_active`；SendPick/SendInsertText 全改走它，路由决策落日志（PickTarget fgPid=%u -> pid=%u 前台命中/回退）。
+- **规约**：多客户端服务器里"激活史"不是合法路由键——按目标身份（握手上报的 pid）路由；凡"X 一到就改写共享路由状态"的处理器都是劫持向量，审计路由状态的全部写点而不止已知那处。
+
+### 88. 门控重试不收组合——'a' 追加成 'aaaa' 无候选，必败假象 ⭐⭐
+- **症状**：回归轮门控 4 连败：日志组合 'a'→'aa'→'aaa'→'aaaa'（ver=1-4），候选窗始终不出现——IME 再健康也过不去。
+- **根因**：重试直接再打 'a'，未先 Esc 中止上轮残留组合——拼音串叠加成无候选垃圾串；失败重试在污染态上继续，必败。
+- **修法**：每试失败后 Tap Esc（0x1B）收组合再重试；门控最终失败 exit 2 中止整轮——死门控下后续段全是假阴性，跑完无意义。
+- **规约**：键盘驱动型门控/重试循环必须假设组合态跨重试残留——先复位（Esc）再重打；门控是套件置信度锚点，失败即停不带病续跑。
+
+### 89. 目标二进制被在用进程锁写（LNK1168）——rename 侧载解锁，杀不得的进程也能换 DLL ⭐
+- **症状**：build32 LNK1168 无法打开 Debug32\ImeCore.dll 写入——IME 系统级注册，任意 32 位应用持有旧 DLL；tasklist /m 只按模块名匹配，持锁者难定位且不可杀（用户应用）。
+- **根因**：加载器映射 DLL 后文件被占用，链接器要求独占写——在用即不可原地覆写；持锁者是用户正在用的应用，注销重登代价不成比例（runbook 10-31 夜同款）。
+- **修法**：rename 侧载（与宿主 .prev 机制同款，#75）：`Move-Item ImeCore.dll ImeCore.dll.locked` 后重建——句柄跟随文件，改名不断映射，链接器写全新文件成功；.locked 待持锁者退出后自清/可删。
+- **规约**：LNK1168 类"输出文件在用"先 rename-aside 再链，别追杀持锁进程；改常驻组件二进制前假设"有人正拿着它"。

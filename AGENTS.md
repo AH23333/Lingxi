@@ -1,7 +1,7 @@
 # AGENTS.md — 会话首读（工程纪律与入口）
 
 > P0 立规（docs/ARCH-ASSESSMENT.md §五，2026-10-31 随 P1-P3 重构落地）。
-> 全量流水见 docs/DEVLOG.md；动手前先查 docs/PITFALLS.md（#1-#84，多数"程序坏了"实为环境/工装坑）。
+> 全量流水见 docs/DEVLOG.md；动手前先查 docs/PITFALLS.md（#1-#89，多数"程序坏了"实为环境/工装坑）。
 
 ## 构建与门禁入口
 
