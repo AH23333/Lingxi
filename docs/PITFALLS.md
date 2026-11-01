@@ -495,6 +495,7 @@
 - **根因三乘积**：①regress.cmd 设 `APPDATA=%OUT%\userdata` + `LINGXI_SETTINGS_NS=test`（词典沙箱初衷）；②e2e 期间 taskkill 后 7 进程 IME DLL 重生 LingxiUI，宿主继承两变量**活到测试结束后**（#66 同款）；③main.cpp 生产路径清 LINGXI_SETTINGS_NS 护设置键（10-29 事故修复），但 clipboardui/autobackup 的沙箱自检是**惰性读环境**——发生在清除之后，误判"非沙箱"→ 剪贴板捕获/备份开进沙箱 APPDATA，用户真实文件永久停更。
 - **修法（`9bfe8cf`）**：settings 新增 SnapshotTestSpawned/WasTestSpawned 三态缓存（单一事实源）；main.cpp 清除变量**前**先快照；两模块改读快照不再各自读环境。e2e 派生宿主从此剪贴板/备份全停（沙箱正确语义）。
 - **规约**：清除式防御（clear env）与惰性自检（lazy read env）组合必出时序洞——先快照再清除，消费方读快照；环境沙箱的边界是**进程边界+重生链**，任何"测试设的环境变量"都要假设会被常驻进程带出测试生命周期（#64 的 APPDATA 版本，比 NS 版更阴：它改写数据流向而非 merely 读旧值）。
+- **修漏补记（同日轮 15）**：修法只改了症状所在两文件——usagestats.cpp:110 同款惰性活读漏网，e2e 派生宿主照样把 usage.txt 写进沙箱（实证：post-fix 沙箱出现 dayPicks=40 的 usage.txt，全仓唯一写者是宿主）。已同款补修（改读 WasTestSpawned）。教训：**同类修复必须全仓 grep 活读点**（`LINGXI_SETTINGS_NS`），不能只修已见症状的文件；ui/ 余 5 个动作触发型 APPDATA 读写点（blockedui/hotphraseui/phraseui/userdictwnd/statswnd）同风险类但写入由用户动作门控，记待办逐窗定 UX。
 
 ### 84. PS 5.1 Out-File -Encoding utf8 带 BOM——git commit -F 标题首字符成 ﻿ ⭐
 - **症状**：`git log --oneline` 新提交标题显示 ﻿fix:...，BOM 混进 subject；此前提交无此问题。

@@ -1,13 +1,13 @@
 # AGENTS.md — 会话首读（工程纪律与入口）
 
 > P0 立规（docs/ARCH-ASSESSMENT.md §五，2026-10-31 随 P1-P3 重构落地）。
-> 全量流水见 docs/DEVLOG.md；动手前先查 docs/PITFALLS.md（#1-#67，多数"程序坏了"实为环境/工装坑）。
+> 全量流水见 docs/DEVLOG.md；动手前先查 docs/PITFALLS.md（#1-#84，多数"程序坏了"实为环境/工装坑）。
 
 ## 构建与门禁入口
 
 - 构建：`cmd /c "tools\build.cmd [Debug|Release]"`（x64 UI+ImeCore）；`cmd /c "tools\build32.cmd"`（Win32 ImeCore）
-- 全量回归：`cmd /c tools\regress.cmd`（engine_test 220 断言 / fix_readings --check / deep_test / e2e 四套件，**ALL PASS 才算过**）
-- 真机走查：`tmp\smoke1.ps1`（15 项）+ `tmp\smoke2.ps1`（8 项）；行为探针 `LingxiUI.exe --probe-pinyin`（基线：gylg=4 候 / gylgl=供应链管理 1 候 / xian 首选西安）
+- 全量回归：`cmd /c tools\regress.cmd`（engine_test 254 断言 / fix_readings --check / deep_test / e2e 四套件，**ALL PASS 才算过**）
+- 真机走查：`tmp\smoke1.ps1`（16 项，含 usage.txt 播种备份/还原）+ `tmp\smoke2.ps1`（8 项）；行为探针 `LingxiUI.exe --probe-pinyin`（基线：gylg=4 候 / gylgl=供应链管理 1 候 / xian 首选西安）
 - 提交纪律：build 零错 + regress ALL PASS；涉 UI/窗口/焦点的改动加跑 smoke 双套件；重构类改动加跑 probe 基线
 
 ## ui 层文件纪律（P0 立规——防拆分成果回胖）

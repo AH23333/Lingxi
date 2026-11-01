@@ -1158,3 +1158,24 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 
 - 肉眼验收清单须用户在场：v 模式全链（双拼不触发/退格重触发/Build32 DLL 侧键位）、搜索框焦点流转（激活/五路退出/回车上屏后续打字）、频闪 v2/暗色跟随/帮助 Ctrl+F/无痕开关/剪贴板窗视觉走查。
 - 运维修辞：regress 后若宿主为 e2e 派生（剪贴板/备份沙箱停用是**正确**语义），taskkill 重启即恢复生产捕获——runbook 已加"regress 后、smoke 前重启宿主"步骤。
+
+## 2026-11-01 · 轮 15：空闲任务挖出 #83 修漏一例 + smoke1 播种残留口径收口
+
+执行既定空闲任务（runbook 遗留第 5 项）：usage.txt smoke1 播种残留口径确认。用户在场且活跃打字（2:30-2:35 约 80 选词），调查顺带暴露三处活跃用户竞态。
+
+### 调查三发现
+
+- **发现 1（#83 修漏，真缺陷，本轮修复）**：usagestats.cpp:110 LoadLocked 仍惰性活读 LINGXI_SETTINGS_NS——`9bfe8cf` 只修了症状所在的 clipboardui/autobackup。实证：post-fix 沙箱（regress-2665521258）出现 usage.txt（dayPicks=40，e2e 打字期间 1:59:42 落盘）——usage.txt 全仓唯一写者是宿主，铁证 e2e 派生宿主仍在写沙箱、用户真实统计停更。修法同款镜像：改读 WasTestSpawned() 快照。
+- **发现 2（smoke1 播种残留，工装缺陷）**：smoke1 直播种真实 usage.txt（无备份）→ 清零 → 删除——用户累计统计每次运行被摧毁（实录：2:00 的运行删了当时文件，用户 2:30-2:35 重新积累 80 选词，若无备份修复下次 smoke1 又清零）。修法：播种前备份 .smokebak（在死盘上执行，零竞态）、清零验证后还原 + 重启宿主重载（清零污染内存态，不重启则下次节流落盘用零值复写还原文件）、残留 .smokebak 下次运行自愈还原。
+- **发现 3（活跃用户三竞态，工装缺陷）**：①活宿主先于播种读盘会把真实数据载入内存、播种被无视（懒加载只读一次）→ 备份+播种移到宿主启动前（kill→备份→播种→启动）；②seed day=20261031 昨日值，活跃用户首次选词即跨天翻转 activeDays 45→46 炸断言 → 改播当日动态日期；③累计选词 Contains('5600') 精确匹配被用户实时选词破坏 → 区间断言（5600-5650/21000-21100/活跃天数精确 45），清零检查容忍 ≤10 零星选词。
+
+### 验证与门禁（全绿）
+
+- 修复后沙箱实证：regress-68618896 userdata 的 LingxiIme 目录空——宿主零写入沙箱；真实 usage.txt 未被触碰。
+- build Debug 零错零警；regress ALL PASS（e2e attempt 1 直绿）；**smoke1 16/16**（新增第 9 步"还原后重启宿主"检查项）；smoke2 8/8。
+- 还原逐字节验证：smoke1 前后真实 usage.txt 完全一致（day=20261101/dayPicks=80/dayChars=145），.smokebak 零残留。
+
+### 押后
+
+- ui/ 余 5 个动作触发型 APPDATA 读写点（blockedui/hotphraseui/phraseui/userdictwnd/statswnd）与 #83 同风险类——写入由用户动作门控（非持续写），待逐窗定 UX 后统一挂 WasTestSpawned 门控。
+- 肉眼验收清单不变（runbook 第 7 步，须用户在场）。
