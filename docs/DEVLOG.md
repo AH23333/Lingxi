@@ -1213,3 +1213,22 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 
 - 肉眼验收清单不变（runbook 第 7 步，须用户在场）。
 - ui/ 余 5 个动作触发型 APPDATA 读写点挂 WasTestSpawned 门控（轮 15 遗留）。
+
+## 2026-11-02 · 深检轮：选词联想 + build gate 全面复盘（中断恢复后盘上实测）
+
+**起因**：代理中断恢复，账面"已落"一律不信，盘上现读复核前期工作（联想 `04d589b`→锁修 `46bfa75`→gate `ee8e810`）。
+
+**核验通过项**（现读+实测）：
+- HEAD 树联想链符号齐全（proto/dll/ui/deep 五面）；settings 三面同权（Load 137/Save 197/Diff 258）；UI 六接（IDC/HWND/重置/Load/Apply/mkRow）逐行对上。
+- 审计轮 12 锁修质量复核：IsAssocShown/ClearAssocState 房风访问器，六处裸读写全收编。
+- UI 侧 ASSOC 兼容承诺成立：HandleCtx 对 flags 无特殊分支（联想=普通非空续写帧，链预测天然放行）；预测线程 blank 空文闸保留且对 pinyin 帧旁路。
+- CandidatesVisible()=纯 DLL 账（_cands 非空+对号），**无"UI 超时隐藏不同步"雷**：候选窗本身无自动隐藏（SetTimer 只挂 toast/文字气泡），toast 到期隐藏带 _toastMode 陈旧守卫不吞候选帧（candwnd_core@HEAD 全文走查）。
+- gate 落位复核：deep=Debug/engine=Release/:skipbuild 结构完整（HEAD line 34/58/63）；engine.exe 现值实测 254/0 exit0 median=0.419ms。
+
+**深检抓到两枚真问题**（`53142fe` 微修）：
+- **P2 `_assocReq` 无失效路径**：被 UI 队列吞掉回包后成野值，误标后续批次（ghost 窗空格误提交首选）→ SendCtx 发非 ASSOC 帧即在锁内作废（请求标记三清除口补齐，回写 PITFALLS #90）。
+- **P3 选词道 ver 比较在锁外读**（审计轮 12 收编 _assoc 态时漏网）：同锁块内完成 hit 判定，对齐 CandidatesVisible() 房风。
+
+**边界验证**：IME 单工程构建 OK（rename-aside #89 手法，未碰并行方活跃 ui 域）；engine 254/0 零偏移。deep/e2e 行为级未跑——工作区 11 文件为并行活跃域且跑批会 taskkill 在用 UI，按避让纪律延给静默窗口批；本改语义属边界收敛（T18a/b 活闸常驻把关）。
+
+**观察项（留后续）**：①终验批 regress-100829655 的 OUT 目录 txt 全 0B 而主日志齐全（行为链另有 engine 实测/HEAD 时间戳佐证=非假绿，但重定向截断原因未钉，疑与 #76 同族）；②联想撤销 keepAssoc 未含 Tab/Esc=设计内保守（Tab 空组合本就不提交候选），GAP §11 无冲突。
