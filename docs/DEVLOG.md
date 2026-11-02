@@ -1232,3 +1232,12 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 **边界验证**：IME 单工程构建 OK（rename-aside #89 手法，未碰并行方活跃 ui 域）；engine 254/0 零偏移。deep/e2e 行为级未跑——工作区 11 文件为并行活跃域且跑批会 taskkill 在用 UI，按避让纪律延给静默窗口批；本改语义属边界收敛（T18a/b 活闸常驻把关）。
 
 **观察项（留后续）**：①终验批 regress-100829655 的 OUT 目录 txt 全 0B 而主日志齐全（行为链另有 engine 实测/HEAD 时间戳佐证=非假绿，但重定向截断原因未钉，疑与 #76 同族）；②联想撤销 keepAssoc 未含 Tab/Esc=设计内保守（Tab 空组合本就不提交候选），GAP §11 无冲突。
+
+### 深检轮补记（同日收官）：53142fe 行为级过闸 + 0B 归档钉因
+
+- **行为级补验完成**：`.qa-head` 干净 HEAD worktree 独立批——engine PASS + fix_readings PASS + **deep PASS（T18a/b 活闸在批内绿）**；e2e 批内三连败，事后 worktree 单跑 **exit=0 全链 PASS**（中英 ghost/中文续写/Tab 提交/pinyin settle 逐条在位）。→ **微修语义零行为偏移坐实**。批毕 worktree 已拆除（git worktree remove），并行方 11 件 WIP 全程未碰。
+
+- **0B 归档钉因**：worktree 独立目录批仍全 0B → "同 tick %RANDOM% 撞目录互截"假说被本案证伪为独立次要隐患（撞车真实存在——并发 8×cmd 的 %random% 实测同序列——已用 :mkoutdir 重试修）。真正规律=**detached 进程树的批内重定向不可靠**：外层 fd 日志 608B 判语全真、errorlevel 链全真、exe mtime 全真，唯独批内 redirect 文件 0B；Start-Process/同会话批归档正常。行为模式两例复现+反例对照封死，机制留白——立案 PITFALLS #91，判卷标准改为"主日志+errorlevel+mtime 三联"。
+
+- **regress.cmd 顺带修**：`:mkoutdir` mkdir 原子独占重试 25 次（防同刻双批撞目录名，与 #86 同族的"并行 agent 机"新坑形态）。
+

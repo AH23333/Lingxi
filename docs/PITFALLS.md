@@ -537,3 +537,15 @@
 - **症状**：联想帧发出（_assocReq=挂起）后若被 UI"每客户端仅保留最新"队列合并吞掉（无回包、永不匹配对号），挂起标记永不清零；随后任何一个续写/拼音批次回包认账 `_assocShown = _assocReq` 都被错误继承——空组合续写 ghost 窗按空格会误提交首选候选而非输入空格。
 - **根因**：认账式"身份继承"缺一条**作废边**：请求标记只被"回包"消费，没被"更新的事实"消费。任何使旧回包作废的状态跃迁（此处=更新一个非该请求的 CTX ver）都必须顺带作废其身份标记，否则标记变野值。
 - **规约**：给"请求→回包"式标记上锁纪律时，必须同时想三个清除口：①回包到达 ②请求被顶替（版本推进/新帧发出）③超时。只有①③没有②=留雷。
+
+### 91. detached 进程树内层 cmd 文件重定向被掏空成 0B——"errorlevel 真、主日志全、归档空"三联征 ⭐⭐（2026-11-02 钉因；顺带并案 %RANDOM% 撞车隐患）
+- **症状**：以 node spawn(cmd.exe, /c 批, {detached:true, stdio 含 fd}) 启动的 regress 终验批：外层日志 fd 有内容（608B、逐行判语真实），deep PASS/engine PASS/fix_readings PASS 与 errorlevel 全对；但批内以引号绝对路径 redirect 建的 out 目录 txt 全部 0 字节。同期经 Start-Process 或同会话终端启动的同款批归档正常（2937629603/2538823020 各数千字节；e2e 事后 worktree 单跑 exit=0 全链 PASS）。
+- **排除过程（实测定罪不推理）**：①"同 tick %RANDOM% 撞目录互截"假说——并发 8 个 cmd 的 %random% 序列实测确实全等（8/8），撞车隐患真实、已用 `:mkoutdir` mkdir 原子重试 25 次修 regress.cmd 作保险；但本批是带新逻辑的 worktree 独立目录、无对手进程，仍 0B → 撞车非本因（是两个独立隐患）。②"exe 没真跑"假说——deep 内部 18 用例全 FAIL 会 exit 1、engine exe mtime 随批刷新、worktree e2e 单跑全 PASS → 真跑。③姿势对照定罪——同结构最小 bat 用 echo 重定向在 detached 内有内容（a.txt 15B）；差异锁定 regress 真实批的复杂多 redirect 语境：detached + 无控制台继承 + 批内多条 exe 输出 redirect，0B 稳定重现两例（本会话 17:12 与 11:44 worktree 批），Start-Process 批全正常。
+- **结论与规约**：detached 子 cmd 的批内文件重定向不可靠，可全丢。**判卷一律以三件为准：主日志判语 + errorlevel 分支 + 被测二进制 mtime（晚于源码修改）；绝不可单独拿 OUT 目录 txt 有无来定生死**。要可靠归档：同会话终端/Start-Process 跑，或批内每条命令包一层 cmd /c（"cmd /c ""exe > f 2>&1"""）。第三例出现再深挖底层机制，行为模式与反例对照组已封死误读空间。
+- **顺带修（独立隐患 ①）**：regress.cmd `:mkoutdir` 目录唯一性——同刻多代理机是常态，%RANDOM% tick 播种同序列，同目录名互踩取证。
+
+### 92. worktree 隔离法对 TSF/输入法类机器级单实例软件天然无效——双实例抢键全盘假红，luck 绿也不算干净证据 ⭐⭐（2026-11-02 血泪实测）
+- **症状**：为"不打扰并行 agent 的脏工作区"，用 git worktree 复制干净 HEAD 独立构建+跑 deep/e2e 想拿隔离证据。批内 deep 判 PASS；随后同一 worktree 单跑 deep 却 9/25 崩面（probe_q_eaten=0 / fgIsLingxi=1）、e2e 单跑时 exit0 时"typing pass-through"×3 败——同二进制同沙盒，结果随时间漂移。
+- **根因**：TSF TIP 是 **CLSID 机器级注册**（DLL 指向主树绝对路径），命名管道全局单例，候选窗/TIP 实例全机器共享。worktree 批起的第二套 UI + 宿主加载的仍是主树注册 DLL → 两套组件并行抢按键/抢 _active，deep/e2e 的按键断言全部被竞态污染；批内那次 deep PASS 只是错峰运气。**"隔离副本"在注册表/全局管道级根本隔不开**，luck 绿不能作数。
+- **规约**：本项目行为级验证唯一姿势=**主树单套环境 + 串行批（Start-Process 起+可靠归档）**；并行 agent 有 WIP 时直接接受"混合源码态"批并如实声明归因范围（我的改动面断言由 T18 系活闸锁定），别造伪隔离。真需要二进制隔离时用测试注册沙盒键（LINGXI_SETTINGS_NS）+ 先杀干净所有实例再跑。
+

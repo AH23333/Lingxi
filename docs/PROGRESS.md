@@ -110,3 +110,4 @@
 ## 2026-11-02 深检轮（中断恢复复盘）
 
 - 联想+gate 全面盘上复核 ✅；抓到 _assocReq 野值误标续写批（P2）+ 选词道锁外读 ver（P3），微修 `53142fe`（ImeCore 构建 OK，engine 254/0，PITFALLS #90 立案）；deep/e2e 行为级复验留给静默窗口（避并行活跃域）。
+- 深检轮收官：worktree 隔离批行为级过闸（deep T18 绿/e2e 单跑 PASS/engine+readings 绿），0B 归档钉因 #91，regress.cmd :mkoutdir 撞车保险加装。

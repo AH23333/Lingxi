@@ -10,8 +10,21 @@ rem  - suites Learn() into %APPDATA%\LingxiIme\userdict.txt -> sandbox APPDATA
 rem    into tmp\regress-userdata so tests never touch the user's real dictionary.
 setlocal
 set "ROOT=%~dp0.."
+rem Unique log dir: cmd %RANDOM% is SEEDED BY CLOCK TICK - two regress
+rem runs spawned in the same tick (parallel agents do happen) produce
+rem IDENTICAL names, share one dir and cross-truncate each other's
+rem archived txt to 0B (observed 2026-10-30, PITFALLS #91). mkdir is
+rem atomic: reroll until the dir wins.
+set "OUTTRIES=0"
+:mkoutdir
+set /a OUTTRIES+=1
 set "OUT=%ROOT%\tmp\regress-%RANDOM%%RANDOM%"
 mkdir "%OUT%" 2>nul
+if exist "%OUT%\." goto :outready
+if %OUTTRIES% LSS 25 goto :mkoutdir
+echo [regress] FATAL: cannot create unique log dir
+exit /b 1
+:outready
 
 rem Environment noise guards (LINGXI_LOG=1 destroys latency + spams file IO)
 set LINGXI_LOG=
