@@ -111,3 +111,4 @@
 
 - 联想+gate 全面盘上复核 ✅；抓到 _assocReq 野值误标续写批（P2）+ 选词道锁外读 ver（P3），微修 `53142fe`（ImeCore 构建 OK，engine 254/0，PITFALLS #90 立案）；deep/e2e 行为级复验留给静默窗口（避并行活跃域）。
 - 深检轮收官：worktree 隔离批行为级过闸（deep T18 绿/e2e 单跑 PASS/engine+readings 绿），0B 归档钉因 #91，regress.cmd :mkoutdir 撞车保险加装。
+- 11-02 数字选词+管理窗裁切刀：英文/续写/联想窗统一无组合选词道（Test/KeyDown 对称收口）+ 四管理窗 AdjustWndRect 裁切根治（`1ac01e8`，userdictwnd 一笔待并行落账补提）；gate 批 engine/deep34/readings 绿，e2e "typing pass-through" 间歇红判并行批互扰留案。

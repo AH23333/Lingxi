@@ -1241,3 +1241,9 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 
 - **regress.cmd 顺带修**：`:mkoutdir` mkdir 原子独占重试 25 次（防同刻双批撞目录名，与 #86 同族的"并行 agent 机"新坑形态）。
 
+## 2026-11-02 数字选词 + 管理窗裁切刀（`1ac01e8`）
+
+- 用户双报障盘上钉因。①英文/续写窗数字键被吞=双层架空：Test 三面门对候选可见的 Tab/数字/Esc 一律认领，但 OnKeyDown 中文模式提前进拼音处理、tempEnglish 一律放行——旧"英文候选 InsertCandidate 数字道"两头堵成死代码；联想态空组合数字道只认 IsAssocShown。修复=统一"无组合候选窗选词道"双落点（space/Tab=本页首选，1-9=第 n，Esc=撤窗；超界数字照常写正文，Ctrl/Alt 直通不变）。
+②"用户词典与自定义词条管理没有删除按钮"=布局裁切实锤：四管理窗布局按客户区坐标设计、建窗把**窗口总高**当客户区用，底部整排按钮（删除选中/清空/导出/关闭）被 21+px 标题栏+边框裁到可见区之外——代码文案路由全在，只有渲染在窗外。修复=AdjustWndRect(AdjustWindowRectEx) 助手补齐非客户区；本笔提三自制窗，userdictwnd 功能窗修复同刀但**与并行方该文件 WIP 大改重叠未混提**（编译已进运行版；其落账后外科补提，登记 HANDOFF 待办）。
+- 门禁：gate 全批 engine PASS + deep attempt1 34/34（含 T16 Shift/tempEnglish、T13/T15 数字空格回归未破）+ readings PASS；e2e attempt "typing pass-through" 间歇红——同二进制上轮批 PASS、本轮并行 agent 前台活动互扰（诊断行 foreground 漂移/focusDoc=NULL），非本改动面（字母键与我改的选词键集合无交集），留案观察（#86 同族批互踩）。
+- 生效提示：DLL 面数字选词需**用户重启在用应用**（TSF 驻留旧 DLL）；UI 管理窗修复本次重启 LingxiUI 即换（运行版=12:3x gate 重建含全部四窗裁切修，已拉起 16036）。
