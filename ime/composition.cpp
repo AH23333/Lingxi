@@ -962,13 +962,13 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
                 (wParam == VK_SPACE || (wParam >= L'1' && wParam <= L'9')))
             {
                 uint32_t idx;
-                uint32_t count;
+                bool hit;
                 EnterCriticalSection(&_cs);
                 idx = _pageStart + (wParam == VK_SPACE ? 0u
                                      : (uint32_t)(wParam - L'1'));
-                count = (uint32_t)_cands.size();
+                hit = (_verCands == _verSent && idx < (uint32_t)_cands.size());
                 LeaveCriticalSection(&_cs);
-                if (idx < count && _verCands == _verSent)
+                if (hit)
                 {
                     *pfEaten = TRUE;
                     InsertCandidate(idx);   // 提交+清窗+（命中联想态）连发下一轮

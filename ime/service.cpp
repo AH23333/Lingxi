@@ -355,6 +355,10 @@ void CTextService::SendCtx(const std::wstring& text, const RECT& rc, uint8_t fla
     uint32_t ver = 0;
     EnterCriticalSection(&_cs);
     ver = ++_verSent;
+    // 非联想帧发出 = 旧联想请求作废（QA 2026-11-02）：ASSOC 回包被 UI 队列
+    // 合并吞掉时 _assocReq 永挂，随后续写/拼音帧认账会误标 _assocShown——
+    // 表现为 ghost 续写窗空格误提交首选而非输入空格。新帧起，联想身份清零。
+    if (!(flags & CTX_F_ASSOC)) _assocReq = false;
     LeaveCriticalSection(&_cs);
 
     MsgCtx m{};
