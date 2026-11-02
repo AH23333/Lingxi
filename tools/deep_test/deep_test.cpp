@@ -696,6 +696,79 @@ static bool ActivateMsPinyin(GUID* pOutProfile)
     return ok;
 }
 
+// ---- 会话 IME 状态保全（2026-11-01 事故：e2e/deep_test 收尾停在灵犀
+// zh-CN 不还原，用户会话被劫持 40 分钟——所有窗口打不出中文）。开场记录
+// 当前激活 profile（仅首轮），收尾原样还原；原状态非 TIP（裸键盘布局）时
+// 兜底枚举 zh-CN 激活微软拼音（kClsidMsPinyin，本机用户中文 IME）。 ----
+static TF_INPUTPROCESSORPROFILE g_origProfile = {};
+static bool g_haveOrig = false;
+
+static void CaptureOrigProfile()
+{
+    if (g_haveOrig) return; // 多轮重试只记首轮的真实用户状态
+    ITfInputProcessorProfileMgr* pMgr = nullptr;
+    if (g_pIpp &&
+        SUCCEEDED(g_pIpp->QueryInterface(IID_ITfInputProcessorProfileMgr, (void**)&pMgr)) && pMgr)
+    {
+        g_haveOrig = SUCCEEDED(pMgr->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &g_origProfile));
+        pMgr->Release();
+    }
+    wprintf(g_haveOrig ? L"[INFO] captured user IME (langid=0x%04X)\n"
+                       : L"[WARN] capture user IME failed\n",
+            g_haveOrig ? (unsigned)g_origProfile.langid : 0u);
+    fflush(stdout);
+}
+
+static void RestoreUserIme()
+{
+    if (!g_haveOrig)
+    {
+        wprintf(L"[WARN] user IME restore skipped (no captured state)\n");
+        fflush(stdout);
+        return;
+    }
+    ITfInputProcessorProfileMgr* pMgr = nullptr;
+    if (!g_pIpp ||
+        FAILED(g_pIpp->QueryInterface(IID_ITfInputProcessorProfileMgr, (void**)&pMgr)) || !pMgr)
+    {
+        wprintf(L"[WARN] user IME restore: no ProfileMgr\n");
+        fflush(stdout);
+        return;
+    }
+    bool ok = false;
+    if (g_origProfile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
+    {
+        ok = SUCCEEDED(pMgr->ActivateProfile(g_origProfile.dwProfileType, g_origProfile.langid,
+                                             g_origProfile.clsid, g_origProfile.guidProfile,
+                                             g_origProfile.hkl, 0));
+    }
+    if (!ok)
+    {
+        IEnumTfInputProcessorProfiles* pEnum = nullptr;
+        if (SUCCEEDED(pMgr->EnumProfiles(0x0804, &pEnum)) && pEnum)
+        {
+            TF_INPUTPROCESSORPROFILE prof = {};
+            ULONG fetched = 0;
+            while (pEnum->Next(1, &prof, &fetched) == S_OK && fetched == 1)
+            {
+                if (IsEqualCLSID(prof.clsid, kClsidMsPinyin) &&
+                    IsEqualGUID(prof.catid, GUID_TFCAT_TIP_KEYBOARD))
+                {
+                    ok = SUCCEEDED(pMgr->ActivateProfile(prof.dwProfileType, prof.langid,
+                                                         prof.clsid, prof.guidProfile,
+                                                         prof.hkl, 0));
+                    break;
+                }
+            }
+            pEnum->Release();
+        }
+    }
+    pMgr->Release();
+    wprintf(ok ? L"[OK] user IME restored after deep_test\n"
+               : L"[WARN] user IME restore failed (session may stay on Lingxi)\n");
+    fflush(stdout);
+}
+
 // ==================== 场景 ====================
 
 int wmain()
@@ -793,6 +866,9 @@ int wmain()
                               IID_ITfInputProcessorProfiles, (void**)&pIpp);
         if (FAILED(hr) || !pIpp) { Report(false, L"Create InputProcessorProfiles"); break; }
         g_pIpp = pIpp;
+
+        // ---- 会话状态保全：激活灵犀前记录用户当前 IME（仅首轮） ----
+        CaptureOrigProfile();
 
         // ---- 激活灵犀 zh-CN（一次性，无 churn）----
         Report(ActivateLingxiZhCn(10), L"ActivateLanguageProfile (zh-CN)");
@@ -1706,6 +1782,9 @@ int wmain()
         }
 
     } while (false);
+
+    // ---- 会话状态还原（对应开场 CaptureOrigProfile；防收尾劫持用户 IME） ----
+    RestoreUserIme();
 
     // ---- 清理 ----
     if (pKm) pKm->Release();

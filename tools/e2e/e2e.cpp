@@ -563,6 +563,82 @@ static bool ActivateAnyLingxiProfile(int tries = 5)
     return false;
 }
 
+// ---- 会话 IME 状态保全（2026-11-01 事故：e2e 收尾停在灵犀 zh-CN 不还原，
+// 用户会话被劫持 40 分钟——所有窗口打不出中文，手动切输入法才恢复）。开场
+// 记录当前激活 profile（仅首轮），收尾原样还原；原状态非 TIP（裸键盘布局）
+// 时兜底枚举 zh-CN 激活微软拼音（本机用户中文 IME）。 ----
+static TF_INPUTPROCESSORPROFILE g_origProfile = {};
+static bool g_haveOrig = false;
+
+static void CaptureOrigProfile()
+{
+    if (g_haveOrig) return; // 多轮重试只记首轮的真实用户状态
+    ITfInputProcessorProfileMgr* pPm = nullptr;
+    if (SUCCEEDED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, NULL, CLSCTX_INPROC_SERVER,
+                                   IID_ITfInputProcessorProfileMgr, (void**)&pPm)) && pPm)
+    {
+        g_haveOrig = SUCCEEDED(pPm->GetActiveProfile(GUID_TFCAT_TIP_KEYBOARD, &g_origProfile));
+        pPm->Release();
+    }
+    wprintf(g_haveOrig ? L"[INFO] captured user IME (langid=0x%04X)\n"
+                       : L"[WARN] capture user IME failed\n",
+            g_haveOrig ? (unsigned)g_origProfile.langid : 0u);
+    fflush(stdout);
+}
+
+static void RestoreUserIme()
+{
+    if (!g_haveOrig)
+    {
+        wprintf(L"[WARN] user IME restore skipped (no captured state)\n");
+        fflush(stdout);
+        return;
+    }
+    ITfInputProcessorProfileMgr* pPm = nullptr;
+    if (FAILED(CoCreateInstance(CLSID_TF_InputProcessorProfiles, NULL, CLSCTX_INPROC_SERVER,
+                                IID_ITfInputProcessorProfileMgr, (void**)&pPm)) || !pPm)
+    {
+        wprintf(L"[WARN] user IME restore: no ProfileMgr\n");
+        fflush(stdout);
+        return;
+    }
+    bool ok = false;
+    if (g_origProfile.dwProfileType == TF_PROFILETYPE_INPUTPROCESSOR)
+    {
+        ok = SUCCEEDED(pPm->ActivateProfile(g_origProfile.dwProfileType, g_origProfile.langid,
+                                            g_origProfile.clsid, g_origProfile.guidProfile,
+                                            g_origProfile.hkl, 0));
+    }
+    if (!ok)
+    {
+        // 兜底：枚举 zh-CN 找微软拼音（公开 CLSID；本机用户中文 IME）
+        static const CLSID kMsPinyin = { 0x81D4E9C9, 0x1D3B, 0x41BC,
+                                         { 0x9E, 0x6C, 0x4B, 0x40, 0xBF, 0x79, 0xE3, 0x5E } };
+        IEnumTfInputProcessorProfiles* pEnum = nullptr;
+        if (SUCCEEDED(pPm->EnumProfiles(0x0804, &pEnum)) && pEnum)
+        {
+            TF_INPUTPROCESSORPROFILE prof = {};
+            ULONG fetched = 0;
+            while (pEnum->Next(1, &prof, &fetched) == S_OK && fetched == 1)
+            {
+                if (IsEqualCLSID(prof.clsid, kMsPinyin) &&
+                    IsEqualGUID(prof.catid, GUID_TFCAT_TIP_KEYBOARD))
+                {
+                    ok = SUCCEEDED(pPm->ActivateProfile(prof.dwProfileType, prof.langid,
+                                                        prof.clsid, prof.guidProfile,
+                                                        prof.hkl, 0));
+                    break;
+                }
+            }
+            pEnum->Release();
+        }
+    }
+    pPm->Release();
+    wprintf(ok ? L"[OK] user IME restored after e2e\n"
+               : L"[WARN] user IME restore failed (session may stay on Lingxi)\n");
+    fflush(stdout);
+}
+
 static bool ReassertFocus()
 {
     ActivateAnyLingxiProfile();
@@ -725,6 +801,9 @@ static bool RunScenario()
         g_pTm = pTm;
         g_pDoc = pDoc;
         g_hwndHost = hwndHost;
+
+        // ---- 会话状态保全：激活灵犀前记录用户当前 IME（仅首轮） ----
+        CaptureOrigProfile();
 
         Report(ActivateAnyLingxiProfile(10), "ActivateLanguageProfile (Lingxi TIP)");
 
@@ -955,6 +1034,42 @@ static bool RunScenario()
             break; // fail-fast
         }
 
+        // ---- 测试 5b：ghost 候选窗数字键选词（2026-11-02 用户报"英文输入无法
+        // 用数字选候选词"修复的活闸——en 词尾上下文续打 nat，数字 2 必须被
+        // 三面门认领并经无组合选词道提交对应候选；en-US 直通域承接测试 5）----
+        {
+            // 越过上屏后 400ms 自插入抑制窗（Chromium 异步 OnEndEdit 兑底），
+            // 否则 " nat" 的外部编辑被吞 → 无预测 → ghost 窗无候选（实测 3/3 复现）
+            Sleep(550);
+            std::wstring t0 = ReadFocusedText(pTm);
+            bool typed = true;
+            for (wchar_t ch : std::wstring(L" nat"))
+            {
+                if (!InsertViaTsf(pCtx, std::wstring(1, ch))) { typed = false; break; }
+                PumpMessages();
+            }
+            bool twoEaten = false;
+            for (int i = 0; i < 40 && !twoEaten; i++)
+            {
+                PumpMessages();
+                BOOL e2 = FALSE;
+                pKm->TestKeyDown(L'2', 0x00390001, &e2);
+                twoEaten = (e2 == TRUE);
+                if (!twoEaten) Sleep(100);
+            }
+            std::wstring t2 = t0;
+            if (twoEaten)
+            {
+                BOOL e2 = FALSE;
+                pKm->KeyDown(L'2', 0x00390001, &e2);
+                for (int i = 0; i < 12; i++) { PumpMessages(); Sleep(25); }
+                t2 = ReadFocusedText(pTm);
+            }
+            bool picked = typed && twoEaten && (t2 != t0);
+            wprintf(L"[INFO] ghost-digit t0=<%zu> t2=<%zu> typed=%d eaten=%d\n",
+                    t0.size(), t2.size(), (int)typed, (int)twoEaten);
+            Report(picked, "ghost digit-2 picked candidate");
+        }
         // ---- 测试 6：M5 拼音模式（默认启用；LINGXI_PINYIN=0 时跳过）----
         {
             wchar_t pf[8] = L"";
@@ -984,6 +1099,9 @@ static bool RunScenario()
             }
         }
     } while (false);
+
+    // ---- 会话状态还原（对应开场 CaptureOrigProfile；防收尾劫持用户 IME） ----
+    RestoreUserIme();
 
     // ---- 清理（按获取逆序；fail-fast 也会走到这里，均允许空指针）----
     if (pKm) pKm->Release();
