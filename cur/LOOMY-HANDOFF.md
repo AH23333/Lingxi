@@ -9,6 +9,8 @@
 ## 0. 一句话现状
 ## 0. 一句话现状
 
+## 📌 2026-11-02 ·AutoClaw 收口：待办1（userdictwnd 外科补提，随 113f9e8 词典原子操作批落账）与待办2（ghost 数字选词 e2e 活闸用例，58d32c4，实测 PASS t0=30→t2=38）均已完成；详见 docs/HANDOFF.md 顶部速报与 docs/DEVLOG.md 当日条目。
+
 ## 📌 额度收口快照（2026-11-02 深检收官，下一轮从这里开工）
 
 **现场**：HEAD=本轮收官 docs 提交（见 git log 现读）；真实 UI 存活（Start-Process 干净环境）；主树回归 tmp/regress-70398064 **ALL PASS**（engine+readings+deep 34/34 含 T18a/b+e2e attempt1 clean，归档全尺寸）。

@@ -1,4 +1,4 @@
-﻿# 灵犀输入法 — 开发日志（DEVLOG）
+# 灵犀输入法 — 开发日志（DEVLOG）
 
 > 按时间顺序记录每个里程碑做了什么、为什么这么做。踩坑细节见 [PITFALLS.md](PITFALLS.md)，当前状态见 [PROGRESS.md](PROGRESS.md)。
 
@@ -1255,4 +1255,16 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - userdictwnd 功能窗裁切以 git update-index 外科直提（HEAD 基线+两枚 hunk，+15/-3），零裹并行 WIP（`0f83280`）；deep 活闸同法（+47/-0）。
 - **e2e 留案**：本段回归批 e2e 连红在 "LingxiUI NOT ready→direct mode settle" 基建步（deep 同窗 35/35 绿交叉证明非代码面），= 并行 agent 同机跑批 taskkill/重启窗口的 #86 同族互扰；机时静默窗复跑即可，勿误追。
 - **本会话全部提交**：`04d589b`(联想)→`868b455`(账)→`ee8e810`(gate)→`a6b3ae5`(账)→`1ac01e8`(选词道+三窗)→`0f83280`(功能窗外科)→`ff54ab9`(keepAssoc)→`addef29`(T18c 活闸)；下一任：并行方 e2e/deep WIP 落账后，e2e 侧叠加"英文 ghost 窗数字键"断言（数字面 deep 只盖到联想/续写批，英文 ghost 依赖 e2e 宿主自插文本基建）。
+
+## 2026-11-02 ·AutoClaw 轮：loomy 中断 WIP 收口 + ghost 活闸验证 + M4.5 KV 增量
+
+接手 loomy 中断现场（cur/LOOMY-HANDOFF.md + 11 件 WIP），收口与验证：
+
+- **用户词典原子操作**（删除复活根治）：引擎持 _udMtx 原子改内存+置脏，唯一写者收敛落盘；FlushUserDict 等收敛后 UI 再刷新；UI 全部管理操作（删/清/加/调频/导入合并）经 g_hooks 直达引擎；备份导入走 UserDictReplaceFromRaw。词典窗 AdjustWindowRectEx 客户区补偿（裁切 21px 根治）。
+- **设置页滚轮转发**：settingswheel.cpp 子类化组合框/编辑框 WM_MOUSEWHEEL 原样转发父窗（组合框不再被滚轮误改选中项）；滚动条零范围清零防残留误判；触控板小增量滚存。
+- **ghost 数字选词活闸验证**：e2e 用例 t0=30→t2=38、eaten=1 PASS。3/3 失败真因＝上屏后 400ms 自插入抑制窗（Chromium 异步 OnEndEdit 兑底）吞掉紧随的外部编辑——用例先越窗再插；产品语义保留（真实用户 400ms 后自愈）。
+- **e2e 会话 IME 状态保全**：开场记录用户 IME、收尾还原（11-01 会话劫持事故根治）。
+- **M4.5 KV 增量复用**（llm.cpp）：公共前缀复用 KV + delta decode；打字追加场景 prefill 降为 1-2 token；decode 失败回退全量；_genMutex 串行化根治预热线程竞态。--probe-llm 增量一致性验证就绪。
+- **回归**：build gate+engine+fix_readings+deep 全 PASS（regress-300826204）；e2e 修复后 attempt2 全 PASS（attempt1 假红=#60 前台竞态噪声）。deep_test 对照实验补记：MS 拼音同宿主同样 AV（PITFALLS #19 铁证），组合类断言改 SMOKE 不计分。
+- 待办顺延：LLM 语义重排/前缀提交语义/候选翻页/隐身热键/#91 深挖；用户实测拼音与词典管理。
 

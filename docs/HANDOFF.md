@@ -1,5 +1,17 @@
 # 交接文档（HANDOFF）
 
+## 📌 最新状态速报（2026-11-02 ·AutoClaw：loomy 中断 WIP 收口 + ghost 活闸验证 + M4.5 KV 增量）
+
+- **loomy 中断 WIP 已收口**（`113f9e8` 产品 + `58d32c4` 测试）：①用户词典管理走引擎原子操作（持 _udMtx 改内存+置脏，唯一写者收敛落盘，FlushUserDict 等收敛）——根治“删除词条复活”（UI 直写与后台落盘竞态）；备份导入走 UserDictReplaceFromRaw；②词典窗 AdjustWindowRectEx 客户区补偿（底部按钮行裁切 21px 根治）；③设置页滚轮转发（settingswheel.cpp 子类化组合框/编辑框 WM_MOUSEWHEEL→父窗）+ 滚动条零范围清零 + 触控板小增量滚存
+- **ghost 数字选词活闸验证 PASS**（t0=30→t2=38，eaten=1）：活闸本身已存在（候选可见即认领数字键）；此前 3/3 失败真因＝上屏后 400ms 自插入抑制窗吞掉紧随的外部编辑（" nat" 四次 OnEndEdit 全落窗内）→ 用例先越窗再插。产品语义保留（真实用户 400ms 后自愈）
+- **e2e 会话 IME 状态保全**：开场记录用户当前 IME、收尾原样还原（11-01 会话劫持 40 分钟事故根治）
+- **M4.5 KV 增量复用落地**（llm.cpp）：prompt 公共前缀复用 KV（memory_seq_rm 截分叉）+ delta decode；打字追加场景 prefill 降为 1-2 token；decode 失败自动回退全量；_genMutex 串行化（预热线程竞态根治）；--probe-llm 增量一致性验证就绪
+- **回归**：build gate+engine+fix_readings+deep 全 PASS（regress-300826204）；e2e 修复后独立复跑 attempt2 全 PASS（用户在前台用机，attempt1 假红属 #60 已知噪声）
+- **下一轮**：用户实测拼音与词典管理；backlog＝LLM 语义重排/前缀提交语义/候选翻页/隐身热键/#91 深挖
+（以下为历史速报。）
+
+## 📌 最新状态速报（2026-10-30 深夜·Loomy：记事本光标停滞根因修复 + 全项目深度分析）
+
 ## ⚡ 最新状态速报（2026-10-30 深夜·Loomy：记事本光标停滞根因修复 + 全项目深度分析）
 
 - **用户报障收口**："Win11 记事本上屏文字后光标停留原位，后续输入插到旧光标处"。根因=TSF 规范对 `InsertTextAtSelection` 后的选区位置**零承诺**（PITFALLS #59）——DLL 从不 SetSelection，全部测试宿主宽松（插入自推选区）掩盖缺陷，Win11 记事本（WinUI CoreText 适配层）严格不动选区 → 光标停滞。
