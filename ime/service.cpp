@@ -774,11 +774,12 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LP
     // 不拦字母（PinyinKeyEaten 在组合中被调用时字母本就被吃）。
     if (IsAssocShown() && !PinyinActive())
     {
-        // 只有"选词键"保留联想（空格=首选已在 Test 三面门认领；数字=第 n 词）；
-        // Tab/回车/方向/翻页键的提交道只在组合中成立，空组合下放行并撤销，
+        // 只有"选词键"保留联想（空格/Tab=本页首选，数字=第 n 词——与 Down 侧
+        // 无组合选词道同一集合，撤销门不得先清窗否则选词道永远打不着）；
+        // 回车/方向/翻页键的提交道只在组合中成立，空组合下放行并撤销，
         // 防候选留在屏上语义漂变。
         const bool keepAssoc =
-            wParam == VK_SPACE ||
+            wParam == VK_SPACE || wParam == VK_TAB ||   // Tab=提交首选（与下方选词道对齐）
             (wParam >= L'1' && wParam <= L'9');
         if (!keepAssoc)
         {
