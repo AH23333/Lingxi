@@ -870,9 +870,39 @@ STDMETHODIMP CTextService::OnKeyDown(ITfContext* pContext, WPARAM wParam, LPARAM
         HandlePinyinKeySEH(this, pContext, wParam, pfEaten); // SEH 包裹（框架 AV 遏制）
         return S_OK;
     }
-    // 临时英文模式：字母/标点一律放行
+    // 临时英文模式：字母/标点一律放行；但候选可见时 Test 三面门已认领
+    // Tab/数字/Esc（IsSelectionKey 与模式无关），Down 必须给对称出口——
+    // 用户 2026-11-02 报"英文输入无法数字选候选词"的根因=旧版在此一律
+    // 放行导致被吃的键凭空蒸发。选词道与中文模式同语义：本页第 n 候选。
     if (_tempEnglish)
     {
+        if (CandidatesVisible() && !CtrlOrAltDown())
+        {
+            if (wParam == VK_ESCAPE)
+            {
+                SendHide();
+                ClearCandidates();
+                *pfEaten = TRUE;
+                return S_OK;
+            }
+            if (wParam == VK_TAB || (wParam >= L'1' && wParam <= L'9'))
+            {
+                uint32_t idx;
+                bool hit;
+                EnterCriticalSection(&_cs);
+                idx = (wParam == VK_TAB)
+                          ? _pageStart
+                          : _pageStart + (uint32_t)(wParam - L'1');
+                hit = (_verCands == _verSent && idx < (uint32_t)_cands.size());
+                LeaveCriticalSection(&_cs);
+                if (hit)
+                {
+                    InsertCandidate(idx);
+                    *pfEaten = TRUE;
+                    return S_OK;
+                }
+            }
+        }
         *pfEaten = FALSE;
         return S_OK;
     }

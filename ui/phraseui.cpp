@@ -11,6 +11,15 @@
 #include <string>
 #include <vector>
 
+// 客户区补偿助手（QA 2026-11-02）：布局代码按客户区 W×H 设计，建窗时经
+// AdjustWindowRectEx 补齐标题栏/边框——旧版直接拿窗口总高当客户区摆放，
+// 底部按钮行被非客户区裁掉 ≈21px 内容，即用户报"没有删除按钮"的裁切根因。
+static void AdjustWndRect(DWORD dwStyle, DWORD dwExStyle, int& w, int& h)
+{
+    RECT rc{ 0, 0, w, h };
+    if (AdjustWindowRectEx(&rc, dwStyle, FALSE, dwExStyle))
+    { w = rc.right - rc.left; h = rc.bottom - rc.top; }
+}
 #include "phraseui.h"
 #include "uiinternal.h" // g_hooks（P3 回调收口）
 #include "../common/log.h"
@@ -344,10 +353,12 @@ void ShowPhraseWindow(HINSTANCE hInst, HWND hParent)
     RegisterClassW(&wc);
 
     const int W = 620, H = 470, pad = 14, rowH = 30, btnW = 96;
+    const DWORD phStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    int phW = W, phH = H;
+    AdjustWndRect(phStyle, WS_EX_DLGMODALFRAME, phW, phH);
     g_hPhWnd = CreateWindowExW(WS_EX_DLGMODALFRAME, kPhWndClass,
         L"自定义短语——缩写一打就出长句（如 addr→地址）",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, W, H, hParent, NULL, hInst, NULL);
+        phStyle, CW_USEDEFAULT, CW_USEDEFAULT, phW, phH, hParent, NULL, hInst, NULL);
 
     HFONT font = PhFont();
     auto mkLabel = [&](const wchar_t* text, int x, int y, int w) {

@@ -956,22 +956,41 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         {
             if (wParam == VK_BACK)
                 _lastBackspaceTick = GetTickCount64(); // 退格删除：抑制随之而来的补全预测
-            // 联想窗选词道（GAP §11）：_assocShown 时空格/数字复用点选路
-            // InsertCandidate（含 replaceLen 替换、自学习、上屏连发下一轮联想）。
-            if (IsAssocShown() &&
-                (wParam == VK_SPACE || (wParam >= L'1' && wParam <= L'9')))
+            // 无组合候选窗选词道（GAP §11 联想 + 英文/续写补全统一入口，用户
+            // 2026-11-02 报"英文输入无法数字选词"）：Test 三面门对候选可见的
+            // Tab/数字/Esc 一律认领，Down 必须给对称出口，否则键被吞既不上屏
+            // 也不选词。空格/Tab=本页首选，1-9=本页第 n 词，Esc=撤销候选窗。
+            // 非选词数字（超出候选数）仍放行写正文。联想批的连发下一轮在
+            // InsertCandidate 尾按 _assocShown 判定，本道不再特判。
             {
-                uint32_t idx;
-                bool hit;
+                bool shown = false;
+                bool dismiss = (wParam == VK_ESCAPE);
+                uint32_t idx = 0;
+                bool ok = false;
                 EnterCriticalSection(&_cs);
-                idx = _pageStart + (wParam == VK_SPACE ? 0u
-                                     : (uint32_t)(wParam - L'1'));
-                hit = (_verCands == _verSent && idx < (uint32_t)_cands.size());
+                shown = (_verCands == _verSent && !_cands.empty());
+                if (shown)
+                {
+                    if (wParam == VK_SPACE || wParam == VK_TAB)
+                        idx = _pageStart;
+                    else if (wParam >= L'1' && wParam <= L'9')
+                        idx = _pageStart + (uint32_t)(wParam - L'1');
+                    else
+                        idx = 0xFFFFFFFF;
+                    ok = (idx < (uint32_t)_cands.size());
+                }
                 LeaveCriticalSection(&_cs);
-                if (hit)
+                if (shown && ok)
                 {
                     *pfEaten = TRUE;
-                    InsertCandidate(idx);   // 提交+清窗+（命中联想态）连发下一轮
+                    InsertCandidate(idx);   // 提交+清窗+（联想批）连发下一轮
+                    return;
+                }
+                if (shown && dismiss)
+                {
+                    *pfEaten = TRUE;
+                    ClearCandidates();
+                    SendHide();
                     return;
                 }
             }

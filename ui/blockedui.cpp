@@ -7,6 +7,15 @@
 //
 #include <windows.h>
 
+// 客户区补偿助手（QA 2026-11-02）：布局按客户区 W×H 设计，建窗经 AdjustWindowRectEx
+// 补标题栏/边框——旧版拿窗口总高当客户区摆放，底部按钮行被裁 ≈21px（用户报
+// "没有删除按钮"根因）。
+static void AdjustWndRect(DWORD dwStyle, DWORD dwExStyle, int& w, int& h)
+{
+    RECT rc{ 0, 0, w, h };
+    if (AdjustWindowRectEx(&rc, dwStyle, FALSE, dwExStyle))
+    { w = rc.right - rc.left; h = rc.bottom - rc.top; }
+}
 #include <cstdint>
 #include <functional>
 #include <string>
@@ -375,10 +384,12 @@ void ShowBlockedWindow(HINSTANCE hInst, HWND hParent)
     RegisterClassW(&wc);
 
     const int W = 560, H = 450, pad = 14, rowH = 30, btnW = 96;
+    const DWORD blStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    int blW = W, blH = H;
+    AdjustWndRect(blStyle, WS_EX_DLGMODALFRAME, blW, blH);
     g_hBlWnd = CreateWindowExW(WS_EX_DLGMODALFRAME, kBlWndClass,
         L"屏蔽词——所列词永不进入候选（敏感词、误学词等）",
-        WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-        CW_USEDEFAULT, CW_USEDEFAULT, W, H, hParent, NULL, hInst, NULL);
+        blStyle, CW_USEDEFAULT, CW_USEDEFAULT, blW, blH, hParent, NULL, hInst, NULL);
 
     HFONT font = BlFont();
     auto mkLabel = [&](const wchar_t* text, int x, int y, int w) {
