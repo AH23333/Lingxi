@@ -1268,3 +1268,22 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **回归**：build gate+engine+fix_readings+deep 全 PASS（regress-300826204）；e2e 修复后 attempt2 全 PASS（attempt1 假红=#60 前台竞态噪声）。deep_test 对照实验补记：MS 拼音同宿主同样 AV（PITFALLS #19 铁证），组合类断言改 SMOKE 不计分。
 - 待办顺延：LLM 语义重排/前缀提交语义/候选翻页/隐身热键/#91 深挖；用户实测拼音与词典管理。
 
+## 2026-11-02 · GAP R6 长尾轮：候选注音 + 以词定字（工作区未提交，HEAD=83a1009）
+
+**候选注音全链路**（UI 进程内闭环，IPC 协议/DLL 零改动，8 文件）：
+
+- 引擎（pinyin.cpp）：候选注音按各自 cover 前缀经同一 EnumeratePaths DP 重分节，全 FULL 音节路径以 ' 连接（jin'tian）；简拼/残段/cover 未知（用户词典 boost/双拼不可逆推）不注；按 cover 去重——同覆盖前缀注音唯一，多数候选共享少数 cover，重分节开销有界。
+- 平行搬运（pipeserver）：anno 与 cands/cover 三平行同权——尺寸不齐即清（旧引擎输出兼容）、cap 裁剪、LLM 重排线程按同一排列搬运 reorderedAnno；Show 签名加 anno 默认参（window.h），非拼音路径零改动。
+- 绘制（candwnd_core/render）：锁内快照 pageAnno 防撕裂；占宽实测计入（"（注音）"参与最宽行竞争）；OnPaint 主文本后行内绘制，灰阶次级色（dark RGB(170,170,170)/light kUiText2），选中行近白保对比。
+- 取证：--probe-pinyin 候选后缀 (anno)，基线全保 + 注音实证；regress ALL PASS。
+
+**以词定字（GAP §1 矩阵行对齐微软）**（composition.cpp + deep T20a/b）：
+
+- eat 侧：无 Shift [ ] 候选可见才认领（数字门旁新闸），不可见回退原【】标点/放行——cnPunct 关时行为不变。
+- handle 侧：新 case VK_OEM_4/6——[ 取本页首选词首字、] 取末字上屏即组合收束；emoji 融合候选代理对完整码点防护；B1 cover 部分消耗语义同数字键（整词 cover=全清；"风"单字 cover=feng → zheng 留组合，正是微软语义）；**不 NotifyPicked**——取字≠选词，记整词学习会污染（fengzheng[→风 不该喂"风筝"），与微软"以词定字不计数"口径一致；Shift 态/无候选回退 CommitChinesePunct（【】｛｝不变）。
+- deep T20a/b：xi'an + [ → 西（0x897F）/ + ] → 安（0x5B89），expectEaten 一并断言 eat 侧。
+
+**设置页残留**（settingsui.cpp）：WM_SIZE 重排后 + ScrollSettingsTo 滚动后各补 RedrawWindow(RDW_INVALIDATE|RDW_ALLCHILDREN)（连子全失效；父绘双缓冲+COMPOSITED 原子合成无频闪）——缩放残留已修（修后用户未再报缩放）；常规页开关（BS_OWNERDRAW）滚动残留两轮方案（子窗旧矩形补失效 → 连子全失效）均未根治，**用户裁定搁置**（疑 COMPOSITED/CLIPCHILDREN 组合下 SW_SCROLLCHILDREN 不触发子绘；重启口径=本地复现+截图定位）。
+
+**门禁**：build Debug 零错；regress ALL PASS（engine 254 + fix_readings + deep attempt2 37/37——attempt1 唯一红="LingxiUI ready" 宿主就绪环境抖动，T20 两轮均绿 + e2e attempt1 直绿）。
+

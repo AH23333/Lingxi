@@ -112,3 +112,10 @@
 - 联想+gate 全面盘上复核 ✅；抓到 _assocReq 野值误标续写批（P2）+ 选词道锁外读 ver（P3），微修 `53142fe`（ImeCore 构建 OK，engine 254/0，PITFALLS #90 立案）；deep/e2e 行为级复验留给静默窗口（避并行活跃域）。
 - 深检轮收官：worktree 隔离批行为级过闸（deep T18 绿/e2e 单跑 PASS/engine+readings 绿），0B 归档钉因 #91，regress.cmd :mkoutdir 撞车保险加装。
 - 11-02 数字选词+管理窗裁切刀：英文/续写/联想窗统一无组合选词道（Test/KeyDown 对称收口）+ 四管理窗 AdjustWndRect 裁切根治（`1ac01e8`，userdictwnd 一笔待并行落账补提）；gate 批 engine/deep34/readings 绿，e2e "typing pass-through" 间歇红判并行批互扰留案。
+
+## 2026-11-02 GAP R6 长尾轮（候选注音 + 以词定字）
+
+- **候选注音 ✅（未提交）**：拼音候选行内注音全链路（引擎 cover 前缀同 DP 重分节、全 FULL 音节才注 → pipeserver 与 cands/cover 三平行搬运 → 候选窗行内灰阶绘制+占宽计入）；UI 进程内闭环 IPC/DLL 零改动；--probe-pinyin (anno) 实证 + regress ALL PASS。
+- **以词定字 ✅（未提交，GAP §1 对齐微软）**：无 Shift [ ] 取本页首选词首/末字上屏即收束（B1 cover 复用、代理对防护、不 NotifyPicked 防学习污染、候选不可见/Shift 态回退【】｛｝标点）；deep T20a/b 绿（xi'an+[→西、+]→安，37/37）。
+- **设置页残留**：缩放残留已修（WM_SIZE/ScrollSettingsTo 各补 RedrawWindow 连子全失效）；常规页开关滚动残留搁置（用户裁定，疑 COMPOSITED/CLIPCHILDREN 组合）。
+- 工作区 11 文件未提交（HEAD=83a1009）；剩余长尾=联想多段呈现、U 模式拆字（待部件数据源方案）。

@@ -1,5 +1,14 @@
 # 交接文档（HANDOFF）
 
+## 📌 最新状态速报（2026-11-02 · GAP R6 长尾轮：候选注音 + 以词定字 + 设置残留）
+
+- **候选注音 ✅（未提交，8 文件）**：拼音候选行内注音（jin'tian 灰阶次级色随行）——引擎按 cover 前缀同 DP 重分节（全 FULL 音节才注；简拼/残段/双拼/词典 boost/联想不注；cover 去重有界），pipeserver 与 cands/cover 三平行（尺寸校验/裁剪/LLM 重排同排列搬运），候选窗占宽计入+锁内快照防撕裂；UI 进程内闭环，IPC/DLL 零改动；--probe-pinyin (anno) 取证。
+- **以词定字 ✅（未提交，GAP §1 对齐微软）**：组合中无 Shift [ 取本页首选词首字 / ] 取末字，B1 cover 部分消耗同数字键（"风"后 zheng 留组合）；代理对完整码点防护；候选不可见/Shift 态回退原【】｛｝标点；**不 NotifyPicked**（取字≠选词，防整词学习污染，微软"不计数"口径）。deep T20a/b：xi'an+[→西（897F）、+]→安（5B89），37/37。
+- **设置页残留**：WM_SIZE/ScrollSettingsTo 各补 RedrawWindow(RDW_INVALIDATE|RDW_ALLCHILDREN)——**缩放残留已修**；常规页开关（owner-draw）滚动残留两轮未根治，**用户裁定搁置**（疑 COMPOSITED/CLIPCHILDREN 组合）。
+- **门禁**：build Debug 零错 + regress ALL PASS（engine 254 + readings + deep 37/37 + e2e attempt1 直绿）。
+- **工作区 11 文件未提交**（HEAD=83a1009）：注音 8 文件 + composition.cpp + deep_test.cpp + settingsui.cpp。**下一轮**：分笔落账提交（注音 / 以词定字+T20 / 设置残留）→ 剩余长尾：联想多段呈现优化（§3 外观）、U 模式拆字（先定部件拆分数据源方案）→ 用户实测拼音与词典管理；backlog＝LLM 语义重排/前缀提交语义/候选翻页/隐身热键/#91 深挖。
+（以下为历史速报。）
+
 ## 📌 最新状态速报（2026-11-02 ·AutoClaw：loomy 中断 WIP 收口 + ghost 活闸验证 + M4.5 KV 增量）
 
 - **loomy 中断 WIP 已收口**（`113f9e8` 产品 + `58d32c4` 测试）：①用户词典管理走引擎原子操作（持 _udMtx 改内存+置脏，唯一写者收敛落盘，FlushUserDict 等收敛）——根治“删除词条复活”（UI 直写与后台落盘竞态）；备份导入走 UserDictReplaceFromRaw；②词典窗 AdjustWindowRectEx 客户区补偿（底部按钮行裁切 21px 根治）；③设置页滚轮转发（settingswheel.cpp 子类化组合框/编辑框 WM_MOUSEWHEEL→父窗）+ 滚动条零范围清零 + 触控板小增量滚存
