@@ -9,7 +9,17 @@
 // - 右键操作（window.cpp 候选窗右键菜单）：置顶/提升/降频/删除/查拼音。
 //
 #include "uiinternal.h"
-#include "settingsui.h" // CandDictOp/UserDictHasWord/ApplyCandidateDictOp/InferWordPinyin 公共声明
+// 客户区补偿助手（QA 2026-11-02）：布局按客户区 W×H 设计，建窗经 AdjustWindowRectEx
+// 补标题栏/边框——旧版拿窗口总高当客户区摆放，底部按钮行被裁 ≈21px 内容。
+static void AdjustWndRect(DWORD dwStyle, DWORD dwExStyle, int& w, int& h)
+{
+    RECT rc{ 0, 0, w, h };
+    if (AdjustWindowRectEx(&rc, dwStyle, FALSE, dwExStyle))
+    { w = rc.right - rc.left; h = rc.bottom - rc.top; }
+}
+#include "settingsui.h"
+
+ // CandDictOp/UserDictHasWord/ApplyCandidateDictOp/InferWordPinyin 公共声明
 
 #include <windows.h>
 #include <commdlg.h>
@@ -598,9 +608,11 @@ void CreateUserDictWindow(HINSTANCE hInst)
     int btnH = MulDiv(28, dpi, 96);
     int pad = MulDiv(12, dpi, 96);
 
+    const DWORD udStyle = WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX;
+    int udW = W, udH = H;
+    AdjustWndRect(udStyle, 0, udW, udH);   // 补齐非客户区，保证客户区=W×H
     g_hUserDict = CreateWindowExW(0, kUserDictWndClass, L"用户词典与自定义词条管理",
-                                  WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU | WS_MINIMIZEBOX,
-                                  CW_USEDEFAULT, CW_USEDEFAULT, W, H, NULL, NULL, hInst, NULL);
+                                  udStyle, CW_USEDEFAULT, CW_USEDEFAULT, udW, udH, NULL, NULL, hInst, NULL);
 
     CreateWindowExW(0, L"STATIC", L"", WS_CHILD | WS_VISIBLE,
                     pad, pad, W - pad * 2, btnH, g_hUserDict, (HMENU)(INT_PTR)IDC_UD_STATIC, hInst, NULL);
