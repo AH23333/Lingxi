@@ -706,8 +706,22 @@ private:
     // 自学习用户词典：规范化拼音串 → 用户选过的词（按次数）。
     // 三方并发访问：管道预测线程（Predict 读）、管道读线程（Learn 写）、
     // UI 线程（设置界面清空/导入后 ReloadUserDict 重载）——全部经 _udMtx 串行化。
-    struct UserPick { std::wstring word; int count; };
+    // manual=用户显式添加/导入/备份恢复的词条（词典窗"自定义词条"、导入合并），
+    // 文件第 4 列持久化（仅 manual 写，学习词保持旧 3 列格式），键数封顶淘汰豁免。
+    struct UserPick { std::wstring word; int count; bool manual = false; };
     std::unordered_map<std::string, std::vector<UserPick>> _userDict;
+    // L10 键数封顶与批量淘汰（2026-11-03）：
+    // - 触发条件：仅当"新拼音键即将插入"（Learn/AddUserWord/MergeUserDict 三个
+    //   插入口）且当前键数 >= kMaxUserDictKeys 时执行；既有键的计数更新不触发。
+    // - 淘汰策略：候选=不含任何 manual 条目的键（manual 永不淘汰——用户显式词
+    //   优先于封顶）；按"键内条目 count 总和"最小者优先，一次淘汰 5%
+    //   （kMaxUserDictKeys × kEvictBatchPct = 1000 键），把全表扫描摊薄到每
+    //   1000 次新键插入才发生一次，热路径不逐插全扫。
+    // - 落盘：淘汰即置脏，随既有 KickPersist/FlushUserDict 通道同步写盘，
+    //   内存与 userdict.txt 保持一致（不能只清内存）。
+    // - 全 manual 越限：不淘汰、键数可超上限（封顶只约束自学习通道增长）。
+    static constexpr size_t kMaxUserDictKeys = 20000; // 键数上限（学习通道无界增长根治）
+    static constexpr size_t kEvictBatchPct = 5;       // 每次淘汰上限的 5%（批量摊薄扫描）
     // 用户词简拼索引：首字母串（如 "mm"）→ 用户词（含全拼键与次数）
     struct UserInitPick { std::wstring word; int count; std::string fullKey; };
     std::unordered_map<std::string, std::vector<UserInitPick>> _userByInit;
@@ -1246,9 +1260,16 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 if (t2 == std::string::npos) continue;
                 std::wstring word = FromUtf8(l.substr(0, t1));
                 std::string key = l.substr(t1 + 1, t2 - t1 - 1);
-                int count = std::atoi(l.substr(t2 + 1).c_str());
+                std::string rest = l.substr(t2 + 1);
+                int count = std::atoi(rest.c_str());
+                // L10：可选第 4 列=非 0 表示用户显式添加/导入（manual，淘汰豁免）；
+                // 旧 3 列文件缺省=自学习词（升级前已导入的词条无法追溯区分，
+                // 按学习词对待——仅当该键总次数垫底且键数越限时才可能被淘汰）
+                bool manual = false;
+                size_t t3 = rest.find('\t');
+                if (t3 != std::string::npos) manual = std::atoi(rest.c_str() + t3 + 1) != 0;
                 if (!word.empty() && !key.empty() && count > 0)
-                    _userDict[key].push_back({ word, count });
+                    _userDict[key].push_back({ word, count, manual });
             }
         }
         BuildUserInitIndex();
@@ -1380,6 +1401,58 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
             vec.push_back({ up.word, up.count, key });
     }
 
+    // L10：键数封顶批量淘汰（调用方持 _udMtx）。策略与触发条件见
+    // kMaxUserDictKeys 处注释。仅新键插入前调用；淘汰即置脏，落盘走既有
+    // KickPersist/FlushUserDict 通道（调用方随后都会触发，无需在此写盘）。
+    void EvictUserDictKeysLocked()
+    {
+        if (_userDict.size() < kMaxUserDictKeys) return;
+        struct KeyTot { std::string key; long long total; };
+        std::vector<KeyTot> cands;
+        cands.reserve(_userDict.size());
+        for (const auto& kv : _userDict)
+        {
+            bool protect = false;
+            long long total = 0;
+            for (const auto& up : kv.second)
+            {
+                if (up.manual) { protect = true; break; } // manual 键整体豁免
+                total += up.count;
+            }
+            if (!protect) cands.push_back({ kv.first, total });
+        }
+        if (cands.empty()) return; // 全 manual：不动用户词，键数可超上限（见策略注释）
+        size_t batch = kMaxUserDictKeys * kEvictBatchPct / 100;
+        if (batch < 1) batch = 1;
+        if (batch < cands.size())
+            std::nth_element(cands.begin(), cands.begin() + (std::ptrdiff_t)batch,
+                             cands.end(),
+                             [](const KeyTot& a, const KeyTot& b) { return a.total < b.total; });
+        else
+            batch = cands.size();
+        std::unordered_set<std::string> victims;
+        for (size_t i = 0; i < batch; i++) victims.insert(cands[i].key);
+        for (auto it = _userDict.begin(); it != _userDict.end();)
+        {
+            if (victims.count(it->first)) it = _userDict.erase(it);
+            else ++it;
+        }
+        // 简拼索引单遍清理（逐键 UpdateUserInitIndexLocked 会 N×全索引扫）
+        for (auto it = _userByInit.begin(); it != _userByInit.end();)
+        {
+            auto& vec = it->second;
+            vec.erase(std::remove_if(vec.begin(), vec.end(),
+                                     [&victims](const UserInitPick& p)
+                                     { return victims.count(p.fullKey) > 0; }),
+                      vec.end());
+            if (vec.empty()) it = _userByInit.erase(it);
+            else ++it;
+        }
+        _userDirty = true;
+        LX_LOG(L"py", L"用户词典封顶淘汰: 批量=%zu 剩余键数=%zu",
+               victims.size(), _userDict.size());
+    }
+
     // 原子落盘：先写 .tmp 再 MoveFileEx 替换。引擎（管道线程）与设置界面
     // （UI 线程）是同一文件的两个写者，任何一方都不允许让对方读到半截文件。
     static bool WriteFileAtomicA(const std::string& path, const std::string& content)
@@ -1416,6 +1489,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 content += kv.first;
                 content.push_back('\t');
                 content += std::to_string(up.count);
+                if (up.manual) content += "\t1"; // L10：manual 持久化为第 4 列（学习词保持 3 列）
                 content.push_back('\n');
             }
         return content;
@@ -1487,6 +1561,8 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         if (key.empty()) return;
         {
             std::lock_guard<std::mutex> lk(_udMtx);
+            if (_userDict.find(key) == _userDict.end())
+                EvictUserDictKeysLocked(); // L10：新键插入前查键数封顶（既有键计数更新不触发）
             auto& vec = _userDict[key];
             bool found = false;
             for (auto& up : vec)
@@ -1601,11 +1677,13 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         if (kNorm.empty()) return false;
         {
             std::lock_guard<std::mutex> lk(_udMtx);
+            if (_userDict.find(kNorm) == _userDict.end())
+                EvictUserDictKeysLocked(); // L10：新键插入前查键数封顶
             auto& vec = _userDict[kNorm];
             bool found = false;
             for (auto& up : vec)
-                if (up.word == word) { up.count += gain; found = true; break; }
-            if (!found) vec.push_back({ word, gain });
+                if (up.word == word) { up.count += gain; up.manual = true; found = true; break; }
+            if (!found) vec.push_back({ word, gain, true }); // 显式添加=manual，淘汰豁免
             _userDirty = true;
             UpdateUserInitIndexLocked(kNorm); // 新词即时可简拼调出
         }
@@ -1654,11 +1732,13 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
             {
                 std::string kNorm = NormKey(ToUtf8(e.key)); // 导入键归一，查询可命中
                 if (e.word.empty() || kNorm.empty() || e.count <= 0) continue;
+                if (_userDict.find(kNorm) == _userDict.end())
+                    EvictUserDictKeysLocked(); // L10：新键插入前查键数封顶
                 auto& vec = _userDict[kNorm];
                 bool merged = false;
                 for (auto& up : vec)
-                    if (up.word == e.word) { up.count += e.count; merged = true; break; }
-                if (!merged) vec.push_back({ e.word, e.count });
+                    if (up.word == e.word) { up.count += e.count; up.manual = true; merged = true; break; }
+                if (!merged) vec.push_back({ e.word, e.count, true }); // 显式导入=manual，淘汰豁免
                 UpdateUserInitIndexLocked(kNorm);
             }
             _userDirty = true;
