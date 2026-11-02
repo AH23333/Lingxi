@@ -68,6 +68,7 @@ private:
         std::wstring ctx;    // 已上屏上文（V2 帧 CTX_F_CTX_PREFIX；LLM 重排用，可能为空）
         bool dark = false;
         bool pinyin = false; // true: text 是拼音字母串，走拼音引擎
+        bool assoc = false;  // true: 联想帧（CTX_F_ASSOC）——LLM 长续写拆阶梯（GAP §11 多段呈现）
         RECT caret{};
         uint64_t enqueuedAt = 0;
     };
@@ -82,7 +83,7 @@ private:
     void HandleCtx(ClientPtr c, const std::vector<uint8_t>& body);
     void EnqueuePredict(const ClientPtr& c, uint32_t ver, const std::wstring& text,
                         bool dark, const RECT& caret, bool pinyin,
-                        const std::wstring& ctx = {});
+                        const std::wstring& ctx = {}, bool assoc = false);
     void SendCandidates(ClientCtx* c, uint32_t ver, const Prediction& pred);
     // 两阶段重排：原序已显示后，后台按上文重排 top-8，完成且未被交互打断则更新同 ver
     // cover（B1）/anno（GAP R6）各自与 cands 平行，重排时按同一排列搬运

@@ -198,6 +198,19 @@ static int ProbeChain()
         LX_LOG(L"chain", L"probe '%ls' -> [%ls] (%u cands, ascii=%d, %llu ms)",
                ctx, joined.c_str(), (uint32_t)r.cands.size(), (int)ascii,
                (unsigned long long)(GetTickCount64() - t0));
+        // 联想阶梯呈现取证（GAP §11 多段呈现）：模拟联想帧后置拆段（pipeserver 同款）
+        lingxi::Prediction st = r;
+        lingxi::StageAssocCands(st);
+        if (st.cands.size() != r.cands.size())
+        {
+            std::wstring sj;
+            for (size_t k = 0; k < st.cands.size(); k++)
+            {
+                if (k) sj += L" | ";
+                sj += st.cands[k];
+            }
+            LX_LOG(L"chain", L"probe-stage '%ls' -> [%ls]", ctx, sj.c_str());
+        }
     }
     delete c;
     return 0;

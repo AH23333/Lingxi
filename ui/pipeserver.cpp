@@ -381,12 +381,13 @@ void PipeServer::HandleCtx(ClientPtr c, const std::vector<uint8_t>& body)
     }
 
     RECT rc = { m.caretX, m.caretY, m.caretX + m.caretW, m.caretY + m.caretH };
-    EnqueuePredict(c, m.ver, text, c->dark, rc, (m.flags & CTX_F_PINYIN) != 0, ctx);
+    EnqueuePredict(c, m.ver, text, c->dark, rc, (m.flags & CTX_F_PINYIN) != 0, ctx,
+                   (m.flags & CTX_F_ASSOC) != 0);
 }
 
 void PipeServer::EnqueuePredict(const ClientPtr& c, uint32_t ver, const std::wstring& text,
                                  bool dark, const RECT& caret, bool pinyin,
-                                 const std::wstring& ctx)
+                                 const std::wstring& ctx, bool assoc)
 {
     PendingPredict e;
     e.c = c;
@@ -396,6 +397,7 @@ void PipeServer::EnqueuePredict(const ClientPtr& c, uint32_t ver, const std::wst
     e.dark = dark;
     e.caret = caret;
     e.pinyin = pinyin;
+    e.assoc = assoc;
     e.enqueuedAt = GetTickCount64();
 
     EnterCriticalSection(&_cs);
@@ -530,6 +532,10 @@ void PipeServer::PredictProc()
             if (!pred.cover.empty()) pred.cover.resize(cap);
             if (!pred.anno.empty()) pred.anno.resize(cap);
         }
+        // 联想帧阶梯呈现（GAP §11 多段呈现）：LLM 长续写拆 [首段][全句] 两级，
+        // 空格逐段连发/整句一步选（DLL 侧选词键+连发已有，仅缺候选塑形）。
+        // 续写帧不拆——DedupCompletions 规则 ② 严禁前缀对，联想帧是唯一例外。
+        if (e.assoc && !e.pinyin) StageAssocCands(pred);
         LX_LOG(L"pipe", L"裁剪后候选=%u paused=%d enComp=%d pinyin=%d",
                (uint32_t)pred.cands.size(), (int)st.paused, (int)st.enCompletion,
                (int)e.pinyin);

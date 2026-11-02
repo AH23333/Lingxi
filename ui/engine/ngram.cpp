@@ -3,6 +3,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <cstdio>
+#include <cwchar>
 #include <cwctype>
 #include <fstream>
 #include <string>
@@ -380,6 +381,34 @@ std::vector<std::wstring> DedupCompletions(const std::vector<std::wstring>& cand
         if (!dropped) out.push_back(raw);
     }
     return out;
+}
+
+// 选词联想阶梯呈现（GAP §11 多段呈现，2026-11-02）：联想帧（CTX_F_ASSOC）的
+// LLM 长续写拆两级——①首段=首个句读前（含该句读，词级颗粒，如"晴，"）；
+// ②全句原样。空格=首段逐段连发（DLL 点选后自动发下一轮联想帧），整句一步选。
+// 只拆候选 0（贪心主路）；与 DedupCompletions 规则 ②（前缀对保较短）的关系：
+// 那是续写帧防同源堆叠的引擎侧闸，本函数在去重之后由联想帧专属调用——
+// 有意的呈现层例外，续写帧零改动。
+void StageAssocCands(Prediction& pred)
+{
+    if (pred.cands.empty()) return;
+    const std::wstring& full = pred.cands.front();
+    // 首个句读（中英统一，与 SplitContinuation 同集）；句读后须还有字符
+    const wchar_t* kStops = L"\u3002\uff0c\uff01\uff1f\u3001\uff1b\uff1a,.!?;:";
+    size_t cut = std::wstring::npos;
+    for (size_t k = 0; k + 1 < full.size(); k++)
+        if (wcschr(kStops, full[k])) { cut = k; break; }
+    if (cut == std::wstring::npos) return;
+    const size_t segLen = cut + 1; // 首段长度（含句读）
+    if (segLen < 2 || segLen > 8) return;      // 词级颗粒：单句读/超长前段不拆
+    if (full.size() - segLen < 2) return;      // 剩余太短无阶梯价值
+    std::wstring seg = full.substr(0, segLen);
+    for (const auto& c : pred.cands)
+        if (c == seg) return;                  // 首段已在列（多路采样）不重复插
+    pred.cands.insert(pred.cands.begin(), seg);
+    // cover/anno 仅在原本平行时同步插入，保持平行不变量
+    if (pred.cover.size() == pred.cands.size() - 1) pred.cover.insert(pred.cover.begin(), 0);
+    if (pred.anno.size() == pred.cands.size() - 1) pred.anno.insert(pred.anno.begin(), std::wstring());
 }
 
 IPredictor* CreateChainPredictor(std::vector<IPredictor*>&& chain)

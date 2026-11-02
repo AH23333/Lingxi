@@ -108,6 +108,14 @@ std::wstring StripContinuationEcho(std::wstring cont, const std::wstring& tail);
 std::vector<std::wstring> DedupCompletions(const std::vector<std::wstring>& cands,
                                            const std::wstring& context);
 
+// 选词联想阶梯呈现（GAP §11 多段呈现，2026-11-02）：联想帧（CTX_F_ASSOC）的
+// LLM 长续写拆两级——①首段=首个句读前（含该句读，词级颗粒，如"晴，"）；
+// ②全句原样。空格=首段逐段连发，整句一步选。门槛：首段 2..8 字（含句读）、
+// 剩余 ≥2 字、首段不在候选中；cover/anno 原本平行则同步插入。只拆候选 0。
+// 续写帧不调用（DedupCompletions 规则 ② 严禁前缀对，联想帧为呈现层例外）。
+// 实现于 ngram.cpp（engine_test 直接单测）。
+void StageAssocCands(Prediction& pred);
+
 // 上下文感知降级链（实现于 ngram.cpp，engine_test 用假引擎单测路由）：
 //   词中（尾部 ≥2 英文词符）→ 词表补全优先（replaceLen 语义正确）；
 //   纯 ASCII 上下文（整段 < 0x80，B4）→ 词表优先；其余引擎兜底时候选

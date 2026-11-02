@@ -1824,6 +1824,76 @@ int wmain()
             // 空/纯标点候选剔除
             dedupCase({ L"，", L"好" }, L"", { L"好" }, "dedup: punct-only dropped");
         }
+
+        // E9. StageAssocCands：联想帧阶梯呈现（GAP §11 多段呈现，2026-11-02）
+        {
+            auto stageCase = [](const std::vector<std::wstring>& in,
+                                const std::vector<std::wstring>& expect, const char* name)
+            {
+                lingxi::Prediction pred;
+                pred.cands = in;
+                lingxi::StageAssocCands(pred);
+                bool ok = pred.cands == expect;
+                std::wstring inj, gotj;
+                for (size_t k = 0; k < in.size(); k++)
+                {
+                    if (k) inj += L"|";
+                    inj += in[k];
+                }
+                for (size_t k = 0; k < pred.cands.size(); k++)
+                {
+                    if (k) gotj += L"|";
+                    gotj += pred.cands[k];
+                }
+                wchar_t detail[256];
+                _snwprintf_s(detail, _TRUNCATE, L"in[%ls] -> [%ls]", inj.c_str(), gotj.c_str());
+                Report(ok, name, detail);
+            };
+            // 标准两级：首段含句读（词级颗粒）+ 全句原样
+            stageCase({ L"晴，气温20℃-30℃" }, { L"晴，", L"晴，气温20℃-30℃" },
+                      "stage: two-level seg+full");
+            // 7 字首段（含句读 ≤8 门槛内）
+            stageCase({ L"今天天气很好，我们去公园散步吧" },
+                      { L"今天天气很好，", L"今天天气很好，我们去公园散步吧" },
+                      "stage: 7-char seg staged");
+            // 无句读 / 句读在末尾 / 剩余 1 字 / 句读在首位 / 首段超长（>8）→ 不拆
+            stageCase({ L"你好" }, { L"你好" }, "stage: no stop unchanged");
+            stageCase({ L"好。" }, { L"好。" }, "stage: trailing stop unchanged");
+            stageCase({ L"晴，热" }, { L"晴，热" }, "stage: 1-char rest unchanged");
+            stageCase({ L"，然后我们就出发" }, { L"，然后我们就出发" },
+                      "stage: leading stop unchanged");
+            stageCase({ L"今天天气非常好我们出去玩，一起去公园" },
+                      { L"今天天气非常好我们出去玩，一起去公园" },
+                      "stage: seg>8 unchanged");
+            // 首段已在列（多路采样同源）→ 不重复插；c0 无句读 → 整批不动
+            stageCase({ L"晴，气温20℃-30℃", L"晴，" }, { L"晴，气温20℃-30℃", L"晴，" },
+                      "stage: existing seg no dup");
+            stageCase({ L"晴，", L"晴，气温20℃-30℃" }, { L"晴，", L"晴，气温20℃-30℃" },
+                      "stage: c0-no-split passthrough");
+            // 多候选拆 c0，其余原样
+            stageCase({ L"晴，气温20℃-30℃", L"晴，湿度70%" },
+                      { L"晴，", L"晴，气温20℃-30℃", L"晴，湿度70%" },
+                      "stage: only c0 staged");
+            // 英文句读同集
+            stageCase({ L"day. I hope you have a good one." },
+                      { L"day.", L"day. I hope you have a good one." },
+                      "stage: en stop same set");
+            // cover/anno 原本平行 → 同步插头保持平行；原本空 → 保持空
+            {
+                lingxi::Prediction pred;
+                pred.cands = { L"晴，气温20℃-30℃" };
+                pred.cover = { 0 };
+                pred.anno = { L"" };
+                lingxi::StageAssocCands(pred);
+                bool okArr = pred.cands.size() == 2 && pred.cover.size() == 2 &&
+                             pred.anno.size() == 2 && pred.cover[0] == 0 && pred.anno[0].empty();
+                lingxi::Prediction pred2;
+                pred2.cands = { L"晴，气温20℃-30℃" }; // cover/anno 空 = 引擎未填 → 保持空
+                lingxi::StageAssocCands(pred2);
+                okArr = okArr && pred2.cands.size() == 2 && pred2.cover.empty() && pred2.anno.empty();
+                Report(okArr, "stage: parallel arrays synced", L"cover/anno 平行不变量");
+            }
+        }
     }
 
     wprintf(L"=== 结果: PASS=%d FAIL=%d ===\n", g_pass, g_fail);
