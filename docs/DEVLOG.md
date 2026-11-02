@@ -1264,7 +1264,7 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - **设置页滚轮转发**：settingswheel.cpp 子类化组合框/编辑框 WM_MOUSEWHEEL 原样转发父窗（组合框不再被滚轮误改选中项）；滚动条零范围清零防残留误判；触控板小增量滚存。
 - **ghost 数字选词活闸验证**：e2e 用例 t0=30→t2=38、eaten=1 PASS。3/3 失败真因＝上屏后 400ms 自插入抑制窗（Chromium 异步 OnEndEdit 兑底）吞掉紧随的外部编辑——用例先越窗再插；产品语义保留（真实用户 400ms 后自愈）。
 - **e2e 会话 IME 状态保全**：开场记录用户 IME、收尾还原（11-01 会话劫持事故根治）。
-- **M4.5 KV 增量复用**（llm.cpp）：公共前缀复用 KV + delta decode；打字追加场景 prefill 降为 1-2 token；decode 失败回退全量；_genMutex 串行化根治预热线程竞态。--probe-llm 增量一致性验证就绪。
+- **M4.5 KV 增量复用**（llm.cpp）：公共前缀复用 KV + delta decode；打字追加场景 prefill 降为 1-2 token；decode 失败回退全量；_genMutex 串行化根治预热线程竞态。实测：首次全量 578ms → 增量 266-328ms（prefill 消除，余量=生成预算）；相同 prompt 一致性 OK。--probe-llm 增量一致性验证就绪。
 - **回归**：build gate+engine+fix_readings+deep 全 PASS（regress-300826204）；e2e 修复后 attempt2 全 PASS（attempt1 假红=#60 前台竞态噪声）。deep_test 对照实验补记：MS 拼音同宿主同样 AV（PITFALLS #19 铁证），组合类断言改 SMOKE 不计分。
 - 待办顺延：LLM 语义重排/前缀提交语义/候选翻页/隐身热键/#91 深挖；用户实测拼音与词典管理。
 
