@@ -806,6 +806,8 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
         }
         if (wParam >= L'1' && wParam <= L'9' && !shiftOrCaps)
             return CandidatesVisible(); // 无 Shift 数字 = 当前页选词
+        if ((wParam == VK_OEM_4 || wParam == VK_OEM_6) && !shiftOrCaps)
+            return CandidatesVisible(); // 以词定字（GAP §1）：候选可见 [ ] 才认领，不可见原【】标点/放行
         return IsChinesePunctKey(wParam); // 其余标点（含 Shift 数字 ！？（）等）
     }
     // 未开始输入：Shift/Caps 下的字母直通，普通字母启动拼音，中文标点转换
@@ -1102,6 +1104,38 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         if (GetCandidateEx(_pageStart, hanzi, cover)) { NotifyPicked(_pageStart); PinyinCommitHanzi(hanzi, cover); }
         else                                           PinyinCommitRaw();
         return;
+    }
+    case VK_OEM_4:
+    case VK_OEM_6:
+    {
+        // 以词定字（GAP §1 对齐微软）：组合中无 Shift [ 取本页首选词首字、
+        // ] 取末字，单字上屏即组合收束（B1 cover 部分消耗语义同数字键；
+        // emoji 融合候选首尾可能是代理对，取完整码点）。候选不可见或
+        // Shift 态回退原【】｛｝标点路径。不 NotifyPicked：取字≠选词，
+        // 记整词学习会污染（fengzheng[→风 不该喂"风筝"），与微软
+        // "以词定字不计数"口径一致。
+        if (!shiftOrCaps && CandidatesVisible())
+        {
+            std::wstring hanzi;
+            uint32_t cover = 0;
+            WaitForLatestCandidates(400); // 与空格/数字键同口径：候选在途时兜底
+            if (GetCandidateEx(_pageStart, hanzi, cover) && !hanzi.empty())
+            {
+                size_t len = 1;
+                if (wParam == VK_OEM_4)
+                {
+                    if (hanzi.size() >= 2 && (hanzi[0] & 0xFC00) == 0xD800) len = 2;
+                }
+                else if (hanzi.size() >= 2 && (hanzi.back() & 0xFC00) == 0xDC00)
+                {
+                    len = 2;
+                }
+                PinyinCommitHanzi(hanzi.substr(wParam == VK_OEM_4 ? 0 : hanzi.size() - len, len), cover);
+                return;
+            }
+        }
+        if (CommitChinesePunct(wParam)) return; // 【】｛｝：原标点语义保持
+        return; // cnPunct 关且候选消失（Test/Down 竞态窗）：吞下无操作（同翻页空页口径）
     }
     default:
         if (wParam >= L'1' && wParam <= L'9' && !shiftOrCaps)

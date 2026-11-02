@@ -1780,6 +1780,61 @@ int wmain()
             Report(prefix && grew && caret2 && typeOkB,
                    L"T19b 连续上屏顺序与光标契约", d19b);
         }
+        // ---- T20 以词定字（GAP §1 矩阵：对齐微软 [ ] 取字）----
+        // xi'an 首选=西安（T17c 已锚定）：a) 无 Shift [ 取首字"西"上屏即组合
+        // 收束；b) ] 取末字"安"。括号本身不得穿透上屏（store 无 0x5B/0x5D），
+        // eat 侧以 expectEaten=true 一并断言（候选可见 [ ] 必被认领）。
+        {
+            EnsurePinyinMode(pKm);
+            ClearFocusedText(pTm);
+            const wchar_t* seq20 = L"xi'an";
+            for (const wchar_t* q = seq20; *q; q++)
+            {
+                if (*q == L'\'')
+                    TypeKey(pKm, VK_OEM_7, true); // 隔音符实键
+                else
+                {
+                    wchar_t s20[2] = { *q, 0 };
+                    TypeLetters(pKm, s20);
+                }
+                Sleep(60);
+            }
+            PumpMessages();
+            Sleep(300);                        // 候选回包
+            bool brk = TypeKey(pKm, VK_OEM_4, true); // [ 取首字
+            PumpMessages();
+            Sleep(300);
+            std::wstring t20a = ReadFocusedText(pTm);
+            bool first = brk && t20a.size() == 1 && t20a[0] == 0x897F;
+            wchar_t d20a[200];
+            _snwprintf_s(d20a, _TRUNCATE, L"brk=%d t[%u]=%s",
+                         (int)brk, (unsigned)t20a.size(), hex19(t20a).c_str());
+            Report(first, L"T20a 以词定字[取首字西", d20a);
+
+            ClearFocusedText(pTm);
+            for (const wchar_t* q = seq20; *q; q++)
+            {
+                if (*q == L'\'')
+                    TypeKey(pKm, VK_OEM_7, true);
+                else
+                {
+                    wchar_t s20[2] = { *q, 0 };
+                    TypeLetters(pKm, s20);
+                }
+                Sleep(60);
+            }
+            PumpMessages();
+            Sleep(300);
+            bool brk2 = TypeKey(pKm, VK_OEM_6, true); // ] 取末字
+            PumpMessages();
+            Sleep(300);
+            std::wstring t20b = ReadFocusedText(pTm);
+            bool last = brk2 && t20b.size() == 1 && t20b[0] == 0x5B89;
+            wchar_t d20b[200];
+            _snwprintf_s(d20b, _TRUNCATE, L"brk=%d t[%u]=%s",
+                         (int)brk2, (unsigned)t20b.size(), hex19(t20b).c_str());
+            Report(last, L"T20b 以词定字]取末字安", d20b);
+        }
 
     } while (false);
 
