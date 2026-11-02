@@ -1436,8 +1436,160 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         LX_LOG(L"py", L"学习: '%hs' -> '%hs'", key.c_str(), ToUtf8(word).c_str());
     }
 
-    // 管理界面清空/导入后重新加载用户词典，立即生效。
-    void ReloadUserDict() override { LoadUserDict(); }
+    // 管理界面清空/导入后重新加载用户词典，立即生效。先等在途落盘收敛再读
+    // 文件：否则后台旧快照回写后重载，会把引擎内存整体回退到旧文件内容。
+    void ReloadUserDict() override { FlushUserDict(); LoadUserDict(); }
+
+    // ---- 用户词典管理操作（2026-11-01"删除词条复活"根治）----
+    // 旧模型：UI 直接改 userdict.txt + ReloadUserDict，与后台落盘竞态——
+    // KickPersist 快照（持锁）→清脏→锁外写，UI 的删除/清空可被在途旧快照
+    // 原样写回（词条"复活"，列表刷新即见，用户"说了n遍还没加上"的实感根
+    // 源）。新模型：管理操作全部经引擎持 _udMtx 原子改内存+置脏，由唯一写
+    // 者（KickPersist 线程）收敛落盘；FlushUserDict 等收敛后返回，UI 再刷
+    // 新列表，所见即引擎内存。
+
+    // 等词典落盘收敛（内存→文件同态）：管理操作后、UI 刷新/导出前调用。
+    // 上限 ~2s：写失败（盘满/权限）不卡死 UI，保持"脏位重试"原语义。
+    void FlushUserDict()
+    {
+        KickPersist();
+        for (int i = 0; i < 2000; i++)
+        {
+            if (!_persistBusy.load())
+            {
+                std::lock_guard<std::mutex> lk(_udMtx);
+                if (!_userDirty) return;
+            }
+            Sleep(1);
+        }
+    }
+
+    bool RemoveUserWord(const std::wstring& word, const std::wstring& key) override
+    {
+        if (word.empty()) return false;
+        // 键双口径匹配：文件键历史来源不一（Learn 写 NormKey 归一键，早期导
+        // 入可能带大写/分隔符），精确或归一命中皆认，防"看得见删不掉"。
+        std::string kExact = ToUtf8(key);
+        std::string kNorm = NormKey(kExact);
+        bool filterKey = !kNorm.empty(); // key 空=删该词全部读音
+        bool removed = false;
+        {
+            std::lock_guard<std::mutex> lk(_udMtx);
+            for (auto it = _userDict.begin(); it != _userDict.end();)
+            {
+                if (filterKey && it->first != kExact && it->first != kNorm) { ++it; continue; }
+                auto& vec = it->second;
+                size_t before = vec.size();
+                for (size_t i = 0; i < vec.size(); )
+                {
+                    if (vec[i].word == word) vec.erase(vec.begin() + i);
+                    else ++i;
+                }
+                if (vec.size() != before)
+                {
+                    removed = true;
+                    UpdateUserInitIndexLocked(it->first);
+                }
+                if (vec.empty()) it = _userDict.erase(it);
+                else ++it;
+            }
+            if (removed) _userDirty = true;
+        }
+        if (removed)
+        {
+            FlushUserDict();
+            LX_LOG(L"py", L"词典删除: '%ls' key='%ls'", word.c_str(), key.c_str());
+        }
+        return removed;
+    }
+
+    bool ClearUserDict() override
+    {
+        {
+            std::lock_guard<std::mutex> lk(_udMtx);
+            if (_userDict.empty()) return true;
+            _userDict.clear();
+            _userByInit.clear();
+            _userDirty = true;
+        }
+        FlushUserDict();
+        LX_LOG(L"py", L"词典清空");
+        return true;
+    }
+
+    bool AddUserWord(const std::wstring& word, const std::wstring& key, int gain) override
+    {
+        if (word.empty() || gain <= 0) return false;
+        std::string kNorm = NormKey(ToUtf8(key)); // 新增键一律归一（Learn 口径）
+        if (kNorm.empty()) return false;
+        {
+            std::lock_guard<std::mutex> lk(_udMtx);
+            auto& vec = _userDict[kNorm];
+            bool found = false;
+            for (auto& up : vec)
+                if (up.word == word) { up.count += gain; found = true; break; }
+            if (!found) vec.push_back({ word, gain });
+            _userDirty = true;
+            UpdateUserInitIndexLocked(kNorm); // 新词即时可简拼调出
+        }
+        FlushUserDict();
+        LX_LOG(L"py", L"词典新增: '%ls' key='%hs' +%d", word.c_str(), kNorm.c_str(), gain);
+        return true;
+    }
+
+    bool NudgeUserWord(const std::wstring& word, const std::wstring& key, int delta) override
+    {
+        if (word.empty() || delta == 0) return false;
+        std::string kExact = ToUtf8(key);
+        std::string kNorm = NormKey(kExact);
+        bool filterKey = !kNorm.empty(); // key 空=该词全部读音一起调
+        bool found = false;
+        {
+            std::lock_guard<std::mutex> lk(_udMtx);
+            for (auto& kv : _userDict)
+            {
+                if (filterKey && kv.first != kExact && kv.first != kNorm) continue;
+                bool hit = false;
+                for (auto& up : kv.second)
+                {
+                    if (up.word == word)
+                    {
+                        up.count += delta;
+                        if (up.count < 1) up.count = 1;
+                        hit = true;
+                        found = true;
+                    }
+                }
+                if (hit) UpdateUserInitIndexLocked(kv.first);
+            }
+            if (found) _userDirty = true;
+        }
+        if (found) FlushUserDict();
+        return found;
+    }
+
+    bool MergeUserDict(const std::vector<UserDictEntry>& entries) override
+    {
+        if (entries.empty()) return false;
+        {
+            std::lock_guard<std::mutex> lk(_udMtx);
+            for (const auto& e : entries)
+            {
+                std::string kNorm = NormKey(ToUtf8(e.key)); // 导入键归一，查询可命中
+                if (e.word.empty() || kNorm.empty() || e.count <= 0) continue;
+                auto& vec = _userDict[kNorm];
+                bool merged = false;
+                for (auto& up : vec)
+                    if (up.word == e.word) { up.count += e.count; merged = true; break; }
+                if (!merged) vec.push_back({ e.word, e.count });
+                UpdateUserInitIndexLocked(kNorm);
+            }
+            _userDirty = true;
+        }
+        FlushUserDict();
+        LX_LOG(L"py", L"词典导入合并: %zu 条", entries.size());
+        return true;
+    }
 
     // 模糊音：返回该完整音节的合法等价音节（自身在首位）。
     // 声母 z/zh、c/ch、s/sh、n/l 互通；韵母前/后鼻音尾 n/ng 互换；

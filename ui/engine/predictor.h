@@ -22,6 +22,14 @@ struct Prediction
     std::vector<uint32_t> cover;
 };
 
+// 用户词条（词典管理操作用：词典窗/候选右键经 g_hooks → 引擎原子改内存+落盘）
+struct UserDictEntry
+{
+    std::wstring word;
+    std::wstring key;   // 全拼小写连写（userdict.txt 第二列存储口径）
+    int count = 1;
+};
+
 class IPredictor
 {
 public:
@@ -33,6 +41,15 @@ public:
     virtual void Learn(const std::wstring& /*rawPinyin*/, const std::wstring& /*word*/) {}
     // 重新加载用户词典（管理界面清空/导入后立即生效）；默认空实现。
     virtual void ReloadUserDict() {}
+    // 用户词典管理操作（2026-11-01 根治"删除词条复活"）：引擎持锁原子改
+    // 内存+落盘并等收敛后返回；默认 false=引擎不支持（词表/LLM 桩）。
+    // key 空=该词全部读音键；AddUserWord 已存在则 count+=gain 否则新增；
+    // NudgeUserWord count+=delta（下限 1）；MergeUserDict 同 (word,key) 累加。
+    virtual bool RemoveUserWord(const std::wstring& /*word*/, const std::wstring& /*key*/) { return false; }
+    virtual bool ClearUserDict() { return false; }
+    virtual bool AddUserWord(const std::wstring& /*word*/, const std::wstring& /*key*/, int /*gain*/) { return false; }
+    virtual bool NudgeUserWord(const std::wstring& /*word*/, const std::wstring& /*key*/, int /*delta*/) { return false; }
+    virtual bool MergeUserDict(const std::vector<UserDictEntry>& /*entries*/) { return false; }
 };
 
 // 词表引擎（永远可用）

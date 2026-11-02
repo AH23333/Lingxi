@@ -2,24 +2,24 @@
 // 用户词典：存储层 + 管理窗 + 候选词右键词典操作。
 // 原 settingsui.cpp 词典段拆出（P1 重构）。
 // - 存储：%APPDATA%\LingxiIme\userdict.txt（UTF-8：词\t拼音\t次数）；
-//   原子写（.tmp + MoveFileEx 替换）——引擎（管道线程自学习落盘）与本窗
-//   （UI 线程清空/导入）是同一文件的两个写者，直写撞车会截断/半截。
+//   单写者模型（2026-11-01"删除复活"根治）：唯一写者=拼音引擎（持锁改
+//   内存+落盘等收敛）；本窗全部管理操作经 g_hooks 引擎原子操作直达，
+//   不再直写词典文件（旧模型后台在途旧快照会把已删词条写回复活）。
 // - 管理窗：搜索过滤（词条/拼音子串实时过滤）+ 删/清/导/导入 + 自定义
 //   词条（拼音留空自动推断）+ 提升/降低排序。
 // - 右键操作（window.cpp 候选窗右键菜单）：置顶/提升/降频/删除/查拼音。
 //
 #include "uiinternal.h"
-// 客户区补偿助手（QA 2026-11-02）：布局按客户区 W×H 设计，建窗经 AdjustWindowRectEx
-// 补标题栏/边框——旧版拿窗口总高当客户区摆放，底部按钮行被裁 ≈21px 内容。
+// 客户区补偿助手（QA 2026-11-02）：布局代码按客户区 W×H 设计，建窗时经
+// AdjustWindowRectEx 补齐标题栏/边框——旧版直接拿窗口总高当客户区摆放，
+// 底部按钮行被非客户区裁掉 ≈21px 内容，即用户报"没有删除按钮"的裁切根因。
 static void AdjustWndRect(DWORD dwStyle, DWORD dwExStyle, int& w, int& h)
 {
     RECT rc{ 0, 0, w, h };
     if (AdjustWindowRectEx(&rc, dwStyle, FALSE, dwExStyle))
     { w = rc.right - rc.left; h = rc.bottom - rc.top; }
 }
-#include "settingsui.h"
-
- // CandDictOp/UserDictHasWord/ApplyCandidateDictOp/InferWordPinyin 公共声明
+#include "settingsui.h" // CandDictOp/UserDictHasWord/ApplyCandidateDictOp/InferWordPinyin 公共声明
 
 #include <windows.h>
 #include <commdlg.h>
@@ -40,15 +40,6 @@ constexpr wchar_t kUserDictWndClass[] = L"LingxiUserDictWnd";
 
 // ---------------- 文件与编码工具 ----------------
 
-std::string WToUtf8(const std::wstring& w)
-{
-    if (w.empty()) return {};
-    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), NULL, 0, NULL, NULL);
-    std::string s(n, 0);
-    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), s.data(), n, NULL, NULL);
-    return s;
-}
-
 std::wstring Utf8ToW(const std::string& s)
 {
     if (s.empty()) return {};
@@ -58,15 +49,14 @@ std::wstring Utf8ToW(const std::string& s)
     return w;
 }
 
-struct UdEntry { std::wstring word; std::wstring key; int count; };
 // 解析用户词典文本为条目（兼容 UTF-8 BOM）。
-std::vector<UdEntry> ParseUserDict(const std::string& raw)
+std::vector<UserDictEntry> ParseUserDict(const std::string& raw)
 {
     std::string text = raw;
     if (text.size() >= 3 && (unsigned char)text[0] == 0xEF &&
         (unsigned char)text[1] == 0xBB && (unsigned char)text[2] == 0xBF)
         text.erase(0, 3);
-    std::vector<UdEntry> v;
+    std::vector<UserDictEntry> v;
     size_t start = 0;
     while (start < text.size())
     {
@@ -78,28 +68,13 @@ std::vector<UdEntry> ParseUserDict(const std::string& raw)
         if (t1 == std::string::npos) continue;
         size_t t2 = line.find('\t', t1 + 1);
         if (t2 == std::string::npos) continue;
-        UdEntry e;
+        UserDictEntry e;
         e.word = Utf8ToW(line.substr(0, t1));
         e.key = Utf8ToW(line.substr(t1 + 1, t2 - t1 - 1));
         e.count = atoi(line.substr(t2 + 1).c_str());
         if (!e.word.empty() && !e.key.empty() && e.count > 0) v.push_back(std::move(e));
     }
     return v;
-}
-
-std::string SerializeUserDict(const std::vector<UdEntry>& entries)
-{
-    std::string out;
-    for (const auto& e : entries)
-    {
-        out += WToUtf8(e.word);
-        out.push_back('\t');
-        out += WToUtf8(e.key);
-        out.push_back('\t');
-        out += std::to_string(e.count);
-        out.push_back('\n');
-    }
-    return out;
 }
 
 // 拼音推断：zh_pinyin.txt（data\，词条\t空格分隔读音）懒加载缓存。
@@ -184,6 +159,18 @@ constexpr int IDC_UD_BLOCKED = 313; // R6 屏蔽词管理窗入口
 HWND g_hUserDict = nullptr;
 HWND g_hUdList = nullptr;
 HWND g_hUdSearch = nullptr;
+WNDPROC g_udListOrig = nullptr; // 列表框子类化前原 proc
+
+// 列表框子类化：Delete 键删除选中（转发与"删除选中"按钮同一命令路径）
+LRESULT CALLBACK UdListProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam)
+{
+    if (msg == WM_KEYDOWN && wParam == VK_DELETE)
+    {
+        SendMessageW(GetParent(h), WM_COMMAND, MAKEWPARAM(IDC_UD_DEL, 0), 0);
+        return 0;
+    }
+    return CallWindowProcW(g_udListOrig, h, msg, wParam, lParam);
+}
 
 void RefreshUdList()
 {
@@ -198,7 +185,7 @@ void RefreshUdList()
             fl.push_back((wchar_t)towlower(ch));
     }
     std::string raw;
-    std::vector<UdEntry> entries;
+    std::vector<UserDictEntry> entries;
     if (ReadFileBytes(UserDictPathW(), raw)) entries = ParseUserDict(raw);
     SendMessageW(g_hUdList, LB_RESETCONTENT, 0, 0);
     size_t shown = 0;
@@ -227,19 +214,6 @@ void RefreshUdList()
     SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, cap);
 }
 
-// 写回条目并让引擎立即重新加载。
-void PersistUdEntries(const std::vector<UdEntry>& entries)
-{
-    if (!WriteFileBytes(UserDictPathW(), SerializeUserDict(entries)))
-    {
-        // 静默丢数据比失败更糟：明示用户（文件被占用/无权限）。
-        MessageBoxW(g_hUserDict, L"用户词典写入失败（文件被占用或无权限），修改未保存。",
-                    L"灵犀输入法", MB_OK | MB_ICONWARNING);
-        return;
-    }
-    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
-}
-
 void UdDeleteSelected()
 {
     int sel = (int)SendMessageW(g_hUdList, LB_GETCURSEL, 0, 0);
@@ -248,9 +222,8 @@ void UdDeleteSelected()
         SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"请先在列表中选择词条");
         return;
     }
-    // 按内容匹配删除：引擎自学习会随时重写词典文件（学习即落盘），用户浏览
-    // 期间列表索引可能已与文件漂移——按索引删会删错条目或静默落空（此前
-    // "能加不能删"的实感根因）。列表行格式 "word    key    count"（4 空格分隔）。
+    // 按行内容取 (word,key)：引擎自学习随时重写词典，列表索引与文件会漂移
+    // （按索引删会删错/落空）。行格式 "word    key    count"（4 空格分隔）。
     wchar_t line[256] = L"";
     SendMessageW(g_hUdList, LB_GETTEXT, sel, (LPARAM)line);
     std::wstring word, key;
@@ -265,42 +238,24 @@ void UdDeleteSelected()
                 key.assign(rest, sep2 - rest);
         }
     }
-    std::string raw;
-    std::vector<UdEntry> entries;
-    if (ReadFileBytes(UserDictPathW(), raw)) entries = ParseUserDict(raw);
-    bool removed = false;
-    if (!word.empty() && !key.empty())
-    {
-        for (size_t i = 0; i < entries.size(); i++)
-        {
-            if (entries[i].word == word && entries[i].key == key)
-            {
-                entries.erase(entries.begin() + i);
-                removed = true;
-                break;
-            }
-        }
-    }
-    if (!removed)
-    {
-        // 内容匹配失败（旧格式行/并发已删）：回退索引路径
-        if (sel < (int)entries.size()) { entries.erase(entries.begin() + sel); removed = true; }
-    }
-    if (!removed)
+    if (word.empty() || key.empty())
     {
         SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"该词条已不存在（可能刚被学习进程更新），列表已刷新");
         RefreshUdList();
         return;
     }
-    PersistUdEntries(entries);
-    RefreshUdList();
-    if (removed)
+    // 删除直达引擎原子操作（单写者落盘，无在途旧快照复活）
+    if (!g_hooks.removeUserWord || !g_hooks.removeUserWord(word, key))
     {
-        int n = (int)SendMessageW(g_hUdList, LB_GETCOUNT, 0, 0);
-        if (n > 0) SendMessageW(g_hUdList, LB_SETCURSEL, sel < n ? sel : n - 1, 0);
-        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC,
-            L"已删除并重新加载（基础词典里的常见词仍会出现在候选中）");
+        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"该词条已不存在（可能刚被学习进程更新），列表已刷新");
+        RefreshUdList();
+        return;
     }
+    RefreshUdList();
+    int n = (int)SendMessageW(g_hUdList, LB_GETCOUNT, 0, 0);
+    if (n > 0) SendMessageW(g_hUdList, LB_SETCURSEL, sel < n ? sel : n - 1, 0);
+    SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC,
+        L"已删除并重新加载（基础词典里的常见词仍会出现在候选中）");
     LX_LOG(L"ui", L"用户词典删除: %ls (key=%ls)", word.c_str(), key.c_str());
 }
 
@@ -309,8 +264,13 @@ void UdClearAll()
     if (MessageBoxW(g_hUserDict, L"确定清空全部已学习词条？此操作不可撤销。",
                     L"清空用户词典", MB_OKCANCEL | MB_ICONQUESTION) != IDOK)
         return;
-    WriteFileBytes(UserDictPathW(), std::string());
-    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
+    // 清空直达引擎原子操作（不再直写文件——防在途旧快照复活）
+    if (!g_hooks.clearUserDict || !g_hooks.clearUserDict())
+    {
+        MessageBoxW(g_hUserDict, L"用户词典清空失败（引擎未运行或写入失败）。",
+                    L"灵犀输入法", MB_OK | MB_ICONWARNING);
+        return;
+    }
     RefreshUdList();
 }
 
@@ -325,20 +285,22 @@ void UdImport()
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST;
     if (!GetOpenFileNameW(&ofn)) return;
 
-    std::string inRaw, curRaw;
+    std::string inRaw;
     if (!ReadFileBytes(path, inRaw)) return;
-    std::vector<UdEntry> imported = ParseUserDict(inRaw);
-    std::vector<UdEntry> cur;
-    if (ReadFileBytes(UserDictPathW(), curRaw)) cur = ParseUserDict(curRaw);
-    // 合并：同 (word,key) 累加 count，否则追加
-    for (const auto& ie : imported)
+    std::vector<UserDictEntry> imported = ParseUserDict(inRaw);
+    if (imported.empty())
     {
-        bool merged = false;
-        for (auto& ce : cur)
-            if (ce.word == ie.word && ce.key == ie.key) { ce.count += ie.count; merged = true; break; }
-        if (!merged) cur.push_back(ie);
+        MessageBoxW(g_hUserDict, L"文件中没有可导入的词条（每行需为：词、拼音、次数，以制表符分隔）。",
+                    L"灵犀输入法", MB_OK | MB_ICONWARNING);
+        return;
     }
-    PersistUdEntries(cur);
+    // 合并直达引擎原子操作：同 (word,key) 累加 count，否则追加
+    if (!g_hooks.mergeUserDict || !g_hooks.mergeUserDict(imported))
+    {
+        MessageBoxW(g_hUserDict, L"导入失败（引擎未运行或写入失败），未合并词条。",
+                    L"灵犀输入法", MB_OK | MB_ICONWARNING);
+        return;
+    }
     RefreshUdList();
 }
 
@@ -389,20 +351,14 @@ void UdAddWord()
                         L"无法自动推断该词拼音（含词典外字符），请手动填写拼音");
         return;
     }
-    std::string raw;
-    std::vector<UdEntry> entries;
-    if (ReadFileBytes(UserDictPathW(), raw)) entries = ParseUserDict(raw);
-    bool merged = false;
-    for (auto& e : entries)
-        if (e.word == w && e.key == k) { e.count += 1000; merged = true; break; }
-    if (!merged) entries.push_back({ w, k, 1000 });
-    if (!WriteFileBytes(UserDictPathW(), SerializeUserDict(entries)))
+    bool merged = UserDictHasWord(w); // 预读：同词已存在 → 状态文案走提升语义
+    // 新增/提升直达引擎原子操作（count=1000 进置顶区）
+    if (!g_hooks.addUserWord || !g_hooks.addUserWord(w, k, 1000))
     {
-        MessageBoxW(g_hUserDict, L"用户词典写入失败（文件被占用或无权限），修改未保存。",
+        MessageBoxW(g_hUserDict, L"词条保存失败（引擎未运行或写入失败）。",
                     L"灵犀输入法", MB_OK | MB_ICONWARNING);
         return;
     }
-    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
     RefreshUdList();
     SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC,
         merged ? L"词条已存在，已提升其排序（+1000）"
@@ -421,7 +377,7 @@ void UdNudgeSelected(int delta)
         SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"请先在列表中选择词条");
         return;
     }
-    // 同 UdDeleteSelected：按内容匹配（引擎并发重写词典文件，索引会漂移）
+    // 同 UdDeleteSelected：按行内容取 (word,key)（引擎并发重写词典，索引漂移）
     wchar_t line[256] = L"";
     SendMessageW(g_hUdList, LB_GETTEXT, sel, (LPARAM)line);
     std::wstring word, key;
@@ -436,36 +392,14 @@ void UdNudgeSelected(int delta)
                 key.assign(rest, sep2 - rest);
         }
     }
-    std::string raw;
-    std::vector<UdEntry> entries;
-    if (ReadFileBytes(UserDictPathW(), raw)) entries = ParseUserDict(raw);
-    bool found = false;
-    if (!word.empty() && !key.empty())
+    // 调频直达引擎原子操作（key 空=该词全部读音一起调；下限 1 引擎侧保证）
+    if (word.empty() || key.empty() ||
+        !g_hooks.nudgeUserWord || !g_hooks.nudgeUserWord(word, key, delta))
     {
-        for (size_t i = 0; i < entries.size(); i++)
-        {
-            if (entries[i].word == word && entries[i].key == key)
-            {
-                entries[i].count += delta;
-                if (entries[i].count < 1) entries[i].count = 1;
-                found = true;
-                break;
-            }
-        }
-    }
-    if (!found)
-    {
-        if (sel >= (int)entries.size()) return;
-        entries[sel].count += delta;
-        if (entries[sel].count < 1) entries[sel].count = 1;
-    }
-    if (!WriteFileBytes(UserDictPathW(), SerializeUserDict(entries)))
-    {
-        MessageBoxW(g_hUserDict, L"用户词典写入失败（文件被占用或无权限），修改未保存。",
-                    L"灵犀输入法", MB_OK | MB_ICONWARNING);
+        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"该词条已不存在（可能刚被学习进程更新），列表已刷新");
+        RefreshUdList();
         return;
     }
-    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
     RefreshUdList();
     // 按内容重选（索引可能因 count 排序变化而移动）
     for (int i = 0; i < (int)SendMessageW(g_hUdList, LB_GETCOUNT, 0, 0); i++)
@@ -586,6 +520,17 @@ bool WriteFileBytes(const std::wstring& path, const std::string& data)
     return true;
 }
 
+bool UserDictReplaceFromRaw(const std::string& rawUtf8)
+{
+    // 备份恢复：清空+导入两条引擎原子操作（不再直写词典文件——与后台落盘
+    // 竞态会在途旧快照复活旧词条，且绕过引擎内存态）
+    if (!g_hooks.clearUserDict || !g_hooks.clearUserDict())
+        return false;
+    std::vector<UserDictEntry> entries = ParseUserDict(rawUtf8);
+    if (entries.empty()) return true;
+    return g_hooks.mergeUserDict && g_hooks.mergeUserDict(entries);
+}
+
 void CreateUserDictWindow(HINSTANCE hInst)
 {
     if (g_hUserDict) { ShowWindow(g_hUserDict, SW_SHOW); SetForegroundWindow(g_hUserDict); RefreshUdList(); return; }
@@ -631,6 +576,8 @@ void CreateUserDictWindow(HINSTANCE hInst)
                                 WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
                                 pad, listTop, W - pad * 2, inputY - listTop - 8,
                                 g_hUserDict, (HMENU)(INT_PTR)IDC_UD_LIST, hInst, NULL);
+    // Delete 键删除选中（子类化转发，见 UdListProc）
+    g_udListOrig = (WNDPROC)SetWindowLongPtrW(g_hUdList, GWLP_WNDPROC, (LONG_PTR)UdListProc);
 
     // 自定义词条输入行：词条 + 拼音（留空自动推断）+ 添加（已存在则提升排序）
     HWND hWord = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
@@ -707,60 +654,37 @@ bool ApplyCandidateDictOp(const std::wstring& word, const std::wstring& keyHint,
         return k;
     };
 
-    std::string raw;
-    std::vector<UdEntry> entries;
-    if (ReadFileBytes(UserDictPathW(), raw)) entries = ParseUserDict(raw);
-
+    // 全部走引擎原子操作（单写者落盘；key 空=该词全部读音）
+    bool ok = false;
     if (op == CandDictOp::Delete)
     {
-        // 按词内容匹配删除全部读音条目（引擎并发重写文件，索引不可信）
-        size_t before = entries.size();
-        for (size_t i = 0; i < entries.size(); )
-        {
-            if (entries[i].word == word) entries.erase(entries.begin() + i);
-            else ++i;
-        }
-        if (entries.size() == before)
-        {
-            LX_LOG(L"ui", L"右键删除落空（基础词典词，非用户词条）: %ls", word.c_str());
-            return false;
-        }
+        ok = g_hooks.removeUserWord && g_hooks.removeUserWord(word, L"");
+        if (!ok)
+            LX_LOG(L"ui", L"右键删除落空（基础词典词或引擎失败）: %ls", word.c_str());
+    }
+    else if (op == CandDictOp::Lower)
+    {
+        ok = g_hooks.nudgeUserWord && g_hooks.nudgeUserWord(word, L"", -1000);
+        if (!ok)
+            LX_LOG(L"ui", L"右键降频落空（词条不在用户词典）: %ls", word.c_str());
     }
     else
     {
         int delta = (op == CandDictOp::Pin) ? 10000 : 1000;
-        bool found = false;
-        for (auto& e : entries)
+        // 已有词条直接调频；不在词典则按推导键新增
+        if (g_hooks.nudgeUserWord && g_hooks.nudgeUserWord(word, L"", delta))
+            ok = true;
+        else
         {
-            if (e.word != word) continue;
-            found = true;
-            if (op == CandDictOp::Lower) { e.count -= 1000; if (e.count < 1) e.count = 1; }
-            else e.count += delta;
-        }
-        if (!found)
-        {
-            if (op == CandDictOp::Lower)
-            {
-                LX_LOG(L"ui", L"右键降频落空（词条不在用户词典）: %ls", word.c_str());
-                return false;
-            }
             std::wstring k = deriveKey();
             if (k.empty())
-            {
                 LX_LOG(L"ui", L"右键新增落空（无法确定拼音键）: %ls", word.c_str());
-                return false;
-            }
-            entries.push_back({ word, k, delta });
+            else
+                ok = g_hooks.addUserWord && g_hooks.addUserWord(word, k, delta);
         }
     }
-    if (!WriteFileBytes(UserDictPathW(), SerializeUserDict(entries)))
-    {
-        LX_LOG(L"ui", L"右键词典操作写入失败（文件被占用或无权限）: %ls", word.c_str());
-        return false;
-    }
-    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
-    LX_LOG(L"ui", L"右键词典操作完成: op=%d word=%ls", (int)op, word.c_str());
-    return true;
+    LX_LOG(L"ui", L"右键词典操作: op=%d word=%ls ok=%d", (int)op, word.c_str(), (int)ok);
+    return ok;
 }
 
 std::wstring InferWordPinyin(const std::wstring& word)

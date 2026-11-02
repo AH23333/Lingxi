@@ -135,12 +135,10 @@ void ImportSettingsBackup(HWND owner)
                             L"导入设置备份", MB_OKCANCEL | MB_ICONQUESTION) == IDOK)
             {
                 std::string raw;
-                if (ReadFileBytes(dictSrc, raw) &&
-                    WriteFileBytes(UserDictPathW(), raw))
-                {
-                    if (g_hooks.reloadUserDict) g_hooks.reloadUserDict();
+                // 走引擎原子操作（清空+合并），不再直写文件：与后台落盘
+                // 竞态会复活旧词条（见 UserDictReplaceFromRaw）
+                if (ReadFileBytes(dictSrc, raw) && UserDictReplaceFromRaw(raw))
                     dictRestored = true;
-                }
                 else restoreFail++;
             }
         }

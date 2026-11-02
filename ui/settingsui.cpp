@@ -482,8 +482,7 @@ void PaintSettings(HWND hwnd)
     EndPaint(hwnd, &ps);
 }
 
-// 滚动条开关+范围同步：内容超出客户区才显示 WS_VSCROLL（FRAMECHANGED 会
-// 再触发一次 WM_SIZE→LayoutSettings，样式已一致，收敛）
+// 滚动条开关+范围同步：内容超出客户区才显示 WS_VSCROLL（FRAMECHANGED 重触发 WM_SIZE，样式一致收敛）
 void UpdateSettingsScrollbar(int contentH)
 {
     if (!g_hSettings) return;
@@ -502,6 +501,11 @@ void UpdateSettingsScrollbar(int contentH)
     }
     if (!needScroll)
     {
+        SCROLLINFO rs{};
+        rs.cbSize = sizeof(rs);
+        rs.fMask = SIF_RANGE | SIF_PAGE | SIF_POS; // nMin/nMax/nPos 全零
+        rs.nPage = clientH > 0 ? (UINT)clientH : 1;
+        SetScrollInfo(g_hSettings, SB_VERT, &rs, TRUE); // 范围清零：防上一滚动页残留 nMax/nPage 被滚轮误判可滚
         if (g_scrollY != 0)
         {
             g_scrollY = 0;
@@ -523,12 +527,9 @@ void UpdateSettingsScrollbar(int contentH)
     SetScrollInfo(g_hSettings, SB_VERT, &si, TRUE);
 }
 
-// 像素级滚动（频闪根治）：ScrollWindowEx 把现有画面 BLT 平移（子控件像素
-// 随内容一起搬走），子窗由 SW_SCROLLCHILDREN 同步位移，只失效新露出的窄条。
-// 此前"MoveWindow 重排 + 全窗失效重绘"路线的频闪真根因：父窗双缓冲只保护
-// 自绘面，组合框/静态文本等子控件在父窗 BitBlt 之后各自独立重画、逐个跳现。
-// 导航列与页脚提示带是固定区，从 BLT 矩形排除；页脚带单独补失效，随 WM_PAINT
-// 双缓冲重画（纯父窗像素，无子控件参与，不引入频闪）。
+// 像素级滚动（频闪根治）：ScrollWindowEx 把现有画面 BLT 平移，子窗由
+// SW_SCROLLCHILDREN 同步位移，只失效新露出的窄条；导航列与页脚带是固定区，
+// 从 BLT 矩形排除。旧"重排+全窗失效"频闪真根因：子控件在父 BitBlt 后逐个跳现。
 void ScrollSettingsTo(HWND hwnd, int pos)
 {
     int oldY = g_scrollY;
@@ -674,8 +675,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         PaintSettings(hwnd); // 导航/卡片/标题/分隔线/底部提示统一绘制
         return 0;
     case WM_ERASEBKGND:
-        // 跳过系统擦除：InvalidateRect(TRUE) 触发的"立即铺底"是滚动频闪的
-        // 第一段可见期；背景改由 WM_PAINT 内存位图整帧铺满（双缓冲）
+        // 跳过系统擦除：InvalidateRect(TRUE) 的"立即铺底"是频闪第一段可见期；背景由 WM_PAINT 位图整帧铺满
         return 1;
     case WM_LBUTTONDOWN:
     {
@@ -790,20 +790,21 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
     }
     case WM_MOUSEWHEEL:
     {
+        // 触控板/高分滚轮小增量累积：不足 40 整除恒 0（"滚不动"），余数滚存；反向清零
         int delta = (short)HIWORD(wParam); // 正=前滚(向上)
-        SCROLLINFO si{};
-        si.cbSize = sizeof(si);
-        si.fMask = SIF_ALL;
+        static int acc = 0;
+        if (acc != 0 && delta != 0 && (acc > 0) != (delta > 0)) acc = 0;
+        acc += delta;
+        int steps = acc / 40;
+        acc -= steps * 40;
+        SCROLLINFO si{ sizeof(SCROLLINFO), SIF_ALL };
         GetScrollInfo(hwnd, SB_VERT, &si);
-        int pos = g_scrollY - (delta / 40) * MulDiv(30, g_setDpi, 96); // 120→3 行
+        int pos = g_scrollY - steps * MulDiv(30, g_setDpi, 96); // 120→3 行
         int maxPos = (int)si.nMax - (int)si.nPage;
         if (maxPos < 0) maxPos = 0;
         if (pos < 0) pos = 0;
         if (pos > maxPos) pos = maxPos;
-        if (pos != g_scrollY)
-        {
-            ScrollSettingsTo(hwnd, pos);
-        }
+        if (pos != g_scrollY) ScrollSettingsTo(hwnd, pos);
         return 0;
     }
     case WM_SETTINGCHANGE:
@@ -964,9 +965,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_setDpi = (int)dpi;
     int comboListUnits = 8; // 下拉弹开高度=行高倍数（条目多）
 
-    // 关键：创建子控件期间 Edit 会触发 EN_CHANGE、复选框初始为未勾选，若此时
-    // 回写会把所有设置污染为 0。整个控件创建期间屏蔽保存，直到 LoadToControls
-    // 正确加载后才放开（LoadToControls 结束时会把 g_updating 复位为 false）。
+    // 关键：创建期间 Edit 触发 EN_CHANGE、复选框未勾选，回写会把设置污染为 0——先屏蔽保存，加载后放开。
     g_updating = true;
     g_pages.clear();
     g_descWnds.clear();
@@ -988,7 +987,6 @@ void CreateSettingsWindow(HINSTANCE hInst)
         g_updating = false;
         return;
     }
-    LX_LOG(L"ui", L"设置窗句柄 OK，继续子控件构建（诊断）");
 
     // 标题栏深浅随生效主题（R7：跟随系统/强制深色时变暗）
     UiApplyTitleBarDark(g_hSettings, EffectiveDark(LoadSettings().darkMode));
@@ -1218,6 +1216,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     }, (LPARAM)g_hFontLabel);
     for (HWND h : g_descWnds) // 行描述：次级字号
         SendMessageW(h, WM_SETFONT, (WPARAM)g_hFontDesc, TRUE);
+    AttachSettingsWheelForwarding(g_hSettings); // 组合框/编辑框滚轮转发页面（不吃滚轮/不误改设置）
 
     // 最小尺寸=左导航+右侧卡片可读下限；默认 900×680
     g_setMinW = MulDiv(700, scale, 96);
@@ -1233,7 +1232,6 @@ void CreateSettingsWindow(HINSTANCE hInst)
     ApplyPageVisibility(); // 只显示当前页的行控件
     UpdateSettingsScrollbar(LayoutSettings());
     ShowWindow(g_hSettings, SW_SHOW);
-    LX_LOG(L"ui", L"设置窗构建完成并显示（诊断）");
     SetForegroundWindow(g_hSettings);
 }
 

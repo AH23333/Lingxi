@@ -564,10 +564,21 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     });
     // ---- 全局回调装配（P3 收口：一次性填充 lingxi::g_hooks，见 uiinternal.h）----
     // 消费点：托盘菜单/设置窗/词典窗/短语窗/备份导入，统一读 g_hooks.xxx。
-    // 用户词典管理变更后让拼音引擎重新加载；R2 自定义短语与用户词典同一
-    // 热载通道（phrases.txt 在同一次重载里装入）。
+    // 用户词典管理走引擎原子操作（持锁改内存+落盘等收敛，单写者根治删除
+    // 复活竞态）；R2 自定义短语与用户词典同一热载通道（同一次重载装入）。
     if (pinyinEngine)
+    {
         lingxi::g_hooks.reloadUserDict = [&] { pinyinEngine->ReloadUserDict(); };
+        lingxi::g_hooks.removeUserWord = [pinyinEngine](const std::wstring& w, const std::wstring& k) {
+            return pinyinEngine->RemoveUserWord(w, k); };
+        lingxi::g_hooks.clearUserDict = [pinyinEngine] { return pinyinEngine->ClearUserDict(); };
+        lingxi::g_hooks.addUserWord = [pinyinEngine](const std::wstring& w, const std::wstring& k, int gain) {
+            return pinyinEngine->AddUserWord(w, k, gain); };
+        lingxi::g_hooks.nudgeUserWord = [pinyinEngine](const std::wstring& w, const std::wstring& k, int delta) {
+            return pinyinEngine->NudgeUserWord(w, k, delta); };
+        lingxi::g_hooks.mergeUserDict = [pinyinEngine](const std::vector<lingxi::UserDictEntry>& entries) {
+            return pinyinEngine->MergeUserDict(entries); };
+    }
     lingxi::g_hooks.phrasesChanged = [&] { if (pinyinEngine) pinyinEngine->ReloadUserDict(); };
     lingxi::g_hooks.settingsChanged = syncHotkey;       // 设置保存后动态注册/注销热键
     lingxi::g_hooks.hotPhrasesChanged = syncHotPhrases; // 管理窗保存后重注册短语热键

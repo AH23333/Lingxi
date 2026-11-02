@@ -9,7 +9,9 @@
 //
 #include <windows.h>
 #include <string>
+#include <vector>
 #include <functional>
+#include "engine/predictor.h" // UserDictEntry（词典管理钩子参数）
 
 namespace lingxi {
 
@@ -25,6 +27,14 @@ struct UiHooks
     std::function<void()> pinToggle;         // 托盘菜单：切换候选窗位置固定
     std::function<void()> phrasesChanged;    // 自定义短语保存后（与用户词典同一热载通道）
     std::function<void()> hotPhrasesChanged; // 快捷短语保存后重注册全局热键
+    // 用户词典引擎原子操作（2026-11-01 删除复活根治）：引擎持锁改内存+落盘
+    // 并等收敛；UI 不再直写词典文件（旧模型与引擎后台落盘竞态，在途旧快照
+    // 会把已删词条写回"复活"）。key 空=该词全部读音键。
+    std::function<bool(const std::wstring&, const std::wstring&)> removeUserWord; // (word,key) 删除
+    std::function<bool()> clearUserDict; // 清空全部词条
+    std::function<bool(const std::wstring&, const std::wstring&, int)> addUserWord; // (word,key,gain) upsert
+    std::function<bool(const std::wstring&, const std::wstring&, int)> nudgeUserWord; // (word,key,±delta) 调频
+    std::function<bool(const std::vector<UserDictEntry>&)> mergeUserDict; // 导入合并
 };
 extern UiHooks g_hooks; // 定义于 settingsui.cpp
 
@@ -40,12 +50,14 @@ void SaveSettingsWindowRect();   // 设置窗矩形落盘（托盘隐藏路径�
 void RefreshSettingsControls();  // 注册表被托盘等外部改写后同步设置窗控件
 bool IsSettingsWindowVisible();  // 托盘左键开/关切换判定
 void HideSettingsWindow();       // 托盘左键关闭路径（矩形落盘+隐藏）
+void AttachSettingsWheelForwarding(HWND settingsWnd); // settingswheel.cpp：组合框/编辑框滚轮转发设置窗
 
 // ---- userdictwnd.cpp：用户词典窗 + 词典存储 ----
 void CreateUserDictWindow(HINSTANCE hInst);
 std::wstring UserDictPathW();    // %APPDATA%\LingxiIme\userdict.txt
 bool ReadFileBytes(const std::wstring& path, std::string& out);
 bool WriteFileBytes(const std::wstring& path, const std::string& data);
+bool UserDictReplaceFromRaw(const std::string& rawUtf8); // 备份恢复：清空+导入走引擎原子操作
 
 // ---- helpwnd.cpp：使用帮助窗 ----
 void ShowHelpWindow(HINSTANCE hInst);
