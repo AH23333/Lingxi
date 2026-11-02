@@ -950,6 +950,10 @@ void CreateSettingsWindow(HINSTANCE hInst)
         // 句柄已失效（窗口曾被销毁）：清空指针走重建，否则复用路径永远静默空转
         LX_LOG(L"ui", L"设置窗句柄失效，重建");
         g_hSettings = nullptr;
+        // L12：重建前清空开关态外置表。旧 HWND 键不清理时，系统若把同值句柄
+        // 复用给新控件，WM_DRAWITEM 可能先于 mkToggle 覆盖命中陈旧开关态；
+        // 残留键本身也是无界泄漏（每次重建 +全部开关 HWND）。
+        g_toggleOn.clear();
     }
 
     WNDCLASSEXW wc = { sizeof(wc) };
@@ -1045,12 +1049,19 @@ void CreateSettingsWindow(HINSTANCE hInst)
                            DEFAULT_CHARSET, OUT_DEFAULT_PRECIS, CLIP_DEFAULT_PRECIS,
                            CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, L"Microsoft YaHei UI");
     };
-    g_hFont = mkFont(12, FW_NORMAL);          // 通用控件（用户词典窗沿用）
-    g_hFontLabel = mkFont(14, FW_NORMAL);     // 行标题
-    g_hFontDesc = mkFont(12, FW_NORMAL);      // 行描述
-    g_hFontTitle = mkFont(20, FW_SEMIBOLD);   // 页标题
-    g_hFontNav = mkFont(15, FW_SEMIBOLD);     // 导航标题
-    g_hFontCardHdr = mkFont(14, FW_SEMIBOLD); // 卡片标题
+    // L12：重建路径下六支字体直接覆盖全局句柄会泄漏旧 GDI 对象。
+    // 必须先判空 DeleteObject 旧句柄、删完才赋新值（重复释放/删在用字体
+    // 都会黑块或崩溃；判空防首建时 DeleteObject(NULL)）。
+    auto setFont = [](HFONT& slot, HFONT nf) {
+        if (slot) DeleteObject(slot);
+        slot = nf;
+    };
+    setFont(g_hFont, mkFont(12, FW_NORMAL));          // 通用控件（用户词典窗沿用）
+    setFont(g_hFontLabel, mkFont(14, FW_NORMAL));     // 行标题
+    setFont(g_hFontDesc, mkFont(12, FW_NORMAL));      // 行描述
+    setFont(g_hFontTitle, mkFont(20, FW_SEMIBOLD));   // 页标题
+    setFont(g_hFontNav, mkFont(15, FW_SEMIBOLD));     // 导航标题
+    setFont(g_hFontCardHdr, mkFont(14, FW_SEMIBOLD)); // 卡片标题
 
     // ---- Win11 设置结构：页→卡→行。控件先创建（不可见），mkRow 挂进模型，
     // ApplyPageVisibility 按当前页显隐，LayoutSettings 统一排布 ----
