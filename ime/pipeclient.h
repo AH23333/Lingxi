@@ -12,6 +12,7 @@
 #include <vector>
 
 extern HINSTANCE g_hInst; // 全局定义于 dllmain.cpp
+extern LONG g_cThreadRefs; // L4：DLL 卸载判定的线程在途引用计数，定义于 dllmain.cpp
 
 namespace lingxi {
 

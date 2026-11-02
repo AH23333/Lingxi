@@ -379,6 +379,25 @@ class PinyinPredictor : public IPredictor
 {
 public:
     PinyinPredictor() { Load(); }
+    ~PinyinPredictor()
+    {
+        // H3 退出收敛：有界等后台落盘线程彻底离开 this（写毕回环、干净才置
+        // idle——idle=false 即安全）→同步刷残留脏位（此刻已无并发写者；写
+        // 失败 3 试后放弃记日志，非数据丢失——下次启动从文件旧态起步）。
+        // 上限 5s：本地原子写正常 <100ms，仅磁盘挂死才会触顶；超时后线程仍
+        // 在途属病态残留（析构无法阻止 delete，彻底根治需 main 侧不析构引擎）
+        for (int i = 0; i < 5000 && _persistBusy.load(); i++) Sleep(1);
+        for (int i = 0; i < 3; i++)
+        {
+            std::lock_guard<std::mutex> lk(_udMtx);
+            if (!_userDirty) break;
+            if (SaveUserDictLocked()) break;
+        }
+        {
+            std::lock_guard<std::mutex> lk(_udMtx);
+            if (_userDirty) LX_LOG(L"py", L"退出：用户词典落盘未遂（重试后放弃）");
+        }
+    }
 
     Prediction Predict(const std::wstring& context) override
     {
@@ -826,6 +845,13 @@ private:
         {
             const PyEntry& e = _entries[i];
             if (e.sylls.empty()) continue;
+            // M7：空音节串守卫——下方 sy[0]/(*e.sylls[0])[0] 多处当下标用，
+            // 空串会产出带 NUL 的毒键/空首字母桶静默污染索引（异常词典行），
+            // 整词跳过最稳
+            bool badSyll = false;
+            for (const std::string* ps : e.sylls)
+                if (!ps || ps->empty()) { badSyll = true; break; }
+            if (badSyll) continue;
             int n = (int)e.sylls.size();
 
             // 全拼紧凑键（无分隔，如 "jintian"）：所有词都建，全拼 O(1) 命中。
@@ -1432,18 +1458,15 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 if (!WriteFileAtomicA(UserDictPath(), content))
                 {
                     std::lock_guard<std::mutex> lk(_udMtx);
-                    _userDirty = true; // 写失败恢复脏位，下次重试（原语义）
+                    _userDirty = true; // 写失败恢复脏位，下次 Learn/Flush/退出时重试
                     break;
                 }
+                // H3 收敛：写毕回环——循环顶重查脏位即原"补漏重查"（写盘期间
+                // 新到的脏位由下一轮收敛），干净才置 idle 退出。idle=false ⟹
+                // 线程已彻底离开 this，析构等 idle 即安全（原实现置 idle 后仍
+                // 回触 this 补漏重开新线程，delete 后=UAF）
             }
             _persistBusy.store(false);
-            // 补漏：置 idle 与新 Learn 的 CAS 失败之间有窗口，重查一次脏位
-            bool dirtyNow = false;
-            {
-                std::lock_guard<std::mutex> lk(_udMtx);
-                dirtyNow = _userDirty;
-            }
-            if (dirtyNow) KickPersist();
         }).detach();
     }
 
@@ -1502,7 +1525,9 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
 
     // 等词典落盘收敛（内存→文件同态）：管理操作后、UI 刷新/导出前调用。
     // 上限 ~2s：写失败（盘满/权限）不卡死 UI，保持"脏位重试"原语义。
-    void FlushUserDict()
+    // L7：加 override 挂上 IPredictor::FlushUserDict 虚口——导出/备份经
+    // g_hooks.flushUserDict 走到这里，在途学习落盘收敛后再读文件。
+    void FlushUserDict() override
     {
         KickPersist();
         for (int i = 0; i < 2000; i++)

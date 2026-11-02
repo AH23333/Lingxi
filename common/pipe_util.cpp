@@ -8,12 +8,14 @@ namespace lingxi {
 // 管道 DACL 限定为当前用户，避免同机其他账户连接。
 static SECURITY_ATTRIBUTES* GetUserSA()
 {
+    // L1：静态安全描述符的构造收敛进 magic static 初始化（C++11 起线程
+    // 安全且完成前阻塞并发首调）。旧实现三个 static + 手工 s_init 标志，
+    // 并发首调下另一线程可见 s_init=true 而 pSD 尚未赋值 → 拿 nullptr 建
+    // 管道 = 默认 DACL，跨账户限制恰好失效；失败结果同样缓存（与旧同义）。
     static SECURITY_ATTRIBUTES sa;
-    static PSECURITY_DESCRIPTOR pSD = nullptr;
-    static bool s_init = false;
-    if (!s_init)
+    static SECURITY_ATTRIBUTES* pResult = []() -> SECURITY_ATTRIBUTES*
     {
-        s_init = true;
+        PSECURITY_DESCRIPTOR pSD = nullptr;
         HANDLE hToken = NULL;
         if (OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken))
         {
@@ -38,12 +40,13 @@ static SECURITY_ATTRIBUTES* GetUserSA()
             }
             CloseHandle(hToken);
         }
-    }
-    if (!pSD) return nullptr; // 回退默认 DACL
-    sa.nLength = sizeof(sa);
-    sa.lpSecurityDescriptor = pSD;
-    sa.bInheritHandle = FALSE;
-    return &sa;
+        if (!pSD) return nullptr; // 回退默认 DACL
+        sa.nLength = sizeof(sa);
+        sa.lpSecurityDescriptor = pSD;
+        sa.bInheritHandle = FALSE;
+        return &sa;
+    }();
+    return pResult;
 }
 
 HANDLE CreateLingxiPipeServerInstance(bool firstInstance)
@@ -94,9 +97,15 @@ static bool WaitOverlapped(HANDLE hPipe, OVERLAPPED& ov, HANDLE hStop, uint32_t 
     {
         *pStopped = true;
         CancelIoEx(hPipe, &ov);
+        // H1：CancelIoEx 只是发起取消；OVERLAPPED 在 I/O 真正完成前必须存活。
+        // 调用方的 ov 是栈局部，本帧返回即析构——阻塞等取消落定，防内核续写已死栈
+        DWORD done = 0;
+        GetOverlappedResult(hPipe, &ov, &done, TRUE);
         return false;
     }
     CancelIoEx(hPipe, &ov); // 超时
+    DWORD done = 0;
+    GetOverlappedResult(hPipe, &ov, &done, TRUE); // H1：同上，等取消完成再返回
     return false;
 }
 

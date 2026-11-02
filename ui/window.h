@@ -10,6 +10,8 @@
 
 namespace lingxi {
 
+struct ShowReq; // H4：跨线程状态变更封包（定义在 candwnd_core.cpp）
+
 class CandWindow
 {
 public:
@@ -24,6 +26,12 @@ public:
               bool dark, uint32_t ver, const std::wstring& composing,
               const std::vector<std::wstring>& anno = {});
     void Hide();
+    // H4：跨线程显示请求——封包 PostMessage 到 UI 线程串行处理（LLM 重排
+    // detached 线程用，不再直调 Show）。ver 与窗口当前不符（新预测已显示）
+    // 则由 UI 线程丢弃，防陈旧重排盖掉新候选。
+    void PostShow(const RECT& caretScreen, const std::vector<std::wstring>& cands,
+                  bool dark, uint32_t ver, const std::wstring& composing,
+                  const std::vector<std::wstring>& anno = {});
     // 按设置 candidateOpacity 应用候选窗分层透明度（LWA_ALPHA；100=完全不透明）
     void ApplyOpacity();
     // 翻页：显示全量列表中 pageStart 起始的那一页（ver 不匹配则忽略）。
@@ -74,6 +82,9 @@ private:
     // 工具条按钮 tooltip：懒建常驻、隐藏复用（避免跨线程 DestroyWindow）
     void ShowTip(const wchar_t* text, const POINT& clientPt);
     void HideTip();
+    // H4：跨线程状态变更封包投递（kind=CandCmdKind，req 可为 nullptr；
+    // PostMessage 失败就地释放）
+    void PostCmd(int kind, ShowReq* req);
     // 手势消息处理（定义在 candwnd_interact.cpp；WndProc 分发壳在 candwnd_core.cpp）
     LRESULT OnMouseMove(HWND hwnd, LPARAM lParam);
     LRESULT OnMouseHover(HWND hwnd, LPARAM lParam);
@@ -117,6 +128,8 @@ private:
     bool _dragMoved = false;   // 拖拽发生实际位移（松开时才写入固定位置）
     HWND _ttHwnd = nullptr;    // tooltip 常驻隐藏复用（跨线程只做 ShowWindow）
     wchar_t _ttText[128] = L"";
+    DWORD _ownerTid = 0;       // H4：窗口属主线程（Init 所在线程）；非属主线程
+                               // 的状态变更一律 PostCmd 封包投递，不再直触窗口
     CRITICAL_SECTION _cs{};
     bool _csInit = false;
     std::function<void(uint32_t, uint32_t)> _pick;

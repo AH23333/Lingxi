@@ -231,6 +231,17 @@ public:
     LlmPredictor() = default;
     ~LlmPredictor()
     {
+        // H3：有界等 detached 预热/重排线程离开本对象（LazyInit 模型加载秒级，
+        // 8s 充裕）。不等=delete 后线程仍在 _ctx/_api 上跑→UAF。
+        for (int i = 0; i < 800 && _inflight.load() > 0; i++) Sleep(10);
+        if (_inflight.load() > 0)
+        {
+            // H3：超时未收敛→不释放任何 llama 资源，交给进程退出。free_ctx/
+            // free_model 会让在飞 decode 踩已释放 KV/模型（UAF）；泄漏的上下文
+            // 内存随进程退出回收，僵尸线程继续读写合法内存直至自然结束
+            LX_LOG(L"llm", L"退出：在途推理未收敛(%d)，泄漏资源不释放", _inflight.load());
+            return;
+        }
         if (_api.ok && _rrCtx) _api.free_ctx(_rrCtx);
         if (_api.ok && _ctx) _api.free_ctx(_ctx);
         if (_api.ok && _model) _api.free_model(_model);
@@ -239,6 +250,7 @@ public:
 
     Prediction Predict(const std::wstring& context) override
     {
+        InflightGuard g(_inflight); // H3：析构等待在途推理（预热线程）收敛
         std::call_once(_initFlag, [this]() { LazyInit(); });
         if (!_ready || _broken) return {};
         return Generate(context);
@@ -249,9 +261,13 @@ public:
                                const std::vector<std::wstring>& cands,
                                uint64_t deadlineMs) override
     {
+        InflightGuard g(_inflight); // H3：同 Predict
         std::call_once(_initFlag, [this]() { LazyInit(); });
         // 廉价前置闸：未就绪 / 已熔断 / 本会话吞吐不达标自动降级 / 请求已过期
         if (!_ready || _broken || _rerankOff.load(std::memory_order_relaxed)) return {};
+        // H5：重排 context 创建失败（低配机 init_from_model 返回 NULL）——
+        // 后续 get_memory/decode 全线空指针，此处熔断保优雅降级
+        if (!_rrCtx) return {};
         if (cands.size() < 2 || GetTickCount64() >= deadlineMs) return {};
         return DoRerank(committedCtx, cands, deadlineMs);
     }
@@ -261,7 +277,29 @@ public:
     void MarkBroken() override { _broken.store(true); }
     bool Broken() const override { return _broken.load(); }
 
+    // H3：启动期预热——先计 _inflight 再 spawn，析构等待覆盖线程全生命周期
+    //（原 CreatePredictorChain 裸 detach：线程起步→Predict 入口 guard 之间
+    // 有窗口，析构见 _inflight==0 即放行 → delete 后线程仍在用 _ctx）
+    void WarmupAsync()
+    {
+        _inflight.fetch_add(1);
+        std::thread([this]() {
+            struct Dec { std::atomic<int>& c; ~Dec() { c.fetch_sub(1); } } dec{ _inflight };
+            Predict(L"");
+        }).detach();
+    }
+
 private:
+    // H3：在途 Predict/Rerank 计数（入口 RAII 增减）；析构有界等归零——
+    // 预热是 detached 线程，delete 引擎不等它=UAF
+    struct InflightGuard
+    {
+        std::atomic<int>& c;
+        explicit InflightGuard(std::atomic<int>& r) : c(r) { c.fetch_add(1); }
+        ~InflightGuard() { c.fetch_sub(1); }
+    };
+    std::atomic<int> _inflight{ 0 };
+
     // 重排 context 的 prefill 硬闸：decode 内部按 ubatch 粒度回调，
     // 返回 true 即中断（llama.h:1128；b11900 CPU 后端支持）。
     static bool AbortCb(void* data)
@@ -1025,9 +1063,11 @@ IPredictor* CreatePredictorChain(IPredictor* sharedLlm)
     LX_LOG(L"llm", L"预测链装配: %d 级", (int)chain.size());
 
 #if defined(LINGXI_HAS_LLAMA)
-    // 模型加载提前到启动期（后台预热），避免首次按键背上 1-3 秒加载
+    // 模型加载提前到启动期（后台预热），避免首次按键背上 1-3 秒加载。
+    // H3：改经 WarmupAsync——先计 _inflight 再 spawn（ifdef 内 chain[0]
+    // 必为 LlmPredictor：sharedLlm 来自 CreateLlmPredictor 或本地 new）
     IPredictor* llmWarm = chain[0];
-    std::thread([llmWarm]() { llmWarm->Predict(L""); }).detach();
+    static_cast<LlmPredictor*>(llmWarm)->WarmupAsync();
 #endif
     // 上下文感知路由（词表补全/纯 ASCII 过滤/LLM 优先）在 ngram.cpp 实现，
     // engine_test 用假引擎单测（B4）

@@ -129,16 +129,20 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* pThreadMgr, TfClientId tid, 
 
     // 隐藏封送窗口（宿主 UI 线程）
     {
-        static bool s_classRegistered = false;
-        if (!s_classRegistered)
+        // L2：一次初始化原语替代裸 bool——多线程同时激活时旧标志无同步
+        // 保证（另一线程可见 flag=true 而注册尚未完成，或两线程同时
+        // double-register 后写回交错）。INIT_ONCE 恰一次且阻塞后来者
+        // 直到注册落定。
+        static INIT_ONCE s_io = INIT_ONCE_STATIC_INIT;
+        InitOnceExecuteOnce(&s_io, [](PINIT_ONCE, PVOID, PVOID*) -> BOOL
         {
             WNDCLASSEXW wc = { sizeof(wc) };
             wc.lpfnWndProc = MarshalWndProc;
             wc.hInstance = g_hInst;
             wc.lpszClassName = kMarshalWndClass;
             RegisterClassExW(&wc); // 重复注册失败无妨
-            s_classRegistered = true;
-        }
+            return TRUE;
+        }, NULL, NULL);
         _hwndMarshal = CreateWindowExW(0, kMarshalWndClass, L"", WS_POPUP,
                                        0, 0, 0, 0, HWND_MESSAGE, NULL, g_hInst, NULL);
         if (_hwndMarshal)
@@ -288,6 +292,9 @@ STDMETHODIMP CTextService::OnSetFocus(ITfDocumentMgr* pdimFocus, ITfDocumentMgr*
     else
     {
         SendHide();
+        // M4：失焦清候选——与 OnKillThreadFocus 同口径。不清则 DLL 仍认领
+        // 选词键（数字/方向键），失焦下按键被吞不进宿主。
+        ClearCandidates();
     }
     return S_OK;
 }

@@ -44,6 +44,9 @@ public:
     virtual void Learn(const std::wstring& /*rawPinyin*/, const std::wstring& /*word*/) {}
     // 重新加载用户词典（管理界面清空/导入后立即生效）；默认空实现。
     virtual void ReloadUserDict() {}
+    // L7：在途学习落盘收敛（导出/备份前调用）：把未刷盘的学习数据同步
+    // 写盘后返回；默认空实现（无自学习的引擎无所谓）。
+    virtual void FlushUserDict() {}
     // 用户词典管理操作（2026-11-01 根治"删除词条复活"）：引擎持锁原子改
     // 内存+落盘并等收敛后返回；默认 false=引擎不支持（词表/LLM 桩）。
     // key 空=该词全部读音键；AddUserWord 已存在则 count+=gain 否则新增；

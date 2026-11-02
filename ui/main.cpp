@@ -595,6 +595,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
             return pinyinEngine->NudgeUserWord(w, k, delta); };
         lingxi::g_hooks.mergeUserDict = [pinyinEngine](const std::vector<lingxi::UserDictEntry>& entries) {
             return pinyinEngine->MergeUserDict(entries); };
+        // L7：导出/备份前在途学习落盘收敛（settingsbackup.cpp / userdictwnd.cpp 消费）
+        lingxi::g_hooks.flushUserDict = [pinyinEngine] { pinyinEngine->FlushUserDict(); };
     }
     lingxi::g_hooks.phrasesChanged = [&] { if (pinyinEngine) pinyinEngine->ReloadUserDict(); };
     lingxi::g_hooks.settingsChanged = syncHotkey;       // 设置保存后动态注册/注销热键

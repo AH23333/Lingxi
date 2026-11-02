@@ -24,6 +24,15 @@ constexpr uint32_t kRerankBudgetMs = 900;    // 两阶段重排总预算（不�
 
 namespace {
 
+// H3：detached 线程在途计数——创建方先加数（防 Stop 在线程起步前放行），
+// 线程内 RAII 减数（覆盖全部退出路径）；Stop 有界等归零再拆 _cs
+struct ActiveCount
+{
+    std::atomic<int>& c;
+    ActiveCount(std::atomic<int>& n) : c(n) {}
+    ~ActiveCount() { c.fetch_sub(1); }
+};
+
 // ---- SEH 外壳（专文 §7：llama 内部 AV 不能带崩 LingxiUI）----
 // 规则：__try 所在函数不得有需析构的局部对象（MSVC C2712），全部经 POD
 // 参数指针传递；C++ 临时对象只存在于被调函数帧。
@@ -101,20 +110,47 @@ void PipeServer::Stop()
     // 唤醒可能阻塞在信号量上的预测线程
     for (int i = 0; i < 16 && _hQueueSem; i++)
         ReleaseSemaphore(_hQueueSem, 1, NULL);
+    bool predictDone = true, acceptDone = true;
     if (_hPredictThread)
     {
-        WaitForSingleObject(_hPredictThread, 2000);
+        predictDone = (WaitForSingleObject(_hPredictThread, 2000) == WAIT_OBJECT_0);
         CloseHandle(_hPredictThread);
         _hPredictThread = NULL;
     }
     if (_hThread)
     {
-        WaitForSingleObject(_hThread, 2000);
+        acceptDone = (WaitForSingleObject(_hThread, 2000) == WAIT_OBJECT_0);
         CloseHandle(_hThread);
         _hThread = NULL;
     }
-    if (_hQueueSem) { CloseHandle(_hQueueSem); _hQueueSem = NULL; }
-    if (_csInit) { DeleteCriticalSection(&_cs); _csInit = false; }
+    // H3：有界等 detached 线程归零再拆 _cs——重排线程尾部 RerankStillCurrent、
+    // 客户端读线程断连清理都要进 _cs，且会触 _wnd/_reranker（main 随后 delete）。
+    // 重排预算 900ms+Settle 400ms，读线程 ReadFrame 见 _hStop 即醒，4s 充裕。
+    // 必须先等预测线程退出再排空计数：它是重排线程的创建方，活着就可能在
+    // 排空之后又 spawn 新重排线程（"等了一个线程、漏了另一个"）
+    bool detachedDone = false;
+    for (int i = 0; i < 400; i++)
+    {
+        detachedDone = (_rerankActive.load() <= 0 && _clientActive.load() <= 0);
+        if (detachedDone) break;
+        Sleep(10);
+    }
+    // H3：四类线程全部收敛才拆锁/拆信号量；任一超时（磁盘挂死、llama 卡死
+    // 等病态场景）则保留 _cs 与 _hQueueSem 交给进程退出——僵尸线程仍会进
+    // _cs / ReleaseSemaphore，先拆即 UB。_hStop 刻意不关：僵尸线程还要读。
+    // 泄漏无害（进程级资源随退出回收）
+    if (predictDone && acceptDone && detachedDone)
+    {
+        if (_hQueueSem) { CloseHandle(_hQueueSem); _hQueueSem = NULL; }
+        if (_csInit) { DeleteCriticalSection(&_cs); _csInit = false; }
+    }
+    else
+    {
+        LX_LOG(L"pipe", L"Stop：线程未收敛 predict=%d accept=%d detached=%d(rr=%d cl=%d)，"
+               L"保留锁/信号量至进程退出",
+               (int)predictDone, (int)acceptDone, (int)detachedDone,
+               _rerankActive.load(), _clientActive.load());
+    }
 }
 
 DWORD WINAPI PipeServer::s_AcceptProc(LPVOID p)
@@ -177,9 +213,11 @@ void PipeServer::AcceptProc()
         _clients.push_back(c); // 客户端注册表：PickTargetClient 前台定位需遍历
         LeaveCriticalSection(&_cs);
         auto* param = new ClientPtr(c); // 客户端线程持一份引用
+        _clientActive.fetch_add(1); // H3：先计数后 spawn——防 Stop 在线程起步前放行
         HANDLE t = CreateThread(NULL, 0, s_ClientProc, param, 0, NULL);
         if (!t)
         {
+            _clientActive.fetch_sub(1); // H3：spawn 失败回退计数
             delete param; // 引用归零 → ClientCtx 析构并关闭句柄
             LX_LOG(L"ui", L"客户端线程创建失败");
         }
@@ -196,6 +234,7 @@ DWORD WINAPI PipeServer::s_ClientProc(LPVOID p)
 
 void PipeServer::ClientProc(ClientPtr c)
 {
+    ActiveCount ac(_clientActive); // H3：Stop 等客户端读线程退出后再拆 _cs
     for (;;)
     {
         uint8_t type = 0;
@@ -609,7 +648,9 @@ void PipeServer::StartAsyncRerank(const ClientPtr& c, uint32_t ver,
 {
     // 按值捕获全部上下文（线程独立，不依赖栈/队列）；c 为 shared_ptr 引用——
     // 客户端断线时 ClientCtx 不会被提前释放，本线程用完才归还（防悬垂）。
+    _rerankActive.fetch_add(1); // H3：先计数后 spawn——防 Stop 在线程起步前放行
     std::thread([this, c, ver, cands, cover, anno, dark, caret, composing, ctx, gen, seq]() {
+        ActiveCount ac(_rerankActive); // H3：Stop 有界等重排线程归零再拆 _cs
         // 合并连击：先观察一小段。若期间用户又敲了新键（新重排序号已占位），
         // 本线程立刻退出——拼音每键即时预测后，只有最后一键触发的重排有活干。
         Sleep(kRerankSettleMs);
@@ -662,8 +703,10 @@ void PipeServer::StartAsyncRerank(const ClientPtr& c, uint32_t ver,
         pred2.replaceLen = 0;
         pred2.cover = std::move(reorderedCover);
         pred2.anno = reorderedAnno; // 拷贝：下方 Show 还要用 reorderedAnno
-        // 回到第一页并更新候选窗（同 ver，宿主无需感知；composing 同 ver 不跳变）
-        _wnd->Show(caret, reordered, dark, ver, composing, reorderedAnno);
+        // 回到第一页并更新候选窗（同 ver，宿主无需感知；composing 同 ver 不跳变）。
+        // H4：经 PostShow 封包投递 UI 线程处理——detached 线程不再直调 Show
+        //（与主线程鼠标/绘制竞态窗口大；ver 不符的陈旧封包在 UI 线程丢弃）
+        _wnd->PostShow(caret, reordered, dark, ver, composing, reorderedAnno);
         SendCandidates(c.get(), ver, pred2);
         LX_LOG(L"pipe", L"LLM 重排生效(两阶段) ver=%u k=%u", ver, (uint32_t)k);
     }).detach();
@@ -689,6 +732,8 @@ void PipeServer::SendCandidates(ClientCtx* c, uint32_t ver, const Prediction& pr
             AppendPod(bodyOut, v);
         }
     }
+    // H2：整帧持锁写——与重排线程/选词/符号插入的并发写帧串行化
+    std::lock_guard<std::mutex> lk(c->sendMtx);
     WriteFrame(c->hPipe, MSG_CANDS, bodyOut.data(), (uint32_t)bodyOut.size(), 500);
 }
 
@@ -740,7 +785,10 @@ void PipeServer::SendPick(uint32_t ver, uint32_t index)
     if (!a || !a->alive) return;
 
     MsgPick m{ ver, index };
-    WriteFrame(a->hPipe, MSG_PICK, &m, sizeof(m), 200);
+    {
+        std::lock_guard<std::mutex> lk(a->sendMtx); // H2：与预测/重排回包串行化
+        WriteFrame(a->hPipe, MSG_PICK, &m, sizeof(m), 200);
+    }
     LX_LOG(L"ui", L"PICK ver=%u index=%u", ver, index);
 }
 
@@ -755,7 +803,10 @@ void PipeServer::SendInsertText(const std::wstring& text)
     }
     std::vector<uint8_t> body;
     AppendStr(body, text);
-    WriteFrame(a->hPipe, MSG_INSERT_TEXT, body.data(), (DWORD)body.size(), 200);
+    {
+        std::lock_guard<std::mutex> lk(a->sendMtx); // H2：与预测/重排回包串行化
+        WriteFrame(a->hPipe, MSG_INSERT_TEXT, body.data(), (DWORD)body.size(), 200);
+    }
     LX_LOG(L"ui", L"SendInsertText 已发 chars=%u pid=%u", (uint32_t)text.size(), a->pid);
 }
 

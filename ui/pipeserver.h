@@ -13,6 +13,7 @@
 #include <cstdint>
 #include <deque>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -49,6 +50,9 @@ private:
         }
         HANDLE hPipe = INVALID_HANDLE_VALUE;
         std::atomic<bool> alive{ true };
+        // H2：每客户端发送锁——PredictProc/重排线程/UI 线程三类并发 WriteFrame
+        // 同一管道会字节级交错（PIPE_TYPE_BYTE），帧级串行化
+        std::mutex sendMtx;
         std::atomic<uint32_t> gen{ 0 };   // 交互代：新预测/翻页/选词递增，重排据此放弃过期结果
         std::atomic<uint32_t> rrSeq{ 0 }; // 重排序号：新触发使旧线程立即退出（合并防堆积）
         bool active = false;
@@ -115,6 +119,10 @@ private:
     ClientPtr _active;
     std::vector<ClientPtr> _clients; // 在连客户端注册表（_cs 保护）：前台定位遍历用
     std::deque<PendingPredict> _queue;
+    // H3：detached 线程在途计数（重排/客户端读线程）——Stop 有界等归零
+    // 再拆 _cs（线程尾部仍要进 _cs / 触引擎与窗口），防 delete 后 UAF
+    std::atomic<int> _rerankActive{ 0 };
+    std::atomic<int> _clientActive{ 0 };
 };
 
 } // namespace lingxi

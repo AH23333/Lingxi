@@ -12,7 +12,12 @@ void CPipeClient::Start(IPipeClientCallback* cb, HWND hwndMarshal)
     _hwndMarshal = hwndMarshal;
     if (!_csInit) { InitializeCriticalSection(&_cs); _csInit = true; }
     _hStop = CreateEventW(NULL, TRUE, FALSE, NULL);
+    // L4：创建线程前先持引用——CreateThread 返回到线程函数真正跑起来之间
+    // 若 COM 恰好查询卸载并 FreeLibrary，未启动的线程入口同样失效。
+    // 创建失败则立即归还（无线程来减这一笔）。
+    InterlockedIncrement(&g_cThreadRefs);
     _hThread = CreateThread(NULL, 0, s_ThreadProc, this, 0, NULL);
+    if (!_hThread) InterlockedDecrement(&g_cThreadRefs);
 }
 
 void CPipeClient::Stop()
@@ -20,9 +25,17 @@ void CPipeClient::Stop()
     if (_hStop) SetEvent(_hStop);
     if (_hThread)
     {
-        WaitForSingleObject(_hThread, 3000);
+        bool exited = WaitForSingleObject(_hThread, 3000) == WAIT_OBJECT_0;
         CloseHandle(_hThread);
         _hThread = NULL;
+        // M3：超时=线程仍存活且仍在用 _cs/_cb——此时拆临界区/清回调=UAF
+        // 崩宿主。不拆不删，宁泄漏（进程卸载路径 3s 内正常必收敛，走到
+        // 这里说明宿主已卡死，泄漏无实质影响）。
+        if (!exited)
+        {
+            LX_LOG(L"pipe", L"Stop：工作线程 3s 未退，保留 _cs/_cb 防 UAF");
+            return;
+        }
     }
     if (_hStop) { CloseHandle(_hStop); _hStop = NULL; }
     if (_csInit) { DeleteCriticalSection(&_cs); _csInit = false; }
@@ -32,6 +45,7 @@ void CPipeClient::Stop()
 DWORD WINAPI CPipeClient::s_ThreadProc(LPVOID p)
 {
     ((CPipeClient*)p)->Run();
+    InterlockedDecrement(&g_cThreadRefs); // L4：Run 退出=线程彻底离开 DLL 代码，归还 Start 持有的引用
     return 0;
 }
 

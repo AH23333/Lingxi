@@ -18,10 +18,38 @@ namespace lingxi {
 
 static const wchar_t kCandWndClass[] = L"LingxiCandidateWnd";
 
+// H4：跨线程窗口状态变更封包（WM_APP+30：避开托盘 +10 / 通知 +20/+21）。
+// 非属主线程调用 Show/Hide/SetPage/ShowModeToast/ShowTextToast 一律经此投递
+// UI 线程串行执行——SetWindowPos/KillTimer/SetTimer 全部回到属主线程，
+// 定时器创建/销毁线程一致性成立；重排封包（kCmdRerankShow）另做 ver 陈旧校验
+constexpr UINT WM_APP_CANDCMD = WM_APP + 30;
+enum CandCmdKind
+{
+    kCmdShow = 0,      // 预测线程新候选：无条件应用（单线程串行，天然有序）
+    kCmdRerankShow,    // 重排线程同 ver 刷新：ver 已变则丢弃
+    kCmdHide,
+    kCmdPage,
+    kCmdToast,
+    kCmdTextToast,
+};
+struct ShowReq
+{
+    RECT caret{};
+    std::vector<std::wstring> cands;
+    std::vector<std::wstring> anno;
+    std::wstring composing;
+    std::wstring text;      // kCmdTextToast 气泡文字
+    bool dark = false;
+    bool english = false;   // kCmdToast 中/英标志
+    uint32_t ver = 0;
+    uint32_t pageStart = 0; // kCmdPage
+};
+
 bool CandWindow::Init(HINSTANCE hInst)
 {
     InitializeCriticalSection(&_cs);
     _csInit = true;
+    _ownerTid = GetCurrentThreadId(); // H4：窗口属主线程（消息循环线程）
 
     WNDCLASSEXW wc = { sizeof(wc) };
     // 注意：不加 CS_DROPSHADOW——Win11 下它对 DWM 圆角窗算出**方角投影**，
@@ -194,6 +222,14 @@ void CandWindow::Show(const RECT& caretScreen, const std::vector<std::wstring>& 
                       const std::vector<std::wstring>& anno)
 {
     if (!_hwnd) return;
+    if (GetCurrentThreadId() != _ownerTid)
+    {   // H4：预测线程等非属主线程 → 封包投递 UI 线程（新 ver 无条件应用）
+        ShowReq* req = new ShowReq;
+        req->caret = caretScreen; req->cands = cands; req->anno = anno;
+        req->composing = composing; req->dark = dark; req->ver = ver;
+        PostCmd(kCmdShow, req);
+        return;
+    }
     if (uint32_t fs = LoadSettings().candidateFontSize; fs != _fontSize)
         RebuildFonts(fs); // 字号设置变化即时生效
     else if (LoadSettings().uiFont != _fontFace)
@@ -225,6 +261,13 @@ void CandWindow::Show(const RECT& caretScreen, const std::vector<std::wstring>& 
 void CandWindow::SetPage(uint32_t ver, uint32_t pageStart)
 {
     if (!_hwnd) return;
+    if (GetCurrentThreadId() != _ownerTid)
+    {   // H4：客户端读线程（MSG_PAGE）→ 封包投递 UI 线程
+        ShowReq* req = new ShowReq;
+        req->ver = ver; req->pageStart = pageStart;
+        PostCmd(kCmdPage, req);
+        return;
+    }
     bool changed = false;
     EnterCriticalSection(&_cs);
     // 与 Show() 同因：翻页指令期间 toast 态必须让位（清态+杀定时器）
@@ -248,6 +291,13 @@ void CandWindow::SetPage(uint32_t ver, uint32_t pageStart)
 void CandWindow::ShowModeToast(bool english)
 {
     if (!_hwnd) return;
+    if (GetCurrentThreadId() != _ownerTid)
+    {   // H4：客户端读线程（MSG_MODE_TOAST）→ 封包投递 UI 线程（SetTimer 归属主）
+        ShowReq* req = new ShowReq;
+        req->english = english;
+        PostCmd(kCmdToast, req);
+        return;
+    }
     bool dark = _dark;
     EnterCriticalSection(&_cs);
     _toastMode = true;
@@ -286,6 +336,13 @@ void CandWindow::ShowModeToast(bool english)
 void CandWindow::ShowTextToast(const wchar_t* text)
 {
     if (!_hwnd || !text || !*text) return;
+    if (GetCurrentThreadId() != _ownerTid)
+    {   // H4：ApplyLearn 可能跑在客户端读线程 → 封包投递 UI 线程
+        ShowReq* req = new ShowReq;
+        req->text = text;
+        PostCmd(kCmdTextToast, req);
+        return;
+    }
     std::wstring t = text;
     int w = 78;
     {
@@ -330,6 +387,11 @@ void CandWindow::ShowTextToast(const wchar_t* text)
 void CandWindow::Hide()
 {
     if (!_hwnd || !_visible) return;
+    if (GetCurrentThreadId() != _ownerTid)
+    {   // H4：客户端读线程/预测线程（断连清理、MSG_HIDE、空文本）→ 封包投递
+        PostCmd(kCmdHide, nullptr);
+        return;
+    }
     _visible = false;
     HideTip();
     ShowWindow(_hwnd, SW_HIDE);
@@ -338,6 +400,31 @@ void CandWindow::Hide()
     _composing.clear();
     _pageStart = 0;
     LeaveCriticalSection(&_cs);
+}
+
+// H4：跨线程显示请求——detached 重排线程不再直调 Show（与主线程鼠标/绘制
+// 竞态窗口大）；封包投递到 UI 线程串行处理。投递失败（窗口已亡/退出期队列
+// 满）就地删除封包——调用线程绝不触窗口。
+void CandWindow::PostShow(const RECT& caretScreen, const std::vector<std::wstring>& cands,
+                          bool dark, uint32_t ver, const std::wstring& composing,
+                          const std::vector<std::wstring>& anno)
+{
+    if (!_hwnd) return;
+    ShowReq* req = new ShowReq;
+    req->caret = caretScreen;
+    req->cands = cands;
+    req->anno = anno;
+    req->composing = composing;
+    req->dark = dark;
+    req->ver = ver;
+    PostCmd(kCmdRerankShow, req); // 重排语义：UI 线程落地时 ver 已变则丢弃
+}
+
+// H4：状态变更封包投递——PostMessage 失败（窗口已亡/队列满）就地释放封包
+void CandWindow::PostCmd(int kind, ShowReq* req)
+{
+    if (!PostMessageW(_hwnd, WM_APP_CANDCMD, (WPARAM)kind, (LPARAM)req))
+        delete req;
 }
 
 void CandWindow::ApplyOpacity()
@@ -481,6 +568,45 @@ LRESULT CandWindow::WndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
     case WM_MBUTTONUP:
         return OnMButtonUp(hwnd, lParam);
+
+    case WM_APP_CANDCMD:
+    {
+        // H4：跨线程状态变更封包在 UI 线程串行落地（本线程调 Show/Hide/…
+        // 走属主直执行路径，不再投递）。重排封包做陈旧校验——ver 已被更新
+        // 预测覆盖则丢弃（防旧重排盖掉新候选；校验与应用间 µs 窗口仍可被
+        // 新预测覆盖，后者随下一键自愈，远优于原先直调的整段竞态）
+        ShowReq* req = (ShowReq*)lParam;
+        switch ((int)wParam)
+        {
+        case kCmdShow:
+            Show(req->caret, req->cands, req->dark, req->ver, req->composing, req->anno);
+            break;
+        case kCmdRerankShow:
+        {
+            uint32_t cur = 0;
+            EnterCriticalSection(&_cs);
+            cur = _ver;
+            LeaveCriticalSection(&_cs);
+            if (req->ver == cur)
+                Show(req->caret, req->cands, req->dark, req->ver, req->composing, req->anno);
+            break;
+        }
+        case kCmdHide:
+            Hide();
+            break;
+        case kCmdPage:
+            SetPage(req->ver, req->pageStart);
+            break;
+        case kCmdToast:
+            ShowModeToast(req->english);
+            break;
+        case kCmdTextToast:
+            ShowTextToast(req->text.c_str());
+            break;
+        }
+        delete req;
+        return 0;
+    }
 
     case WM_DESTROY:
         if (_ttHwnd) { DestroyWindow(_ttHwnd); _ttHwnd = nullptr; } // UI 线程内安全销毁

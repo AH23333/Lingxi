@@ -16,6 +16,9 @@
 
 HINSTANCE g_hInst = nullptr;
 LONG g_cComponents = 0;
+// L4：DLL 侧后台线程在途引用计数（当前唯一使用者为 CPipeClient 工作线程）。
+// 定义在本文件，pipeclient.cpp 在创建线程前加、线程函数退出时减。
+LONG g_cThreadRefs = 0;
 static LONG g_cLock = 0;
 
 using lingxi::CTextService;
@@ -81,7 +84,13 @@ STDAPI DllGetClassObject(REFCLSID rclsid, REFIID riid, void** ppv)
 
 STDAPI DllCanUnloadNow()
 {
-    return (g_cComponents == 0 && g_cLock == 0) ? S_OK : S_FALSE;
+    // L4：旧判定只统计组件数与类厂锁数，不统计管道工作线程——Deactivate
+    // 后若 Stop 的 3s 等待超时（线程仍存活，M3 保留路径），COM 据 S_OK
+    // FreeLibrary，线程入口及其调用的 Run/HandleMessage 代码页被解除映射
+    // → 宿主 AV。现在线程自创建前持引用、Run 退出时释放，在途期间拒绝
+    // 卸载。正常路径无行为变化：激活期 g_cComponents>0 本就 S_FALSE，
+    // 停用后线程已收敛、计数归零，判定与旧一致。
+    return (g_cComponents == 0 && g_cLock == 0 && g_cThreadRefs == 0) ? S_OK : S_FALSE;
 }
 
 // ==================== 注册 ====================

@@ -35,6 +35,7 @@ struct UiHooks
     std::function<bool(const std::wstring&, const std::wstring&, int)> addUserWord; // (word,key,gain) upsert
     std::function<bool(const std::wstring&, const std::wstring&, int)> nudgeUserWord; // (word,key,±delta) 调频
     std::function<bool(const std::vector<UserDictEntry>&)> mergeUserDict; // 导入合并
+    std::function<void()> flushUserDict; // L7：导出/备份前在途学习落盘收敛
 };
 extern UiHooks g_hooks; // 定义于 settingsui.cpp
 

@@ -16,6 +16,7 @@
 #include "../common/punct.h"
 
 #include <functional>
+#include <memory>
 
 namespace lingxi {
 
@@ -521,23 +522,48 @@ void CTextService::PinyinEndComposition(ITfContext* pCtx, const std::wstring* re
     bool doReplace = (replaceWith != nullptr);
     std::wstring replaceText = replaceWith ? *replaceWith : std::wstring();
     _fSelfInsert = TRUE;
-    auto task = [this, doReplace, replaceText](TfEditCookie ec) -> HRESULT
+    // M1：会话可能异步执行，而函数尾即释放成员引用——任务必须自持
+    // AddRef 快照（旧实现任务读成员，调用方先释放 = UAF 窗口）。快照包
+    // 成 RAII：任务正常跑完标记 released 后由 EndComposition 结果路径
+    // 收尾；会话没排上（同步+异步双败）任务永不执行时，由最后一个持引
+    // 的 lambda 副本析构兜底释放，两条路径都恰好一次。
+    struct SnapGuard
     {
+        ITfRange* range = nullptr;
+        ITfComposition* comp = nullptr;
+        bool released = false;
+        ~SnapGuard()
+        {
+            if (!released)
+            {
+                if (range) range->Release();
+                if (comp) comp->Release();
+                released = true;
+            }
+        }
+    };
+    auto snap = std::make_shared<SnapGuard>();
+    snap->range = _compRange;
+    if (snap->range) snap->range->AddRef();
+    snap->comp = _pComposition;
+    if (snap->comp) snap->comp->AddRef();
+    auto task = [this, doReplace, replaceText, snap](TfEditCookie ec) -> HRESULT
+    {
+        HRESULT hr = S_OK;
         LX_LOG(L"ime", L"[end] enter task range=%p comp=%p doReplace=%d",
-               (void*)_compRange, (void*)_pComposition, (int)doReplace);
-        if (_compRange && doReplace)
+               (void*)snap->range, (void*)snap->comp, (int)doReplace);
+        if (snap->range && doReplace)
         {
-            HRESULT hr = _compRange->SetText(ec, 0, replaceText.c_str(), (LONG)replaceText.size());
+            hr = snap->range->SetText(ec, 0, replaceText.c_str(), (LONG)replaceText.size());
             LX_LOG(L"ime", L"[end] SetText=0x%08X", hr);
-            if (FAILED(hr)) return hr;
         }
-        if (_pComposition)
+        if (SUCCEEDED(hr) && snap->comp)
         {
-            HRESULT he = _pComposition->EndComposition(ec);
-            LX_LOG(L"ime", L"[end] EndComposition=0x%08X", he);
-            return he;
+            hr = snap->comp->EndComposition(ec);
+            LX_LOG(L"ime", L"[end] EndComposition=0x%08X", hr);
         }
-        return S_OK;
+        snap->released = true; // 跑完即定音：析构不再兜底
+        return hr;
     };
     auto* pSession = new CPinyinEditSession(this, pCtx, task);
     HRESULT hrs = RequestSessionEx(pCtx, _tfClientId, pSession, TF_ES_READWRITE);
