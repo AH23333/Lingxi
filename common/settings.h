@@ -1,7 +1,9 @@
 #pragma once
 //
 // 用户设置（HKCU\Software\LingxiIme）。
-// DLL 与 LingxiUI 共用；每次读取实时查注册表（键少、µs 级），改动即时生效。
+// DLL 与 LingxiUI 共用；LoadSettings 带 SettingsSeq 版本号缓存（M5）：每次
+// 调用仍单键读版本号（µs 级），SaveSettings/SaveSettingsDiff 落盘即 bump，
+// 下一次读立刻反映改动；外部直写单键（reg 导入等）由 500ms TTL 兜底。
 // 缺键 = 默认值。UI 保存、DLL/UI 各自读取。
 //
 #include <cstdint>

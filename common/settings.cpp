@@ -10,26 +10,50 @@ namespace {
 // 真实设置基键（用户环境）
 constexpr wchar_t kKeyReal[] = L"Software\\LingxiIme";
 
-// 测试隔离：LINGXI_SETTINGS_NS 非空（仅 [A-Za-z0-9_-]{1,16} 生效）→ 读写
-// Software\LingxiIme_<ns> 沙盒基键。
+// M2：非法/超长 ns 的隔离回退键——绝不静默回退真实键（防测试进程污染用户设置）
+constexpr wchar_t kKeyQuarantine[] = L"Software\\LingxiIme_NS_INVALID";
+
+// 测试隔离：LINGXI_SETTINGS_NS 非空（仅 [A-Za-z0-9_-]，上限 47 字符）
+// → 读写 Software\LingxiIme_<ns> 沙盒基键；非法/超长 ns → 隔离键
+// NS_INVALID + 显式报错，永不触碰真实键（M2）。
 // 背景（2026-10-29 晚实证）：全套测试此前直写真实 HKCU——设置保存是
 // "读当前值改单键全量回写"链路的任何一环在测试进程里崩溃/半程退出都会把
 // 用户实时设置刷成残值（本轮就发生过一次：全部能力位被刷 0，用户输入法
 // 直接被关掉拼音）。词典有 APPDATA 沙盒、注册表此前没有等价物，现在补上。
+
+// M2：ns 合法性统一判定——ActiveKey（实际写哪个键）与 TestSpawnedFromEnv
+// （是否按测试派生行事）必须同口径。旧实现前者逐字符校验、后者只看非空，
+// 非法 ns（如含空格/中文）下分裂：判定为测试派生却写真实键。
+static bool NsValid(const wchar_t* ns, size_t len)
+{
+    if (len == 0) return false;
+    for (size_t i = 0; i < len; i++)
+    {
+        wchar_t c = ns[i];
+        bool okSym = (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z') ||
+                     (c >= L'0' && c <= L'9') || c == L'_' || c == L'-';
+        if (!okSym) return false;
+    }
+    return true;
+}
+
 const wchar_t* ActiveKey()
 {
     wchar_t ns[64] = L"";
     DWORD n = GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", ns, 48);
-    if (n == 0 || n >= 48) return kKeyReal;
-    size_t len = 0;
-    while (ns[len]) {
-        wchar_t c = ns[len];
-        bool okSym = (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z') ||
-                     (c >= L'0' && c <= L'9') || c == L'_' || c == L'-';
-        if (!okSym) return kKeyReal; // 非法字符：宁可不隔离也不写到奇怪的键
-        len++;
+    if (n == 0) return kKeyReal; // 未设置/空 = 生产
+    // M2：非法/超长 ns 不再静默回退真实键（旧行为与 TestSpawnedFromEnv 分裂，
+    // "自认测试"的进程把设置刷进真实键）。现显式报错一次 + 降级到固定隔离键，
+    // 读写永不落真实键。
+    if (n >= 48 || !NsValid(ns, n))
+    {
+        static LONG s_errLogged = 0;
+        if (InterlockedExchange(&s_errLogged, 1) == 0)
+            OutputDebugStringW(
+                L"LingxiIme: LINGXI_SETTINGS_NS invalid/overlong; settings quarantined "
+                L"to Software\\LingxiIme_NS_INVALID\n");
+        return kKeyQuarantine;
     }
-    if (len == 0) return kKeyReal;
     static wchar_t buf[128];
     _snwprintf_s(buf, _TRUNCATE, L"Software\\LingxiIme_%s", ns);
     return buf;
@@ -52,6 +76,17 @@ void SetDword(HKEY hKey, const wchar_t* name, DWORD v)
     RegSetValueExW(hKey, name, 0, REG_DWORD, (const BYTE*)&v, sizeof(v));
 }
 
+// M5：设置版本号 bump——SaveSettings/SaveSettingsDiff 落盘尾部调用；读侧
+// （LoadSettings）版本不变且未超 TTL 才用缓存。键删除（ResetToDefaults）
+// 连版本号一起消失 → 下次读必 miss。并发双写最坏 seq 相同但值已变：读侧
+// 先读 seq 后读值，撕裂快照只存活到下一次 bump，可自愈。
+void BumpSettingsSeq(HKEY hKey)
+{
+    DWORD seq = 0;
+    GetDword(hKey, L"SettingsSeq", seq);
+    SetDword(hKey, L"SettingsSeq", seq + 1);
+}
+
 // REG_SZ 读（上限 2KB 防异常大值；尾部 NUL 剥离）
 bool GetString(HKEY hKey, const wchar_t* name, std::wstring& out)
 {
@@ -59,7 +94,9 @@ bool GetString(HKEY hKey, const wchar_t* name, std::wstring& out)
     if (RegGetValueW(hKey, NULL, name, RRF_RT_REG_SZ, NULL, NULL, &cb) != ERROR_SUCCESS ||
         cb == 0 || cb > 2048)
         return false;
-    std::wstring buf(cb / sizeof(wchar_t), L'\0');
+    // L3：cb 为字节数（含结尾 NUL）——注册表对齐到 4 字节时可能为奇数，
+    // cb/2 向下取整会少一个字符装不下数据，按 (cb+1)/2 向上取整
+    std::wstring buf((cb + 1) / sizeof(wchar_t), L'\0');
     if (RegGetValueW(hKey, NULL, name, RRF_RT_REG_SZ, NULL,
                      (LPBYTE)&buf[0], &cb) != ERROR_SUCCESS)
         return false;
@@ -74,7 +111,8 @@ void SetString(HKEY hKey, const wchar_t* name, const std::wstring& v)
                    (DWORD)((v.size() + 1) * sizeof(wchar_t)));
 }
 
-// 测试派生判定（与 ActiveKey 同口径的"环境里有无合法 ns"）：三态缓存，
+// 测试派生判定（与 ActiveKey 同口径：ns 非空即测试派生；非法/超长 ns 的
+// 设置由 ActiveKey 落隔离键，两侧仍一致）：三态缓存，
 // -1 未快照（惰性读环境） 0 生产 1 测试派生。
 int g_testSpawned = -1;
 
@@ -82,8 +120,11 @@ bool TestSpawnedFromEnv()
 {
     wchar_t ns[48] = L"";
     DWORD n = GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", ns, 48);
-    if (n == 0 || n >= 48) return false;
-    return ns[0] != 0;
+    if (n == 0) return false;
+    // M2：ns 存在（非空）即测试派生——非法/超长 ns 的设置读写落在隔离键
+    // （而非真实键），"自认测试却写真实键"不再存在；剪贴板/备份/统计等
+    // 沙箱语义取保守方向（停用真实写入）。
+    return true;
 }
 
 } // namespace
@@ -101,12 +142,45 @@ bool WasTestSpawned()
     return g_testSpawned != 0;
 }
 
+namespace {
+// M5：击键热路径全量读缓存——ime composition/service 每键全量 LoadSettings
+// （~35 次 RegQueryValueEx + 2 次两段式字符串读），注册表 API 在宿主内为
+// 50ms 级抖动源。失效判据=键内 SettingsSeq 版本号：本进程/他进程的
+// SaveSettings/SaveSettingsDiff 落盘后 bump → 下一次读即 miss 重读（"改了
+// 设置不生效"不存在）。不用键 LastWriteTime 做判据：实测其粒度为秒级
+// （同秒内连续写时间戳不变），不可靠。外部直写单键（reg 导入、deep_test
+// 类工具）不 bump → 由 TTL 兜底：缓存最多存活 kSetCacheTtlMs，过期即全量
+// 重读，陈旧有界。键不存在（全新环境/恢复默认）走原直读路径。无痕开关另
+// 走 IncognitoActive() 单键直读，不受缓存影响。
+constexpr ULONGLONG kSetCacheTtlMs = 500;
+SRWLOCK g_setCacheLock = SRWLOCK_INIT;
+bool g_setCacheValid = false;
+bool g_setCacheHaveSeq = false;
+DWORD g_setCacheSeq = 0;
+ULONGLONG g_setCacheTick = 0;
+std::wstring g_setCacheKey;
+Settings g_setCache;
+} // namespace
+
 Settings LoadSettings()
 {
     Settings s;
+    const std::wstring key = ActiveKey(); // 本地快照：ActiveKey 返回内部 static buf 指针，缓存路径需跨全函数持有
     HKEY hKey = nullptr;
-    if (RegOpenKeyExW(HKEY_CURRENT_USER, ActiveKey(), 0, KEY_READ, &hKey) != ERROR_SUCCESS)
+    if (RegOpenKeyExW(HKEY_CURRENT_USER, key.c_str(), 0, KEY_READ, &hKey) != ERROR_SUCCESS)
         return s; // 缺键 = 全默认
+
+    DWORD seq = 0;
+    const bool haveSeq = GetDword(hKey, L"SettingsSeq", seq);
+    {
+        AcquireSRWLockShared(&g_setCacheLock);
+        const bool hit = g_setCacheValid && g_setCacheKey == key &&
+                         g_setCacheHaveSeq == haveSeq && (!haveSeq || g_setCacheSeq == seq) &&
+                         GetTickCount64() - g_setCacheTick < kSetCacheTtlMs;
+        if (hit) s = g_setCache;
+        ReleaseSRWLockShared(&g_setCacheLock);
+        if (hit) { RegCloseKey(hKey); return s; }
+    }
 
     DWORD v = 0;
     if (GetDword(hKey, L"PinyinEnabled", v)) s.pinyinEnabled = v != 0;
@@ -149,6 +223,14 @@ Settings LoadSettings()
     if (GetDword(hKey, L"SetWinH", v)) s.setWinH = (int)v;
 
     RegCloseKey(hKey);
+    AcquireSRWLockExclusive(&g_setCacheLock);
+    g_setCache = s;
+    g_setCacheKey = key;
+    g_setCacheSeq = seq;
+    g_setCacheHaveSeq = haveSeq;
+    g_setCacheTick = GetTickCount64();
+    g_setCacheValid = true;
+    ReleaseSRWLockExclusive(&g_setCacheLock);
     return s;
 }
 
@@ -168,8 +250,9 @@ bool IncognitoActive()
 void SaveSettings(const Settings& s)
 {
     HKEY hKey = nullptr;
+    // M5：BumpSettingsSeq 需先读旧 seq，打开权限从 KEY_WRITE 提到 KEY_READ|KEY_WRITE
     if (RegCreateKeyExW(HKEY_CURRENT_USER, ActiveKey(), 0, NULL, REG_OPTION_NON_VOLATILE,
-                        KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
+                        KEY_READ | KEY_WRITE, NULL, &hKey, NULL) != ERROR_SUCCESS)
         return;
 
     SetDword(hKey, L"PinyinEnabled", s.pinyinEnabled ? 1 : 0);
@@ -208,6 +291,7 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"SetWinW", (DWORD)(uint32_t)s.setWinW);
     SetDword(hKey, L"SetWinH", (DWORD)(uint32_t)s.setWinH);
 
+    BumpSettingsSeq(hKey); // M5：版本 bump，读侧缓存即时失效
     RegCloseKey(hKey);
 }
 
@@ -268,6 +352,7 @@ void SaveSettingsDiff(const Settings& s)
     PutDwordDiff(hKey, L"SetWinY", (DWORD)(uint32_t)s.setWinY);
     PutDwordDiff(hKey, L"SetWinW", (DWORD)(uint32_t)s.setWinW);
     PutDwordDiff(hKey, L"SetWinH", (DWORD)(uint32_t)s.setWinH);
+    BumpSettingsSeq(hKey); // M5：版本 bump，读侧缓存即时失效
     RegCloseKey(hKey);
 }
 
