@@ -1,5 +1,14 @@
 # 交接文档（HANDOFF）
 
+## 📌 最新状态速报（2026-11-02 · 联想阶梯呈现：GAP §11 多段呈现销账）
+
+- **上轮账已分四笔落库**：`22ecc42` 注音（8 文件）/ `064ef49` 以词定字+T20 / `5ec026b` 设置残留 / `2c50d88` docs；HEAD=2c50d88，工作区净。
+- **联想阶梯呈现 ✅**：联想帧（CTX_F_ASSOC）的 LLM 长续写拆两级——候选①首段（首个句读前**含句读**，词级颗粒，2..8 字门槛、剩余 ≥2 字）、②全句原样；空格=首段逐段连发（DLL 侧空格/Tab/数字选词+点选连发底座 04d589b 已在，**本轮 DLL 零改动**），整句也可一步选。机制根源=SplitContinuation 的[短句][全句]两档被 DedupCompletions 规则②（前缀对保较短）必然合并——本轮在联想帧呈现层**去重之后**后置拆段，续写帧零改动。实现：`StageAssocCands`（ngram.cpp+predictor.h 声明）+ pipeserver 贯通（CTX_F_ASSOC flags → PendingPredict.assoc → PredictProc 裁剪后拆段，cover/anno 平行不变量保持）；engine_test **E9 12 断言矩阵**；--probe-chain 新增 `probe-stage` 取证行：`'今天天气' -> [晴， | 晴，气温20℃]`。
+- **门禁**：build Debug 零错；regress engine+readings+deep 全 PASS；e2e 批内三连假红=前台抢占噪声（foreWnd=CASCADIA，#60/#86 族）——**隔离环境独立复跑 attempt2 全绿**（14 步含 ghost 数字选词、拼音 mode settle）；attempt 2/3 功能步（候选窗/Tab/前缀替换/中文续写/ghost 选词）批内亦全绿，仅前台获取步红。
+- **生效口径**：纯 UI 侧改动——**LingxiUI 重启生效**（DLL 未动，宿主应用无需重启）。
+- **剩余长尾**：U 模式拆字（先定部件拆分数据源：手工策展常见字表 vs 外部部件数据，**待用户拍板**）→ 用户实测拼音与词典管理；backlog＝LLM 语义重排/前缀提交语义/候选翻页/隐身热键/#91 深挖。
+（以下为历史速报。）
+
 ## 📌 最新状态速报（2026-11-02 · GAP R6 长尾轮：候选注音 + 以词定字 + 设置残留）
 
 - **候选注音 ✅（未提交，8 文件）**：拼音候选行内注音（jin'tian 灰阶次级色随行）——引擎按 cover 前缀同 DP 重分节（全 FULL 音节才注；简拼/残段/双拼/词典 boost/联想不注；cover 去重有界），pipeserver 与 cands/cover 三平行（尺寸校验/裁剪/LLM 重排同排列搬运），候选窗占宽计入+锁内快照防撕裂；UI 进程内闭环，IPC/DLL 零改动；--probe-pinyin (anno) 取证。

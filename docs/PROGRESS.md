@@ -115,7 +115,16 @@
 
 ## 2026-11-02 GAP R6 长尾轮（候选注音 + 以词定字）
 
-- **候选注音 ✅（未提交）**：拼音候选行内注音全链路（引擎 cover 前缀同 DP 重分节、全 FULL 音节才注 → pipeserver 与 cands/cover 三平行搬运 → 候选窗行内灰阶绘制+占宽计入）；UI 进程内闭环 IPC/DLL 零改动；--probe-pinyin (anno) 实证 + regress ALL PASS。
-- **以词定字 ✅（未提交，GAP §1 对齐微软）**：无 Shift [ ] 取本页首选词首/末字上屏即收束（B1 cover 复用、代理对防护、不 NotifyPicked 防学习污染、候选不可见/Shift 态回退【】｛｝标点）；deep T20a/b 绿（xi'an+[→西、+]→安，37/37）。
+- **候选注音 ✅（`22ecc42`）**：拼音候选行内注音全链路（引擎 cover 前缀同 DP 重分节、全 FULL 音节才注 → pipeserver 与 cands/cover 三平行搬运 → 候选窗行内灰阶绘制+占宽计入）；UI 进程内闭环 IPC/DLL 零改动；--probe-pinyin (anno) 实证 + regress ALL PASS。
+- **以词定字 ✅（`064ef49`，GAP §1 对齐微软）**：无 Shift [ ] 取本页首选词首/末字上屏即收束（B1 cover 复用、代理对防护、不 NotifyPicked 防学习污染、候选不可见/Shift 态回退【】｛｝标点）；deep T20a/b 绿（xi'an+[→西、+]→安，37/37）。
 - **设置页残留**：缩放残留已修（WM_SIZE/ScrollSettingsTo 各补 RedrawWindow 连子全失效）；常规页开关滚动残留搁置（用户裁定，疑 COMPOSITED/CLIPCHILDREN 组合）。
-- 工作区 11 文件未提交（HEAD=83a1009）；剩余长尾=联想多段呈现、U 模式拆字（待部件数据源方案）。
+- 工作区 11 文件已分四笔落库（`22ecc42` 注音 / `064ef49` 以词定字+T20 / `5ec026b` 设置残留 / `2c50d88` docs）；剩余长尾=U 模式拆字（待部件数据源方案）。
+
+## 2026-11-02 联想阶梯呈现轮（GAP §11 多段呈现销账）
+
+- **定义钉死**："多段呈现"原仅占位词 → `--probe-chain` 实证：联想帧中文候选仅 1 条 LLM 整句（'今天天气'→'晴，气温20℃-30℃'）；机制根源=SplitContinuation 的[短句][全句]两档被 DedupCompletions 规则②（前缀对保较短）必然合并，全句档形同虚设。
+- **方案拍板**：用户三选一（阶梯呈现/MSFT 严格词级/保持现状）选**阶梯呈现**：联想帧拆两级——候选①首段（首个句读前**含句读**，词级颗粒）、②全句原样；空格=首段逐段连发（DLL 选词键+点选连发底座 `04d589b` 已在，本轮 DLL 零改动），整句也可一步选。
+- **落地 ✅**：`StageAssocCands(Prediction&)` 纯函数（ngram.cpp+predictor.h：首段 2..8 字门槛、剩余 ≥2、首段查重、cover/anno 平行不变量同步插头）+ pipeserver 贯通（CTX_F_ASSOC → PendingPredict.assoc → PredictProc 去重后拆段）——续写帧/引擎去重语义/DLL 三者零改动，联想帧为呈现层唯一例外。
+- **验证**：engine_test E9 12 断言矩阵全绿；--probe-chain 新增 `probe-stage` 取证（'今天天气' → [晴， | 晴，气温20℃]）；build Debug 零错；regress engine+readings+deep 全 PASS；e2e 批内三连假红=前台抢占噪声（foreWnd=CASCADIA，#60/#86 族），隔离环境独立复跑 attempt2 全绿（14 步含 ghost 数字选词、拼音 settle）。
+- **生效口径**：纯 UI 侧——LingxiUI 重启生效（DLL 未动，宿主应用无需重启）。
+- **剩余**：U 模式拆字（待用户定部件拆分数据源：手工策展 vs 外部数据）→ 用户实测拼音与词典管理。

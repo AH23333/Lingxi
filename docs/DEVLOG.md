@@ -1287,3 +1287,32 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 
 **门禁**：build Debug 零错；regress ALL PASS（engine 254 + fix_readings + deep attempt2 37/37——attempt1 唯一红="LingxiUI ready" 宿主就绪环境抖动，T20 两轮均绿 + e2e attempt1 直绿）。
 
+## 2026-11-02 · 联想阶梯呈现轮：GAP §11 "多段呈现"销账
+
+**上轮账已落库**：R6 长尾轮 11 文件分四笔——`22ecc42`（注音 8 文件）/ `064ef49`（以词定字+T20）/ `5ec026b`（设置残留）/ `2c50d88`（docs）；HEAD=2c50d88 工作区净（上条目"工作区未提交"头衔作废）。
+
+**实证钉题**（--probe-chain，LINGXI_LOG=1）：
+
+- 联想帧中文候选仅 1 条 LLM 整句：'今天天气' → [晴，气温20℃-30℃]（532ms 含首载）；英文帧正常多候选（'Today is a nice ' → day. / I hope ...）。
+- 机制根源：SplitContinuation（llm.cpp:938）按句读切出[短句][全句]两档，但 DedupCompletions 规则②（前缀对保较短，ngram.cpp:375-378）把该对必然合并——全句档形同虚设；n-gram 中文路已退役（`d5a7d64`），中文联想=LLM 独占，故只剩单条整句。
+- DLL 侧交互底座已在（`04d589b`）：空格/Tab/数字选词（service.cpp:781-814）、点选连发 SendAssocCtx（641-656）、任意键撤销（775-791）——缺的只是 UI 候选塑形。
+
+**方案拍板**：三选一（阶梯呈现 / MSFT 严格词级 / 保持现状）用户选**阶梯呈现**——联想帧拆两级：候选①=首段（首个句读前**含句读**，词级颗粒，空格逐段连发）、②=全句原样（一步选整句）。
+
+**实现**（UI 进程内，DLL/引擎去重语义零改动）：
+
+- `StageAssocCands(Prediction&)`（ngram.cpp + predictor.h 声明，纯函数可单测）：只拆候选 0；kStops=中英统一句读集（。？！，、；：,.!?;:）；门槛：首段 2..8 字（含句读）、剩余 ≥2 字、首段查重；cover/anno 原本平行才同步插头（平行不变量）。ngram.cpp 顺带补 `<cwchar>`（wctype 依赖）。
+- pipeserver 贯通：PendingPredict 增 `bool assoc`；HandleCtx 传 `(m.flags & CTX_F_ASSOC)!=0`（实际=0x04，proto.h:85；GAP §11 定稿文字写 0x02 系历史陈旧，0x02 已被 CTX_F_CTX_PREFIX 占位）；PredictProc cap 裁剪后 `if (e.assoc && !e.pinyin) StageAssocCands(pred);`——续写帧不拆（规则②对续写帧仍是正确防线），联想帧为呈现层唯一例外。
+- ProbeChain 扩展 probe-stage 对照行（main.cpp），证据环闭合。
+
+**验证**：
+
+- engine_test **E9 12 断言矩阵**（两级同现/首段含句读/无句读不拆/尾句读不拆/剩余 1 字不拆/句读首位不拆/首段>8 不拆/首段查重/c0 无切分照旧/多候选只拆 c0/英文同集/cover-anno 平行插头）。
+- probe-stage 实证：'今天天气' → [晴， | 晴，气温20℃]；'Today is a nice ' → [day. | day. I hope ...]——阶梯形态闭环。
+- 门禁：build Debug 零错；regress-243677780 ALL PASS（engine + fix_readings + deep 37/37 + e2e attempt1 直绿）；探针扩展后 regress-2171224418 e2e 三连假红=前台抢占噪声（foreWnd=CASCADIA，#60/#86 族；attempt 2 功能步全绿仅 profile settle 红）——隔离环境独立复跑（test NS + 沙箱 APPDATA + taskkill + 静置 45s）attempt2 全 14 步 PASS exit=0，判环境噪声而非回归。
+- deep T18a 现口径：LLM 续写"你好有什么问题"无句读→活路径按门槛不拆（正确 no-op），拆段逻辑由 E9 单测覆盖——环境数据本身无句读，非缺陷。
+- 生效口径：纯 UI 侧——LingxiUI 重启生效（DLL 未动，在用应用无需重启）。
+
+**剩余长尾**：U 模式拆字（待用户定部件数据源：手工策展 vs 外部数据）→ 用户实测拼音与词典管理。
+
+
