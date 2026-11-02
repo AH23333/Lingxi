@@ -222,12 +222,14 @@ void CandWindow::OnPaint()
     }
 
     std::vector<std::wstring> cands;
+    std::vector<std::wstring> anno;
     uint32_t pageStart = 0;
     int hoverRow = -1;
     std::wstring composing;
     {
         EnterCriticalSection(&_cs);
         cands = _cands;
+        anno = _anno;
         pageStart = _pageStart;
         hoverRow = _hoverRow;
         composing = _composing;
@@ -246,6 +248,7 @@ void CandWindow::OnPaint()
     COLORREF fg = dark ? RGB(228, 228, 228) : kUiText;
     COLORREF border = dark ? RGB(66, 66, 66) : kUiFlyoutBorder;
     COLORREF accent = _accent;
+    COLORREF annoFg = dark ? RGB(170, 170, 170) : kUiText2; // GAP R6 注音次级色
 
     HBRUSH hBg = CreateSolidBrush(bg);
     FillRect(hdc, &rc, hBg);
@@ -330,6 +333,18 @@ void CandWindow::OnPaint()
         wchar_t buf[512];
         _snwprintf_s(buf, _TRUNCATE, L"%zu  %s", row + 1, cands[i].c_str());
         DrawTextW(hdc, buf, -1, &rowR, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+        // GAP R6 候选注音：主文本后行内绘制（同 _font，宽度已在 LayoutAndPosition
+        // 实测计入）；灰阶次级色，选中行近白保对比
+        if (i < anno.size() && !anno[i].empty())
+        {
+            SIZE szMain{};
+            GetTextExtentPoint32W(hdc, buf, (int)wcslen(buf), &szMain);
+            wchar_t abuf[512];
+            _snwprintf_s(abuf, _TRUNCATE, L"（%s）", anno[i].c_str());
+            SetTextColor(hdc, row == 0 ? RGB(240, 240, 240) : annoFg);
+            RECT aR = { rowR.left + szMain.cx, rowR.top, rowR.right, rowR.bottom };
+            DrawTextW(hdc, abuf, -1, &aR, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+        }
     }
     SelectObject(hdc, oldPen);
 

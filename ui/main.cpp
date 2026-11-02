@@ -159,6 +159,8 @@ static int ProbePinyin()
         {
             if (k) joined += L" | ";
             joined += pred.cands[k];
+            if (k < pred.anno.size() && !pred.anno[k].empty())
+                joined += L"(" + pred.anno[k] + L")"; // GAP R6 注音取证
         }
         LX_LOG(L"pinyin", L"probe '%ls' -> [%ls] (%u cands, %llu ms)",
                in, joined.c_str(), (uint32_t)pred.cands.size(),

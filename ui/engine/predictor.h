@@ -20,6 +20,9 @@ struct Prediction
     // 0 < cover < 串长 → 选该词后剩余拼音留在组合里继续输入（"白打"根治）。
     // 双拼模式引擎不提供（键位→全拼映射不可逆推），恒为空/0。
     std::vector<uint32_t> cover;
+    // 候选注音（GAP R6）：与 cands 平行的音节串（如 jin'tian），拼音引擎填充；
+    // 其余引擎留空 = 无注音。仅 UI 显示层消费，不进协议；size 可小于 cands。
+    std::vector<std::wstring> anno;
 };
 
 // 用户词条（词典管理操作用：词典窗/候选右键经 g_hooks → 引擎原子改内存+落盘）

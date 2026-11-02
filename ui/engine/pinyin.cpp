@@ -594,6 +594,40 @@ public:
         if (st.traditionalOutput)
             for (auto& w : p.cands) w = ToTraditional(w);
 
+        // GAP R6 候选注音：按每个候选覆盖的拼音前缀重新分节（与主预测同一
+        // EnumeratePaths DP），最优路径全 FULL 音节时以 ' 连接为注音；
+        // 含简拼/残段单元或 cover 未知（用户词典 boost/双拼）则不注。
+        // 按 cover 去重：同一覆盖前缀分节唯一，多数候选共享少数 cover。
+        {
+            std::unordered_map<uint32_t, std::wstring> annoByCover;
+            p.anno.resize(p.cands.size());
+            for (size_t k = 0; k < p.cands.size() && k < covers.size(); k++)
+            {
+                uint32_t cv = covers[k];
+                if (cv == 0 || cv > raw.size()) continue;
+                auto it = annoByCover.find(cv);
+                if (it == annoByCover.end())
+                {
+                    std::wstring a;
+                    std::vector<SegPath> ps = EnumeratePaths(raw.substr(0, cv));
+                    if (!ps.empty())
+                    {
+                        bool allFull = true;
+                        for (const auto& u : ps[0].units)
+                            if (u.kind != SyllUnit::FULL) { allFull = false; break; }
+                        if (allFull)
+                            for (size_t u = 0; u < ps[0].units.size(); u++)
+                            {
+                                if (u) a += L'\'';
+                                a += FromUtf8(ps[0].units[u].text);
+                            }
+                    }
+                    it = annoByCover.emplace(cv, std::move(a)).first;
+                }
+                p.anno[k] = it->second;
+            }
+        }
+
         p.replaceLen = 0;
         p.cover = std::move(covers);
         return p;

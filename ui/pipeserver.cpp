@@ -519,13 +519,16 @@ void PipeServer::PredictProc()
             if (asciiOnly) pred.cands.clear();
         }
         // 拼音模式保留全量（候选窗分页、支持翻页）；英文补全/续写按设置页大小。
-        // cover（B1）与 cands 必须同步裁剪/校验：不平行=旧引擎输出，按无 cover 处理。
+        // cover（B1）/anno（GAP R6）与 cands 必须同步裁剪/校验：不平行=旧引擎
+        // 输出，按无 cover/无注音处理。
         if (pred.cover.size() != pred.cands.size()) pred.cover.clear();
+        if (pred.anno.size() != pred.cands.size()) pred.anno.clear();
         size_t cap = e.pinyin ? (size_t)kMaxCandidates : (size_t)st.candidateCount;
         if (pred.cands.size() > cap)
         {
             pred.cands.resize(cap);
             if (!pred.cover.empty()) pred.cover.resize(cap);
+            if (!pred.anno.empty()) pred.anno.resize(cap);
         }
         LX_LOG(L"pipe", L"裁剪后候选=%u paused=%d enComp=%d pinyin=%d",
                (uint32_t)pred.cands.size(), (int)st.paused, (int)st.enCompletion,
@@ -545,7 +548,8 @@ void PipeServer::PredictProc()
         // 拼音（"zhx"）没有候选但组合串需要回显，0 反馈=用户体感"按键失灵"。
         // 非拼音帧 0 候选维持隐藏（英文补全无候选不占屏）。
         if (!pred.cands.empty() || e.pinyin)
-            _wnd->Show(e.caret, pred.cands, dark, e.ver, e.pinyin ? e.text : std::wstring());
+            _wnd->Show(e.caret, pred.cands, dark, e.ver, e.pinyin ? e.text : std::wstring(),
+                       pred.anno);
         else
             _wnd->Hide();
         // 记录最近一次拼音预测供选字反馈自学习（临界区保护，跨线程读取）
@@ -570,7 +574,7 @@ void PipeServer::PredictProc()
         {
             uint32_t myGen = e.c->gen.fetch_add(1) + 1; // 本次预测占一个交互代
             uint32_t mySeq = e.c->rrSeq.fetch_add(1) + 1; // 使更早的重排线程作废（合并）
-            StartAsyncRerank(e.c, e.ver, pred.cands, pred.cover, dark, e.caret,
+            StartAsyncRerank(e.c, e.ver, pred.cands, pred.cover, pred.anno, dark, e.caret,
                              e.text, e.ctx, myGen, mySeq); // B2：composing 穿透（pinyin 分支必真）
         }
     }
@@ -588,13 +592,14 @@ bool PipeServer::RerankStillCurrent(ClientCtx* c, uint32_t ver, uint32_t gen, ui
 void PipeServer::StartAsyncRerank(const ClientPtr& c, uint32_t ver,
                                   const std::vector<std::wstring>& cands,
                                   const std::vector<uint32_t>& cover,
+                                  const std::vector<std::wstring>& anno,
                                   bool dark, const RECT& caret,
                                   const std::wstring& composing,
                                   const std::wstring& ctx, uint32_t gen, uint32_t seq)
 {
     // 按值捕获全部上下文（线程独立，不依赖栈/队列）；c 为 shared_ptr 引用——
     // 客户端断线时 ClientCtx 不会被提前释放，本线程用完才归还（防悬垂）。
-    std::thread([this, c, ver, cands, cover, dark, caret, composing, ctx, gen, seq]() {
+    std::thread([this, c, ver, cands, cover, anno, dark, caret, composing, ctx, gen, seq]() {
         // 合并连击：先观察一小段。若期间用户又敲了新键（新重排序号已占位），
         // 本线程立刻退出——拼音每键即时预测后，只有最后一键触发的重排有活干。
         Sleep(kRerankSettleMs);
@@ -618,31 +623,37 @@ void PipeServer::StartAsyncRerank(const ClientPtr& c, uint32_t ver,
         // 核对：客户端仍在、仍活跃、ver 未被新预测覆盖、期间无翻页/选词/新重排
         if (!RerankStillCurrent(c.get(), ver, gen, seq)) return;
 
-        // 重组：重排 top-K + 其余候选保持原序；cover（B1）按同一排列搬运，
-        // 不平行则视为无 cover（DLL 侧按全清处理，不影响正确性）。
+        // 重组：重排 top-K + 其余候选保持原序；cover（B1）/anno（GAP R6）
+        // 按同一排列搬运，不平行则视为无 cover/无注音（不影响正确性）。
         size_t k = min(cands.size(), order.size());
         bool hasCover = cover.size() == cands.size();
+        bool hasAnno = anno.size() == cands.size();
         std::vector<std::wstring> reordered;
         std::vector<uint32_t> reorderedCover;
+        std::vector<std::wstring> reorderedAnno;
         reordered.reserve(cands.size());
         reorderedCover.reserve(hasCover ? cands.size() : 0);
+        reorderedAnno.reserve(hasAnno ? cands.size() : 0);
         for (size_t idx : order)
         {
             reordered.push_back(cands[idx]);
             if (hasCover) reorderedCover.push_back(cover[idx]);
+            if (hasAnno) reorderedAnno.push_back(anno[idx]);
         }
         for (size_t i = k; i < cands.size(); i++)
         {
             reordered.push_back(cands[i]);
             if (hasCover) reorderedCover.push_back(cover[i]);
+            if (hasAnno) reorderedAnno.push_back(anno[i]);
         }
 
         Prediction pred2;
         pred2.cands = reordered;
         pred2.replaceLen = 0;
         pred2.cover = std::move(reorderedCover);
+        pred2.anno = reorderedAnno; // 拷贝：下方 Show 还要用 reorderedAnno
         // 回到第一页并更新候选窗（同 ver，宿主无需感知；composing 同 ver 不跳变）
-        _wnd->Show(caret, reordered, dark, ver, composing);
+        _wnd->Show(caret, reordered, dark, ver, composing, reorderedAnno);
         SendCandidates(c.get(), ver, pred2);
         LX_LOG(L"pipe", L"LLM 重排生效(两阶段) ver=%u k=%u", ver, (uint32_t)k);
     }).detach();

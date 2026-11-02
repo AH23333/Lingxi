@@ -89,6 +89,7 @@ void CandWindow::LayoutAndPosition()
 
     // 锁内只取当前页候选快照（避免在锁内调 GetDC/GDI）
     std::vector<std::wstring> page;
+    std::vector<std::wstring> pageAnno;
     std::wstring composing;
     {
         EnterCriticalSection(&_cs);
@@ -96,6 +97,8 @@ void CandWindow::LayoutAndPosition()
         CurrentPageRangeLocked(&pgBegin, &pgEnd);
         page.reserve(pgEnd - pgBegin);
         for (size_t i = pgBegin; i < pgEnd; i++) page.push_back(_cands[i]);
+        for (size_t i = pgBegin; i < pgEnd; i++)
+            pageAnno.push_back(i < _anno.size() ? _anno[i] : std::wstring());
         composing = _composing;
         LeaveCriticalSection(&_cs);
     }
@@ -111,9 +114,11 @@ void CandWindow::LayoutAndPosition()
     {
         HGDIOBJ old = SelectObject(hdc, _font);
         SIZE sz{};
-        for (const auto& s : page)
+        for (size_t i = 0; i < page.size(); i++)
         {
-            GetTextExtentPoint32W(hdc, s.c_str(), (int)s.size(), &sz);
+            std::wstring probe = page[i];
+            if (i < pageAnno.size() && !pageAnno[i].empty()) probe += L"（" + pageAnno[i] + L"）"; // 注音占宽
+            GetTextExtentPoint32W(hdc, probe.c_str(), (int)probe.size(), &sz);
             if (sz.cx > textMax) textMax = sz.cx;
         }
         SelectObject(hdc, old);
@@ -185,7 +190,8 @@ void CandWindow::LayoutAndPosition()
 }
 
 void CandWindow::Show(const RECT& caretScreen, const std::vector<std::wstring>& cands,
-                      bool dark, uint32_t ver, const std::wstring& composing)
+                      bool dark, uint32_t ver, const std::wstring& composing,
+                      const std::vector<std::wstring>& anno)
 {
     if (!_hwnd) return;
     if (uint32_t fs = LoadSettings().candidateFontSize; fs != _fontSize)
@@ -197,6 +203,7 @@ void CandWindow::Show(const RECT& caretScreen, const std::vector<std::wstring>& 
     EnterCriticalSection(&_cs);
     _caret = caretScreen;
     _cands = cands;
+    _anno = anno;
     _composing = composing;
     _dark = dark;
     // 同版本再 Show（重排写回）= 同批候选刷新：保页；新版本（ver 变）才归零
