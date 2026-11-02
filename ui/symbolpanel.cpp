@@ -53,8 +53,8 @@ const wchar_t* const kSymFace[] = {
     L"🤨", L"😐", L"😑", L"😶", L"🙄", L"😏", L"😣", L"😥", L"😭", L"😤", L"😠", L"😡",
     L"🥵", L"🥶", L"😴", L"🤤", L"🥴", L"🤢", L"🤮", L"🤯", L"🥳", L"😎", L"🤓",
     // 10-31 扩充（高频补齐；\u 转义防 VS16 不可见字符在编辑中丢失）
-    L"\u1F605", L"\u1F606", L"\u1F917", L"\u1F619", L"\u1F97A", L"\u1F62C", L"\u1F630",
-    L"\u1F616", L"\u1F62A", L"\u1F60C", L"\u1F61B", L"\u1F61D", L"\u1F920",
+    L"\U0001F605", L"\U0001F606", L"\U0001F917", L"\U0001F619", L"\U0001F97A", L"\U0001F62C", L"\U0001F630",
+    L"\U0001F616", L"\U0001F62A", L"\U0001F60C", L"\U0001F61B", L"\U0001F61D", L"\U0001F920",
 };
 
 const wchar_t* const kSymGesture[] = {
@@ -62,8 +62,8 @@ const wchar_t* const kSymGesture[] = {
     L"☝️", L"✋", L"🤚", L"🖐️", L"🖖", L"👋", L"🤝", L"🙏", L"💪", L"🦾", L"✊", L"👏",
     L"🤲",
     // 10-31 扩充（书写/身体语言组；\u 转义防 VS16 丢失）
-    L"\u270D\uFE0F", L"\u1F90C", L"\u1F90F", L"\u1F485", L"\u1F646", L"\u1F645",
-    L"\u1F647", L"\u1F64B", L"\u1F442", L"\u1F440", L"\u1F463",
+    L"\u270D\uFE0F", L"\U0001F90C", L"\U0001F90F", L"\U0001F485", L"\U0001F646", L"\U0001F645",
+    L"\U0001F647", L"\U0001F64B", L"\U0001F442", L"\U0001F440", L"\U0001F463",
 };
 
 const wchar_t* const kSymAnimal[] = {
@@ -71,9 +71,9 @@ const wchar_t* const kSymAnimal[] = {
     L"🐷", L"🐸", L"🐵", L"🐔", L"🐧", L"🐦", L"🦆", L"🦅", L"🦉", L"🐴", L"🦄", L"🐝",
     L"🦋", L"🐌", L"🐞", L"🐢", L"🐍", L"🐙", L"🦀", L"🐬", L"🐳", L"🐠",
     // 10-31 扩充（走兽/家禽/神话组）
-    L"\u1F43A", L"\u1F98C", L"\u1F40E", L"\u1F411", L"\u1F9A2", L"\u1F54A\uFE0F",
-    L"\u1F407", L"\u1F408", L"\u1F415", L"\u1F994", L"\u1F43E", L"\u1F409",
-    L"\u1F432", L"\u1F99A",
+    L"\U0001F43A", L"\U0001F98C", L"\U0001F40E", L"\U0001F411", L"\U0001F9A2", L"\U0001F54A\uFE0F",
+    L"\U0001F407", L"\U0001F408", L"\U0001F415", L"\U0001F994", L"\U0001F43E", L"\U0001F409",
+    L"\U0001F432", L"\U0001F99A",
 };
 
 const wchar_t* const kSymFood[] = {
@@ -81,8 +81,8 @@ const wchar_t* const kSymFood[] = {
     L"🥝", L"🍅", L"🥑", L"🍆", L"🥔", L"🥕", L"🌽", L"🌶️", L"🥦", L"🍄", L"🥜", L"🍞",
     L"🥐", L"🧀", L"🍗", L"🍔", L"🍟", L"🍕", L"🌭", L"🥪", L"🍜", L"🍣", L"🍩", L"🍪",
     // 10-31 扩充（主食/甜点/饮品组）
-    L"\u1F35A", L"\u1F958", L"\u1F372", L"\u1F95F", L"\u1F364", L"\u1F365",
-    L"\u1F960", L"\u1F366", L"\u1F370", L"\u1F382", L"\u1F95B", L"\u2615",
+    L"\U0001F35A", L"\U0001F958", L"\U0001F372", L"\U0001F95F", L"\U0001F364", L"\U0001F365",
+    L"\U0001F960", L"\U0001F366", L"\U0001F370", L"\U0001F382", L"\U0001F95B", L"\u2615",
 };
 
 const wchar_t* const kSymActivity[] = {
@@ -90,8 +90,8 @@ const wchar_t* const kSymActivity[] = {
     L"💝", L"🎉", L"🎊", L"🎈", L"🎁", L"🏆", L"⚽", L"🏀", L"🎮", L"🎲", L"🎵", L"🎶",
     L"📞", L"📧", L"💡", L"🔧", L"🔒", L"⏰",
     // 10-31 扩充（出行/地标组）
-    L"\u2708\uFE0F", L"\u1F697", L"\u1F68C", L"\u1F6B2", L"\u1F684", L"\u1F6A2",
-    L"\u26F5", L"\u1F680", L"\u1F3DD\uFE0F", L"\u1F3D6\uFE0F", L"\u26F0\uFE0F", L"\u1F30B",
+    L"\u2708\uFE0F", L"\U0001F697", L"\U0001F68C", L"\U0001F6B2", L"\U0001F684", L"\U0001F6A2",
+    L"\u26F5", L"\U0001F680", L"\U0001F3DD\uFE0F", L"\U0001F3D6\uFE0F", L"\u26F0\uFE0F", L"\U0001F30B",
 };
 
 const wchar_t* const kSymKaomoji[] = {

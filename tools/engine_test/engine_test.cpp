@@ -25,6 +25,8 @@
 #include <string>
 #include <vector>
 #include <algorithm>
+#include <io.h>
+#include <fcntl.h>
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -141,6 +143,10 @@ static bool AllAscii(const std::vector<std::wstring>& cands)
 
 int wmain()
 {
+    // L5：stdout 切 UTF-16 文本模式——C locale 下 wprintf 遇中文停止转换，
+    // 汇总行"=== 结果:"后整段截断（PASS/FAIL 计数不落盘）；宽文本模式中文
+    // 与计数完整（控制台直出 UTF-16，重定向文件为 UTF-16LE，编辑器可读）
+    _setmode(_fileno(stdout), _O_U16TEXT);
     lingxi::InitLogging();
 
     // 设置沙盒（2026-10-29 实证事故：测试直写真实 HKCU，一次半程退出把用户

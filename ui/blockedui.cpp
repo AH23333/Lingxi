@@ -191,7 +191,15 @@ void BlDeleteSelected()
         return;
     }
     auto words = LoadBlockedWords();
-    if (sel < (int)words.size()) words.erase(words.begin() + sel);
+    // L8：越界=列表与文件已不同步——旧实现静默跳过删除仍报"已删除"，
+    // 虚假成功；明示刷新重选
+    if (sel >= (int)words.size())
+    {
+        SetDlgItemTextW(g_hBlWnd, IDC_BL_STATUS, L"列表已变化，请刷新后重选");
+        RefreshBlList();
+        return;
+    }
+    words.erase(words.begin() + sel);
     if (!SaveBlockedWords(words))
     {
         MessageBoxW(g_hBlWnd, L"屏蔽词写入失败（文件被占用或无权限），修改未保存。",

@@ -153,7 +153,9 @@ void LoadLocked()
 void SaveLocked()
 {
     if (g_disabled || !g_loaded) return;
-    char b[256];
+    // L9：满值格式串（七个 %llu 全 20 位）约 283 字节，256 截尾丢末段
+    // goalDay（_TRUNCATE 不崩但数据残缺，次日回读归 0）；512 余量充足
+    char b[512];
     _snprintf_s(b, _TRUNCATE,
         "v=1\r\nday=%u\r\ndayPicks=%llu\r\ndayChars=%llu\r\n"
         "totalPicks=%llu\r\ntotalChars=%llu\r\nactiveDays=%u\r\n"

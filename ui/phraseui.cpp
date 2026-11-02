@@ -232,7 +232,15 @@ void PhDeleteSelected()
         return;
     }
     auto entries = LoadPhraseEntries();
-    if (sel < (int)entries.size()) entries.erase(entries.begin() + sel);
+    // L8：越界=列表与文件已不同步（别处改动/残留选中）——旧实现静默跳过
+    // 删除仍报"已删除"，虚假成功；明示刷新重选
+    if (sel >= (int)entries.size())
+    {
+        SetDlgItemTextW(g_hPhWnd, IDC_PH_STATUS, L"列表已变化，请刷新后重选");
+        RefreshPhList();
+        return;
+    }
+    entries.erase(entries.begin() + sel);
     if (!SavePhraseEntries(entries))
     {
         MessageBoxW(g_hPhWnd, L"自定义短语写入失败（文件被占用或无权限），修改未保存。",

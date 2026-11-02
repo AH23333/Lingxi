@@ -316,6 +316,9 @@ void UdExport()
     ofn.Flags = OFN_OVERWRITEPROMPT | OFN_PATHMUSTEXIST;
     if (!GetSaveFileNameW(&ofn)) return;
     std::string raw;
+    // L7：导出前先收敛在途学习——刚打的词还在内存未落盘（批量刷盘周期
+    // 内）时导出文件会缺最新词条
+    if (g_hooks.flushUserDict) g_hooks.flushUserDict();
     if (!ReadFileBytes(UserDictPathW(), raw) || !WriteFileBytes(path, raw))
     {
         // 与设置备份同口径（审计轮 7）：导出失败必须明示，
@@ -487,6 +490,13 @@ bool ReadFileBytes(const std::wstring& path, std::string& out)
                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
     if (h == INVALID_HANDLE_VALUE) return false;
     DWORD size = GetFileSize(h, NULL);
+    // L13：GetFileSize 失败恒返回 INVALID_FILE_SIZE——不查即 resize(4GB-1)
+    // 抛 length_error/bad_alloc 直接崩 UI 线程；另设 16MB 上限防异常大文件
+    if (size == INVALID_FILE_SIZE || size > 16u * 1024u * 1024u)
+    {
+        CloseHandle(h);
+        return false;
+    }
     out.resize(size);
     DWORD got = 0;
     BOOL ok = ReadFile(h, out.data(), size, &got, NULL);

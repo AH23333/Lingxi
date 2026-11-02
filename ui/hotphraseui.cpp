@@ -320,7 +320,15 @@ void HpDeleteSelected()
         return;
     }
     auto entries = LoadEntries();
-    if (sel < (int)entries.size()) entries.erase(entries.begin() + sel);
+    // L8：越界=列表与文件已不同步——旧实现静默跳过删除仍报"已删除"，
+    // 虚假成功；明示刷新重选
+    if (sel >= (int)entries.size())
+    {
+        SetDlgItemTextW(g_hHpWnd, IDC_HP_STATUS, L"列表已变化，请刷新后重选");
+        RefreshHpList();
+        return;
+    }
+    entries.erase(entries.begin() + sel);
     if (!SaveEntries(entries))
     {
         MessageBoxW(g_hHpWnd, L"快捷短语写入失败（文件被占用或无权限），修改未保存。",
