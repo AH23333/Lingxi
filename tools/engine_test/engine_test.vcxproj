@@ -63,6 +63,7 @@
     <ClCompile Include="..\..\ui\engine\ngram.cpp" />
     <ClCompile Include="..\..\ui\engine\pinyin.cpp" />
     <ClCompile Include="..\..\ui\engine\calcnum.cpp" />
+    <ClCompile Include="..\..\ui\engine\uradical.cpp" />
     <ClCompile Include="..\..\ui\symsearch.cpp" />
     <ClCompile Include="..\..\common\settings.cpp" />
   </ItemGroup>

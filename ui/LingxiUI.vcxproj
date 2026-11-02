@@ -83,6 +83,7 @@
     <ClCompile Include="engine\llm.cpp" />
     <ClCompile Include="engine\pinyin.cpp" />
     <ClCompile Include="engine\calcnum.cpp" />
+    <ClCompile Include="engine\uradical.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="window.h" />

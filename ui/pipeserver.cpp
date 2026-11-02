@@ -8,6 +8,7 @@
 #include "uitheme.h"
 #include "autobackup.h"
 #include "engine/calcnum.h"
+#include "engine/uradical.h"
 
 #include <atomic>
 #include <thread>
@@ -574,7 +575,10 @@ void PipeServer::PredictProc()
         // 门槛：≥2 候选（单候选重排是纯浪费）；ctx 非空（无上文时 LLM 无从判断
         // 连贯性，prompt 退化为频度复读，省一次调用）；陈旧闸 ≤400ms。
         // v 模式（数字大写/计算器）候选是确定性结果，重排纯浪费，跳过。
-        if (e.pinyin && !IsCalcQuery(e.text) && _reranker && st.llmRerank && !_reranker->Broken() &&
+        // U 模式拆字（GAP §1）同理；双拼下 'u' 是键位、IsRadicalQuery 对键位
+        // 串会误真，须全拼域判断（Predict/Learn 同门控）。
+        if (e.pinyin && !IsCalcQuery(e.text) && (st.shuangpin || !IsRadicalQuery(e.text)) &&
+            _reranker && st.llmRerank && !_reranker->Broken() &&
             pred.cands.size() >= 2 && !e.ctx.empty() &&
             GetTickCount64() - e.enqueuedAt <= 400)
         {

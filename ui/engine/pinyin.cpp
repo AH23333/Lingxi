@@ -12,6 +12,7 @@
 //
 #include "predictor.h"
 #include "calcnum.h"
+#include "uradical.h"
 
 #include <windows.h>
 
@@ -399,6 +400,19 @@ public:
             // 组掩码变更：重建预计算模糊索引（音节量级小，毫秒级，仅变更时发生）
             _fuzzyGroups = st.fuzzyGroups;
             BuildFuzzyIndex();
+        }
+        // U 模式拆字（GAP §1）：'u'+部件读音 → 不会读的字。确定性表查，拦截
+        // 在拼音词典处理前；表无前缀命中落回正常拼音（B3 零声母简写兜底保活）。
+        // 双拼下 'u' 是键位不接管；cover=整串消耗，Learn 侧拒收 IsRadicalQuery 键。
+        if (!st.shuangpin && IsRadicalQuery(context))
+        {
+            p.cands = RadicalCandidates(context);
+            if (!p.cands.empty())
+            {
+                p.cover.assign(p.cands.size(), (uint32_t)context.size());
+                p.replaceLen = 0;
+                return p;
+            }
         }
         std::string raw = ToUtf8(context);
         if (raw.empty()) return p;
@@ -1437,11 +1451,15 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     void Learn(const std::wstring& rawPinyin, const std::wstring& word) override
     {
         if (rawPinyin.empty() || word.empty()) return;
+        bool sp = LoadSettings().shuangpin;
         if (IsCalcQuery(rawPinyin)) return; // v 模式：确定性结果不进自学习（防词典污染）
+        // U 模式拆字：表查结果不进自学习（防词典污染）；双拼下 'u' 是键位、
+        // IsRadicalQuery 对键位串会误真，须全拼域判断（Predict 同门控）。
+        if (!sp && IsRadicalQuery(rawPinyin)) return;
         std::string key = ToUtf8(rawPinyin);
         // 双拼模式下 rawPinyin 是双拼串，而 Predict 以转换后的全拼串查键——
         // 不做同一转换，学习键与查询键永不相交，双拼下学习完全失效
-        if (LoadSettings().shuangpin) key = ShuangpinToQuanpin(key);
+        if (sp) key = ShuangpinToQuanpin(key);
         key = NormKey(key);
         if (key.empty()) return;
         {

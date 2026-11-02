@@ -12,6 +12,7 @@
 //
 #include "predictor.h"
 #include "calcnum.h"
+#include "uradical.h"
 #include "../../ui/symsearch.h"
 #include "../../common/proto.h"
 #include "../../common/punct.h"
@@ -806,7 +807,7 @@ int wmain()
                     { L"in",  L"音", L"因", 2 }, // in→yin
                     { L"iu",  L"有", L"",   2 }, // iu→you
                     { L"ui",  L"为", L"位", 2 }, // ui→wei
-                    { L"un",  L"问", L"文", 2 }, // un→wen
+                    { L"uai", L"外", L"歪", 3 }, // uai→wai（"un" 已被 U 模式拆字接管，见 P6u）
                     { L"uo",  L"我", L"",   2 }, // uo→wo
                     { L"ian", L"眼", L"言", 3 }, // ian→yan
                 };
@@ -831,6 +832,139 @@ int wmain()
                     Report(parallel && found && cv == cs.cover,
                            "zero-initial: i/u shorthand yields cands (B3)", detail);
                 }
+            }
+
+            // P6u. U 模式拆字（GAP §1，ui/engine/uradical.cpp）：'u'+部件读音
+            // → 不会读的字。表无前缀命中落回正常拼音（"ui"→为/"uo"→我保活）；
+            // "un" 被接管（n 前缀命中 女/牛/鸟，B3 问/文让位——P6d 行已换 uai）。
+            // 排序：精确命中 > 已拼出部件多者 > 表序；cover=整串；Learn 拒收。
+            {
+                // P6u-1. 触发矩阵：小写化、裸 u/非字母后缀/无命中均非
+                {
+                    bool t1 = lingxi::IsRadicalQuery(L"ujin");
+                    bool t2 = lingxi::IsRadicalQuery(L"Ujin");
+                    bool t3 = lingxi::IsRadicalQuery(L"un");
+                    bool t4 = lingxi::IsRadicalQuery(L"ujinjinjin");
+                    bool f0 = lingxi::IsRadicalQuery(L"");
+                    bool f1 = lingxi::IsRadicalQuery(L"jin");
+                    bool f2 = lingxi::IsRadicalQuery(L"u");
+                    bool f3 = lingxi::IsRadicalQuery(L"u金");
+                    bool f4 = lingxi::IsRadicalQuery(L"uzhzhzh");
+                    Report(t1 && t2 && t3 && t4 && !f0 && !f1 && !f2 && !f3 && !f4,
+                           "uradical: IsRadicalQuery trigger matrix");
+                }
+                // P6u-2. 部件字早出口：ujin → 金 top1，鑫（拼写中）在列
+                {
+                    lingxi::Prediction r = py->Predict(L"ujin");
+                    bool hasXin = false;
+                    for (const auto& c : r.cands) if (c == L"鑫") { hasXin = true; break; }
+                    wchar_t detail[160];
+                    _snwprintf_s(detail, _TRUNCATE, L"first='%ls' cands=%zu",
+                                 r.cands.empty() ? L"" : r.cands[0].c_str(), r.cands.size());
+                    Report(!r.cands.empty() && r.cands[0] == L"金" && hasXin,
+                           "uradical: ujin -> 金 top1, 鑫 pending", detail);
+                }
+                // P6u-3. 精确命中整串消耗：ujinjinjin → 鑫 top1，cover 全 10、replaceLen=0
+                {
+                    lingxi::Prediction r = py->Predict(L"ujinjinjin");
+                    bool coverFull = r.cover.size() == r.cands.size() && !r.cands.empty();
+                    for (uint32_t cv : r.cover) if (cv != 10) coverFull = false;
+                    Report(!r.cands.empty() && r.cands[0] == L"鑫" && r.replaceLen == 0 &&
+                           coverFull,
+                           "uradical: ujinjinjin -> 鑫 full cover");
+                }
+                // P6u-4/5/6. 叠字族精确命中：水三叠/牛三叠/火四叠
+                {
+                    struct UCase { const wchar_t* in; const wchar_t* want; };
+                    const UCase uc[] = {
+                        { L"ushuishuishui", L"淼" },
+                        { L"uniuniuniu",   L"犇" },
+                        { L"uhuohuohuohuo", L"燚" },
+                    };
+                    for (const auto& cs : uc)
+                    {
+                        lingxi::Prediction r = py->Predict(cs.in);
+                        wchar_t detail[160];
+                        _snwprintf_s(detail, _TRUNCATE, L"first='%ls' cands=%zu",
+                                     r.cands.empty() ? L"" : r.cands[0].c_str(), r.cands.size());
+                        Report(!r.cands.empty() && r.cands[0] == cs.want,
+                               "uradical: stack family exact hit", detail);
+                    }
+                }
+                // P6u-7. 名字用字：umingkong → 曌
+                {
+                    lingxi::Prediction r = py->Predict(L"umingkong");
+                    wchar_t detail[160];
+                    _snwprintf_s(detail, _TRUNCATE, L"first='%ls' cands=%zu",
+                                 r.cands.empty() ? L"" : r.cands[0].c_str(), r.cands.size());
+                    Report(!r.cands.empty() && r.cands[0] == L"曌",
+                           "uradical: umingkong -> 曌", detail);
+                }
+                // P6u-8. 同串双候选（表序兜底）：ubaoyu → 宇+宝 并列
+                {
+                    lingxi::Prediction r = py->Predict(L"ubaoyu");
+                    bool hasYu = false, hasBao = false;
+                    for (const auto& c : r.cands)
+                    {
+                        if (c == L"宇") hasYu = true;
+                        if (c == L"宝") hasBao = true;
+                    }
+                    Report(hasYu && hasBao,
+                           "uradical: ubaoyu -> 宇+宝 both exact");
+                }
+                // P6u-9. 排序细则：精确>前缀（umumu → 林 top1，森 在列）
+                {
+                    lingxi::Prediction r = py->Predict(L"umumu");
+                    bool hasSen = false;
+                    for (const auto& c : r.cands) if (c == L"森") { hasSen = true; break; }
+                    Report(!r.cands.empty() && r.cands[0] == L"林" && hasSen,
+                           "uradical: umumu -> 林 exact before 森 pending");
+                }
+                // P6u-10. "un" 接管面：牛在列、问/文缺席（B3 让位实证）
+                {
+                    lingxi::Prediction r = py->Predict(L"un");
+                    bool hasNiu = false, hasWen = false;
+                    for (const auto& c : r.cands)
+                    {
+                        if (c == L"牛") hasNiu = true;
+                        if (c == L"问" || c == L"文") hasWen = true;
+                    }
+                    wchar_t detail[160];
+                    _snwprintf_s(detail, _TRUNCATE, L"cands=%zu niu=%d wen=%d",
+                                 r.cands.size(), (int)hasNiu, (int)hasWen);
+                    Report(!r.cands.empty() && hasNiu && !hasWen,
+                           "uradical: un takeover (牛 in, 问/文 out)", detail);
+                }
+                // P6u-11. fall-through：ui→为、uo→我 保活（表无 a/o/i 打头部件读音）
+                {
+                    lingxi::Prediction r1 = py->Predict(L"ui");
+                    lingxi::Prediction r2 = py->Predict(L"uo");
+                    bool hasWei = false, hasWo = false;
+                    for (const auto& c : r1.cands) if (c == L"为") { hasWei = true; break; }
+                    for (const auto& c : r2.cands) if (c == L"我") { hasWo = true; break; }
+                    Report(hasWei && hasWo,
+                           "uradical: fall-through keeps B3 ui->wei uo->wo");
+                }
+                // P6u-12. 双拼门控：双拼下 'u' 是键位，U 模式不接管
+                {
+                    lingxi::Settings s0 = lingxi::LoadSettings();
+                    lingxi::Settings s1 = s0;
+                    s1.shuangpin = true;
+                    lingxi::SaveSettings(s1);
+                    lingxi::Prediction r = py->Predict(L"uniuniuniu");
+                    bool hasBen = false;
+                    for (const auto& c : r.cands) if (c == L"犇") { hasBen = true; break; }
+                    wchar_t detail[160];
+                    _snwprintf_s(detail, _TRUNCATE, L"first='%ls' cands=%zu",
+                                 r.cands.empty() ? L"" : r.cands[0].c_str(), r.cands.size());
+                    Report(!hasBen,
+                           "uradical: shuangpin gate (u is a key, no takeover)", detail);
+                    lingxi::SaveSettings(s0); // 恢复，避免污染后续测试
+                }
+                // P6u-13. Learn 拒收：U 键不进自学习（防词典污染）
+                py->Learn(L"ujinjinjin", L"XX污染");
+                Report(py->Predict(L"ujinjinjin").cands[0] == L"鑫",
+                       "uradical: Learn rejected, table not polluted");
             }
 
             // P6e. 拼音隔音符（B6）：组合中撇号（xi'an）强制切分边界，

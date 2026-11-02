@@ -51,6 +51,7 @@ const wchar_t* kHelpText =
     L"【中英文切换】\r\n"
     L"· 切换键在设置页选择（Shift / Ctrl / CapsLock / 关闭）；无拼音时触发\r\n"
     L"· 中文模式：字母组拼音，标点自动全角\r\n"
+    L"· U 模式拆字：u+部件读音打不会读的字（ujinjinjin→鑫、umingkong→曌；全拼限定，无命中自动落回拼音）\r\n"
     L"\r\n"
     L"【托盘图标】\r\n"
     L"· 左键：打开/关闭设置　　右键：菜单　　中键：使用帮助\r\n"

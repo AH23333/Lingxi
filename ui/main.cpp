@@ -144,6 +144,8 @@ static int ProbePinyin()
                                  L"i", L"u", L"in", L"iu", L"ui", L"un", L"uo", L"ian",
                                  // v 组合语义取证（#1 v 重设计）：v/vk/vlog 应 0 候选→CommitRaw
                                  L"v", L"vk", L"vlog",
+                                 // U 模式拆字取证（GAP §1）：早出口/精确命中/接管面
+                                 L"ujin", L"ujinjinjin", L"uniuniuniu", L"ushuishuishui", L"un",
                                  // 长纯声母简拼取证：gylg→供应链、gylgl→供应链管理、xyzxyz→零
                                  L"gyl", L"gylg", L"gylgl", L"xyzxyz",
                                  // B6 隔音符取证：xi'an（显式边界）vs xian（歧义串）

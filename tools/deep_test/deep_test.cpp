@@ -1836,6 +1836,46 @@ int wmain()
             Report(last, L"T20b 以词定字]取末字安", d20b);
         }
 
+        // ---- T21 U 模式拆字（GAP §1）：'u'+部件读音 → 不会读的字；全拼限定，
+        //      双拼 'u' 是键位不接管；表无命中自动落回正常拼音（引擎侧 P6u 已单测）----
+        {
+            auto hex21 = [](const std::wstring& s) {
+                std::wstring h;
+                wchar_t buf[8];
+                for (wchar_t ch : s)
+                {
+                    swprintf_s(buf, L"%04X,", (unsigned)ch);
+                    h += buf;
+                }
+                return h;
+            };
+            // 场景矩阵（probe pin，空格收首选）：
+            // ujinjinjin→鑫(0x946B) ujin→金(0x91D1，部件字早出口)
+            // ushuishuishui→淼(0x6DFC)
+            struct T21Case { const wchar_t* keys; wchar_t expect; };
+            const T21Case t21[] = {
+                { L"ujinjinjin",    0x946B }, // 鑫（金金金）
+                { L"ujin",          0x91D1 }, // 金（鑫 拼写中在列，金 精确在前）
+                { L"ushuishuishui", 0x6DFC }, // 淼（水水水）
+            };
+            for (const auto& cs : t21)
+            {
+                EnsurePinyinMode(pKm);
+                ClearFocusedText(pTm);
+                TypeLetters(pKm, cs.keys);
+                PumpMessages();
+                Sleep(400); // 等候选回包
+                TypeKey(pKm, VK_SPACE);
+                PumpMessages();
+                Sleep(250);
+                std::wstring t = ReadFocusedText(pTm);
+                wchar_t d[240];
+                _snwprintf_s(d, _TRUNCATE, L"'%ls' t[%u]=%s expect=%04X",
+                             cs.keys, (unsigned)t.size(), hex21(t).c_str(), (unsigned)cs.expect);
+                Report(t.size() == 1 && t[0] == cs.expect, L"T21 U 模式拆字：空格收部件字", d);
+            }
+        }
+
     } while (false);
 
     // ---- 会话状态还原（对应开场 CaptureOrigProfile；防收尾劫持用户 IME） ----
