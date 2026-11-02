@@ -3,6 +3,8 @@
 #include <cmath>
 #include <cwchar>
 #include <algorithm>
+#include <locale.h>
+#include <stdio.h>
 
 namespace lingxi {
 namespace {
@@ -27,6 +29,10 @@ bool IsCalcChar(wchar_t c)
 // 组内尾零不出、整组零与低位组前导零合并为一个零（如 100000005 → 壹亿零伍）。
 std::wstring IntToCn(const std::wstring& digits, bool upper)
 {
+    // M6：入口全量数字校验——下游 d[i]-L'0'、kDigU[c-L'0'] 直接当下标用，
+    // 混入非数字字符（异常调用方/兜底路径）即数组越界读，整体拒绝
+    for (wchar_t c : digits)
+        if (c < L'0' || c > L'9') return L"";
     const wchar_t* dig = upper ? kDigU : kDigL;
     const wchar_t* const* sec = upper ? kSecU : kSecL;
     size_t nz = digits.find_first_not_of(L'0');
@@ -131,7 +137,11 @@ std::wstring FormatDouble(double r)
     if (std::fabs(r - rounded) <= 1e-6 * (1.0 + std::fabs(r)))
         return std::to_wstring((long long)rounded);
     wchar_t buf[64];
-    _snwprintf_s(buf, _TRUNCATE, L"%.6f", r);
+    // M6：显式 C locale——进程内任何 setlocale(LC_NUMERIC,...)（宿主/第三
+    // 方库）都会让 %.6f 产本地化小数点（如"12,345678"），下游按 '.' 拆分
+    // 即坏。magic static 线程安全；进程级生存期不 _free_locale（无所谓）
+    static _locale_t locC = _create_locale(LC_NUMERIC, "C");
+    _snwprintf_s_l(buf, 64, _TRUNCATE, L"%.6f", locC, r);
     std::wstring s(buf);
     size_t dot = s.find(L'.');
     if (dot != std::wstring::npos)
@@ -148,6 +158,7 @@ struct CalcParser
 {
     const wchar_t* p = nullptr;
     bool ok = false;
+    int depth = 0; // L11：递归下降嵌套深度（括号与一元运算符共用，防栈溢出）
 
     double ParseExpr()
     {
@@ -181,8 +192,19 @@ struct CalcParser
     double ParseFactor()
     {
         if (!ok) return 0;
-        if (*p == L'-') { p++; return -ParseFactor(); } // 一元负号
-        if (*p == L'+') { p++; return ParseFactor(); }
+        // L11：一元运算符同为裸递归（ParseFactor 自递归），须与括号共用
+        // 同一 depth 闸——否则连续负号无界递归仍栈溢出（实测 20 万个 → 0xC00000FD）。
+        // 语义不变：深度闸内逐层取负，--1/-(-1)/1--2 等结果与原实现一致
+        if (*p == L'-' || *p == L'+')
+        {
+            if (depth >= 64) { ok = false; return 0; }
+            bool neg = (*p == L'-');
+            depth++;
+            p++;
+            double v = ParseFactor();
+            depth--;
+            return neg ? -v : v;
+        }
         return ParsePrimary();
     }
     double ParsePrimary()
@@ -190,8 +212,13 @@ struct CalcParser
         if (!ok) return 0;
         if (*p == L'(')
         {
+            // L11：递归下降每层括号多吃数帧栈，组合串长度无上游上限——
+            // 超深嵌套可栈溢出。64 层远超正常算式，超限整体判非法
+            if (depth >= 64) { ok = false; return 0; }
+            depth++;
             p++;
             double v = ParseExpr();
+            depth--;
             if (ok && *p == L')') { p++; return v; }
             ok = false;
             return 0;
