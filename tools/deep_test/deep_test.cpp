@@ -1587,6 +1587,53 @@ int wmain()
             Report(ok1st && ok2nd && noRawB && typeOkB,
                    L"T18b 联想期新组合精确接管", d18b);
         }
+        // ---- T18c 无组合选词键道（`1ac01e8` 数字选词刀活闸）----
+        // 旧版：候选窗可见时 Tab/Esc 被 Test 三面门认领，但 Down 空组合只有
+        // 空格/数字联想道 → Tab 在联想窗蒸发（用户报"英文窗数字无法选词"同族）。
+        // 新版统一：Tab=提交首选、Esc=撤窗作废（后续选词键不提交陈旧候选）。
+        {
+            auto hexC = [](const std::wstring& s) {
+                std::wstring h; wchar_t b[8];
+                for (wchar_t ch : s) { swprintf_s(b, L"%04X,", (unsigned)ch); h += b; }
+                return h;
+            };            EnsurePinyinMode(pKm);
+            ClearFocusedText(pTm);
+            const wchar_t* seqY = L"jintian";
+            bool typeOkY = true;
+            for (const wchar_t* q = seqY; *q; q++)
+            {
+                wchar_t s2[2] = { *q, 0 };
+                if (!TypeLetters(pKm, s2)) { typeOkY = false; break; }
+                Sleep(60);
+            }
+            PumpMessages();
+            Sleep(150);
+            TypeKey(pKm, VK_SPACE);   // 上屏首选，触发联想（第一批）
+            PumpMessages();
+            Sleep(2600);              // 联想候选到齐
+            std::wstring tA = ReadFocusedText(pTm);
+            TypeKey(pKm, VK_TAB);     // 增量点：Tab=提交联想首选（旧版此键蒸发）
+            PumpMessages();
+            Sleep(2600);              // 点选→IC 连发第二批联想；本轮断言只需第一批
+            std::wstring tB = ReadFocusedText(pTm);
+            bool tabSelected =
+                tB.size() > tA.size() && tB[tA.size()] != L' ' &&
+                tB[tA.size()] >= 0x4E00 && tB[tA.size()] <= 0x9FFF;
+            // Esc 判据只验"无文本副作用+窗态无害"：不追按其他键——Tab 点选后
+            // IC 合法连发新联想，再按键落入"新批到达即可合法选词"的时序竞态域。
+            TypeKey(pKm, VK_ESCAPE);
+            PumpMessages();
+            Sleep(150);
+            std::wstring tC = ReadFocusedText(pTm);
+            bool escClean = (tC == tB);
+            wchar_t d18c[280];
+            _snwprintf_s(d18c, _TRUNCATE, L"A[%u]=%s B[%u]=%s tab=%d escClean=%d ok=%d",
+                         (unsigned)tA.size(), hexC(tA).c_str(),
+                         (unsigned)tB.size(), hexC(tB).c_str(),
+                         (int)tabSelected, (int)escClean, (int)typeOkY);
+            Report(tabSelected && escClean && typeOkY,
+                   L"T18c Tab提交与Esc撤窗选词键道", d18c);
+        }
         // ---- T19 上屏光标契约（2026-10-30 晚用户真机报障：Win11 记事本上屏后
         // 光标停留原位，后续输入插到旧光标处）----
         // 本 harness 的 TestStore 自本版起严格化（模拟记事本/WinUI CoreText 适配层：
