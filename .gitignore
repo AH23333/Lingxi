@@ -1,6 +1,7 @@
 # 构建产物
 bin/
 tmp/
+obj/
 *.obj
 *.pdb
 *.ilk
