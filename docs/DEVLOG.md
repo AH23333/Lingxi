@@ -1247,3 +1247,12 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 ②"用户词典与自定义词条管理没有删除按钮"=布局裁切实锤：四管理窗布局按客户区坐标设计、建窗把**窗口总高**当客户区用，底部整排按钮（删除选中/清空/导出/关闭）被 21+px 标题栏+边框裁到可见区之外——代码文案路由全在，只有渲染在窗外。修复=AdjustWndRect(AdjustWindowRectEx) 助手补齐非客户区；本笔提三自制窗，userdictwnd 功能窗修复同刀但**与并行方该文件 WIP 大改重叠未混提**（编译已进运行版；其落账后外科补提，登记 HANDOFF 待办）。
 - 门禁：gate 全批 engine PASS + deep attempt1 34/34（含 T16 Shift/tempEnglish、T13/T15 数字空格回归未破）+ readings PASS；e2e attempt "typing pass-through" 间歇红——同二进制上轮批 PASS、本轮并行 agent 前台活动互扰（诊断行 foreground 漂移/focusDoc=NULL），非本改动面（字母键与我改的选词键集合无交集），留案观察（#86 同族批互踩）。
 - 生效提示：DLL 面数字选词需**用户重启在用应用**（TSF 驻留旧 DLL）；UI 管理窗修复本次重启 LingxiUI 即换（运行版=12:3x gate 重建含全部四窗裁切修，已拉起 16036）。
+
+### 数字选词刀后半：活闸闭环与规则互斥修正（`ff54ab9` + `addef29` + `0f83280`）
+
+- T18c 活闸首跑抓出 1ac01e8 的**规则互斥**：撤销门 keepAssoc 不含 Tab → 联想/续写窗按 Tab 先被撤销门清窗、选词道随后 visible=false 永远打不着 = Tab 道事实上死锁。keepAssoc |= VK_TAB 对齐（`ff54ab9`）。
+- 活闸自身也回炉：首版断言"Esc 撤销后数字必放行"（onePass）过紧——Tab 点选后 IC 合法连发新联想批，数字命中新批=正当产品行为，时序竞态不入断言；改为"Tab 提交增长 + Esc 无文本副作用"两条稳定判据（`addef29`，deep attempt1 **35/35** 三连实测）。
+- userdictwnd 功能窗裁切以 git update-index 外科直提（HEAD 基线+两枚 hunk，+15/-3），零裹并行 WIP（`0f83280`）；deep 活闸同法（+47/-0）。
+- **e2e 留案**：本段回归批 e2e 连红在 "LingxiUI NOT ready→direct mode settle" 基建步（deep 同窗 35/35 绿交叉证明非代码面），= 并行 agent 同机跑批 taskkill/重启窗口的 #86 同族互扰；机时静默窗复跑即可，勿误追。
+- **本会话全部提交**：`04d589b`(联想)→`868b455`(账)→`ee8e810`(gate)→`a6b3ae5`(账)→`1ac01e8`(选词道+三窗)→`0f83280`(功能窗外科)→`ff54ab9`(keepAssoc)→`addef29`(T18c 活闸)；下一任：并行方 e2e/deep WIP 落账后，e2e 侧叠加"英文 ghost 窗数字键"断言（数字面 deep 只盖到联想/续写批，英文 ghost 依赖 e2e 宿主自插文本基建）。
+
