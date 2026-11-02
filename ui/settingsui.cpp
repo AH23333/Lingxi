@@ -548,6 +548,11 @@ void ScrollSettingsTo(HWND hwnd, int pos)
         rcFoot.bottom += footBand;
         InvalidateRect(hwnd, &rcFoot, TRUE);
     }
+    // 开关残留双源：SW_SCROLLCHILDREN 挪子窗不触发子绘（COMPOSITED 同面合成
+    // 子像素不随移，旧位留影）；WS_CLIPCHILDREN 又使父 BLT 在子窗旧位留洞。
+    // 连子全失效一次重渲——父绘双缓冲+COMPOSITED 原子合成无频闪（WM_SIZE
+    // 缩放路径同策，已验证无频闪无残留）。
+    RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_ALLCHILDREN);
     UpdateSettingsScrollbar(LayoutSettings()); // 排布对齐（同坐标幂等）+滚动条同步
 }
 
@@ -670,6 +675,9 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
 
     case WM_SIZE:
         UpdateSettingsScrollbar(LayoutSettings()); // 缩放→重排→滚动范围同步
+        // 重排只 MoveWindow(FALSE)：子窗移/缩不重绘，父帧亦整帧陈旧（残留源）。
+        // 连子全失效一次刷净；父绘双缓冲+COMPOSITED 原子合成，无频闪。
+        RedrawWindow(hwnd, NULL, NULL, RDW_INVALIDATE | RDW_ALLCHILDREN);
         return 0;
     case WM_PAINT:
         PaintSettings(hwnd); // 导航/卡片/标题/分隔线/底部提示统一绘制
