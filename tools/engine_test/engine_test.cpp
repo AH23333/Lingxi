@@ -18,6 +18,7 @@
 #include "../../common/punct.h"
 #include "../../common/log.h"
 #include "../../common/settings.h"
+#include "../../common/pipe_util.h"
 
 #include <windows.h>
 #include <psapi.h>
@@ -141,8 +142,33 @@ static bool AllAscii(const std::vector<std::wstring>& cands)
     return true;
 }
 
-int wmain()
+int wmain(int argc, wchar_t** argv)
 {
+    // 强杀台架子进程模式（C1-c）：只做 Learn 连发（每次 KickPersist 异步原子
+    // 落盘），由父进程随机时刻 TerminateProcess，检验 userdict.txt 在任意腰斩
+    // 点都是完整旧态或完整新态（tmp+rename 不变量的真进程证据）。
+    // 必须在沙盒清词典之前分叉：子进程继承父进程已设好的 APPDATA 沙盒。
+    if (argc > 1 && _wcsicmp(argv[1], L"--ud-churn") == 0)
+    {
+        lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
+        if (!py) return 2;
+        static const wchar_t b26[] = L"abcdefghijklmnopqrstuvwxyz";
+        for (int i = 0; i < 200000; i++)
+        {
+            wchar_t key[16];
+            key[0] = L'c'; key[1] = L'h';
+            int v = i % 456976; // 26^4
+            for (int p = 3; p >= 0; p--) { key[2 + p] = b26[v % 26]; v /= 26; }
+            key[6] = 0;
+            wchar_t word[16];
+            _snwprintf_s(word, _TRUNCATE, L"测%06d", i % 1000000);
+            py->Learn(key, word);
+            Sleep(15);
+        }
+        delete py;
+        return 0;
+    }
+
     // L5：stdout 切 UTF-16 文本模式——C locale 下 wprintf 遇中文停止转换，
     // 汇总行"=== 结果:"后整段截断（PASS/FAIL 计数不落盘）；宽文本模式中文
     // 与计数完整（控制台直出 UTF-16，重定向文件为 UTF-16LE，编辑器可读）
@@ -2215,6 +2241,261 @@ int wmain()
                 }
             }
         }
+    }
+
+    // ===== C2. 管道帧层：往返/半帧+对端消失/写向已消失对端/超时取消(H1路径) =====
+    // 断言面：坏端点必须"有界返回 false"，不许挂死；H1 取消路径等取消落定后
+    // 栈上 OVERLAPPED 才析构——本进程后续用例继续跑即栈未坏的行为证据。
+    {
+        wchar_t pipeNm[128];
+        _snwprintf_s(pipeNm, _TRUNCATE, L"\\\\.\\pipe\\LingxiET-%u", GetCurrentProcessId());
+        auto mkPair = [&](DWORD outBuf, bool srvOverlapped, HANDLE* pSrv, HANDLE* pCli) -> bool {
+            DWORD open = PIPE_ACCESS_DUPLEX | (srvOverlapped ? FILE_FLAG_OVERLAPPED : 0);
+            *pSrv = CreateNamedPipeW(pipeNm, open,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT, 1, outBuf, 4096, 0, NULL);
+            if (*pSrv == INVALID_HANDLE_VALUE) return false;
+            HANDLE c = CreateFileW(pipeNm, GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
+            if (c == INVALID_HANDLE_VALUE) { CloseHandle(*pSrv); *pSrv = INVALID_HANDLE_VALUE; return false; }
+            *pCli = c;
+            return true;
+        };
+        // 1) 完整帧往返（sanity：两端都健康时读写正确）
+        bool ok1 = false;
+        { HANDLE s, c;
+          if (mkPair(4096, true, &s, &c)) {
+              std::vector<uint8_t> body(300, 0xAB), accum, rb; uint8_t t = 0;
+              bool w = lingxi::WriteFrame(s, 0x7F, body.data(), (uint32_t)body.size(), 1000);
+              bool r = lingxi::ReadFrame(c, NULL, accum, t, rb);
+              ok1 = w && r && t == 0x7F && rb == body;
+              CloseHandle(s); CloseHandle(c);
+          } }
+        Report(ok1, "C2 frame roundtrip");
+        // 2) 半帧后服务端关闭 → 客户端 ReadFrame 有界 false（对端突然消失）
+        bool ok2 = false;
+        { HANDLE s, c;
+          if (mkPair(4096, false, &s, &c)) {
+              DWORD g = 0; const char hdr[5] = { 0x10, 0, 0, 0, 0x7F }; // 声明16字节只发5
+              WriteFile(s, hdr, 5, &g, NULL);
+              CloseHandle(s);                       // 半帧在途时服务端消失
+              ULONGLONG t0 = GetTickCount64();
+              std::vector<uint8_t> accum, body; uint8_t t = 0;
+              bool r = lingxi::ReadFrame(c, NULL, accum, t, body);
+              ok2 = !r && (GetTickCount64() - t0) < 2500;
+              CloseHandle(c);
+          } }
+        Report(ok2, "C2 half-frame then peer gone: bounded false");
+        // 3) 对端消失后写帧 → 有界 false（不挂死、不崩）
+        bool ok3 = false;
+        { HANDLE s, c;
+          if (mkPair(4096, true, &s, &c)) {
+              CloseHandle(c);                       // 客户端先没
+              ULONGLONG t0 = GetTickCount64();
+              std::vector<uint8_t> body(64, 1);
+              bool w = lingxi::WriteFrame(s, 0x7F, body.data(), (uint32_t)body.size(), 200);
+              ok3 = !w && (GetTickCount64() - t0) < 2500;
+              CloseHandle(s);
+          } }
+        Report(ok3, "C2 write to vanished peer: bounded false");
+        // 4) H1 取消路径：小缓冲(64B)无人读 → 4KB 帧写超时 → CancelIoEx 后
+          //    必须等取消落定才返回（旧实现在此留栈破坏窗口）。超时分支不带
+          //    hStop，走的正是 :106-108 的 CancelIoEx+GetOverlappedResult(TRUE)。
+        bool ok4 = false;
+        { HANDLE s, c;
+          if (mkPair(64, true, &s, &c)) {
+              ULONGLONG t0 = GetTickCount64();
+              std::vector<uint8_t> body(4096, 0x5A);
+              bool w = lingxi::WriteFrame(s, 0x7F, body.data(), (uint32_t)body.size(), 200);
+              ok4 = !w && (GetTickCount64() - t0) < 2500;
+              CloseHandle(s); CloseHandle(c);
+          } }
+        Report(ok4, "C2 write timeout cancel (H1): bounded false, stack intact");
+    }
+
+    // ===== C3. M2 非法 ns 隔离：读写永不落真实键，且与测试派生判定同口径 =====
+    {
+        wchar_t prevNs[64] = L"";
+        GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs, 64);
+        auto regDword = [](const wchar_t* key, const wchar_t* name, DWORD& out) -> bool {
+            DWORD v = 0, cb = sizeof(v), type = 0;
+            if (RegGetValueW(HKEY_CURRENT_USER, key, name, RRF_RT_REG_DWORD, &type, &v, &cb) == ERROR_SUCCESS &&
+                type == REG_DWORD) { out = v; return true; }
+            return false;
+        };
+        DWORD seqBefore = 0; bool hadBefore = regDword(L"Software\\LingxiIme", L"SettingsSeq", seqBefore);
+        SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", L"bad ns!");   // 含空格与 ! = 非法 ns
+        lingxi::SnapshotTestSpawned();
+        bool spawned = lingxi::WasTestSpawned();                      // 非法 ns 仍算测试派生（同口径）
+        lingxi::Settings s; s.candidateCount = 9;
+        lingxi::SaveSettings(s);                                      // 必须整体落隔离键
+        DWORD q = 0; bool quarantined = regDword(L"Software\\LingxiIme_NS_INVALID", L"CandidateCount", q) && q == 9;
+        DWORD seqAfter = 0; bool hadAfter = regDword(L"Software\\LingxiIme", L"SettingsSeq", seqAfter);
+        bool realUntouched = (hadBefore == hadAfter) && (!hadBefore || seqAfter == seqBefore);
+        // 对照：合法 ns 走正常沙盒键
+        SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", L"m2ok");
+        lingxi::SaveSettings(s);
+        DWORD v2 = 0; bool sandboxed = regDword(L"Software\\LingxiIme_m2ok", L"CandidateCount", v2) && v2 == 9;
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_m2ok");
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_NS_INVALID");
+        SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs[0] ? prevNs : L"");
+        lingxi::SnapshotTestSpawned();
+        Report(spawned, "C3 invalid ns still test-spawned");
+        Report(quarantined, "C3 invalid ns writes quarantine key");
+        Report(realUntouched, "C3 invalid ns never touches real key");
+        Report(sandboxed, "C3 valid ns writes sandbox key");
+    }
+
+    // 共用：词典字节读 + 逐行严格校验（word\tkey\tcount[\t1]，count 必须纯数字）
+    auto readBytes = [](const std::wstring& p, std::string& out) -> bool {
+        HANDLE h = CreateFileW(p.c_str(), GENERIC_READ,
+            FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (h == INVALID_HANDLE_VALUE) return false;
+        DWORD sz = GetFileSize(h, NULL); out.clear();
+        if (sz == INVALID_FILE_SIZE) { CloseHandle(h); return false; }
+        if (sz == 0) { CloseHandle(h); return true; }
+        out.resize(sz); DWORD got = 0;
+        BOOL r = ReadFile(h, &out[0], sz, &got, NULL);
+        CloseHandle(h);
+        return r != FALSE && got == sz;
+    };
+    auto udValidLines = [](const std::string& t) -> int {  // -1=存在非法行（腰斩/污染）
+        int n = 0; size_t pos = 0;
+        while (pos < t.size()) {
+            size_t nl = t.find('\n', pos);
+            size_t end = (nl == std::string::npos) ? t.size() : nl;
+            std::string line = t.substr(pos, end - pos);
+            pos = (nl == std::string::npos) ? t.size() : nl + 1;
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty()) continue;
+            size_t t1 = line.find('\t'); if (t1 == std::string::npos || t1 == 0) return -1;
+            size_t t2 = line.find('\t', t1 + 1); if (t2 == std::string::npos || t2 == t1 + 1) return -1;
+            size_t t3 = line.find('\t', t2 + 1);
+            if (t3 != std::string::npos && line.find('\t', t3 + 1) != std::string::npos) return -1; // 第5列
+            std::string cnt = (t3 == std::string::npos) ? line.substr(t2 + 1) : line.substr(t2 + 1, t3 - t2 - 1);
+            if (cnt.empty()) return -1;
+            for (char ch : cnt) if (ch < '0' || ch > '9') return -1;
+            n++;
+        }
+        return n;
+    };
+    auto u8 = [](const wchar_t* w) -> std::string {
+        int n = WideCharToMultiByte(CP_UTF8, 0, w, -1, NULL, 0, NULL, NULL);
+        std::string s(n > 1 ? n - 1 : 0, 0);
+        if (n > 1) WideCharToMultiByte(CP_UTF8, 0, w, -1, &s[0], n, NULL, NULL);
+        return s;
+    };
+    std::wstring udPath = ExeDir() + L"\\userdata\\LingxiIme\\userdict.txt";
+    std::wstring tmpPath = udPath + L".tmp";
+
+    // ===== C4. 词典原子写断电态：陈旧 .tmp 不污染主文件；写失败保旧态+脏位重试 =====
+    {
+        lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
+        if (!py) Report(false, "C4 CreatePinyinPredictor");
+        else {
+            py->Learn(L"ccak", L"原子一"); py->FlushUserDict();
+            std::string f1; bool r1 = readBytes(udPath, f1);
+            bool baseOk = r1 && udValidLines(f1) > 0 && f1.find(u8(L"原子一")) != std::string::npos;
+            // 制造"断电中间态"：主文件完好 + .tmp 留垃圾半截
+            { HANDLE h = CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, NULL,
+                  CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+              if (h != INVALID_HANDLE_VALUE) { DWORD g; const char junk[] = "PART\x01\x02TRUNC";
+                  WriteFile(h, junk, (DWORD)sizeof(junk) - 1, &g, NULL); CloseHandle(h); } }
+            delete py;
+            py = lingxi::CreatePinyinPredictor();          // 重载：必须无视陈旧 .tmp
+            std::string f2; readBytes(udPath, f2);
+            bool staleIgnored = (f2 == f1);
+            py->Learn(L"ccbk", L"原子二"); py->FlushUserDict();
+            std::string f3; readBytes(udPath, f3);
+            bool tmpConsumed = GetFileAttributesW(tmpPath.c_str()) == INVALID_FILE_ATTRIBUTES;
+            bool grewOk = udValidLines(f3) > 0 && f3.find(u8(L"原子二")) != std::string::npos;
+            // 写失败注入：排他占住 .tmp → persist 与同步 flush 都失败，主文件停旧完整态
+            HANDLE hHold = CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, NULL,
+                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            bool held = hHold != INVALID_HANDLE_VALUE;
+            py->Learn(L"cccb", L"原子三"); py->FlushUserDict();
+            std::string f4; readBytes(udPath, f4);
+            bool intact = held && (f4 == f3) && f4.find(u8(L"原子三")) == std::string::npos;
+            CloseHandle(hHold);
+            py->FlushUserDict();                            // 脏位重试：解除阻塞后补写成功
+            std::string f5; readBytes(udPath, f5);
+            bool retried = udValidLines(f5) > 0 && f5.find(u8(L"原子三")) != std::string::npos;
+            delete py;
+            Report(baseOk, "C4 baseline flush valid");
+            Report(staleIgnored, "C4 stale .tmp ignored on reload");
+            Report(tmpConsumed && grewOk, "C4 rename consumes .tmp");
+            Report(intact, "C4 write-fail keeps old complete state");
+            Report(retried, "C4 dirty retry succeeds after unblock");
+            py = lingxi::CreatePinyinPredictor();
+            if (py) { py->ClearUserDict(); delete py; }     // 复位，给 C1 干净起点
+        }
+    }
+
+    // ===== C1. 停机三时序：正常收敛 / 落盘失败快回 / ownerDead 后僵尸不覆盖 =====
+    // 注：真·2s 超时分支需磁盘挂死级 IO 停顿，台架不可构造；这里以"写失败
+    // 快速返回"验证有界等待契约的两侧（耗时有上界、失败不污染），超时分支
+    // 归 §八-7 观察项。
+    {
+        bool boundedA = false, validA = false;
+        {
+            lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
+            if (py) {
+                py->Learn(L"cdaa", L"停机一");
+                ULONGLONG t0 = GetTickCount64();
+                delete py;                                  // 在途 persist 必须收敛
+                boundedA = (GetTickCount64() - t0) < 3000;
+                std::string f; validA = readBytes(udPath, f) && udValidLines(f) > 0 &&
+                                      f.find(u8(L"停机一")) != std::string::npos;
+            }
+        }
+        Report(boundedA, "C1a normal shutdown bounded <3s");
+        Report(validA, "C1a dict valid after normal shutdown");
+        std::string fBefore; readBytes(udPath, fBefore);
+        HANDLE hHold = CreateFileW(tmpPath.c_str(), GENERIC_WRITE, 0, NULL,
+            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        bool boundedB = false, noZombie = false;
+        if (hHold != INVALID_HANDLE_VALUE) {
+            lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
+            if (py) {
+                py->Learn(L"cdbb", L"停机二");              // persist 失败（tmp 被占）
+                ULONGLONG t0 = GetTickCount64();
+                delete py;                                  // 停机尾部 flush 也失败 → 快回
+                boundedB = (GetTickCount64() - t0) < 3000;
+                CloseHandle(hHold);
+                Sleep(500);                                 // 给僵尸 persist 线程窗口
+                std::string fAfter; readBytes(udPath, fAfter);
+                noZombie = (fAfter == fBefore) &&
+                           fAfter.find(u8(L"停机二")) == std::string::npos; // ownerDead 生效
+            } else CloseHandle(hHold);
+        }
+        Report(boundedB, "C1b shutdown with failing write bounded");
+        Report(noZombie, "C1c ownerDead blocks zombie overwrite");
+    }
+
+    // ===== C1d. 强杀腰斩：子进程连发 Learn+异步落盘，父进程随机杀 ×5，词典恒完整 =====
+    {
+        wchar_t self[MAX_PATH] = L""; GetModuleFileNameW(NULL, self, MAX_PATH);
+        std::wstring cmd = L"\""; cmd += self; cmd += L"\" --ud-churn";
+        bool allValid = true; int killed = 0;
+        for (int trial = 0; trial < 5; trial++)
+        {
+            STARTUPINFOW si = { sizeof(si) }; PROCESS_INFORMATION pi = {};
+            if (!CreateProcessW(NULL, &cmd[0], NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi))
+            { allValid = false; break; }
+            for (int w = 0; w < 150; w++) {            // 等首帧落盘（子进程冷载有秒级）
+                if (GetFileAttributesW(udPath.c_str()) != INVALID_FILE_ATTRIBUTES) break;
+                Sleep(100);
+            }
+            Sleep(150 + (DWORD)(GetTickCount64() % 500));   // 随机腰斩点
+            TerminateProcess(pi.hProcess, 1);
+            WaitForSingleObject(pi.hProcess, 3000);
+            CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+            std::string f; readBytes(udPath, f);
+            if (udValidLines(f) < 0) { allValid = false; break; }
+            killed++;
+            DeleteFileW(udPath.c_str());              // 下轮从零开始，载词典耗时可控
+        }
+        Report(allValid && killed == 5, "C1d dict intact across 5 random kills");
     }
 
     wprintf(L"=== 结果: PASS=%d FAIL=%d ===\n", g_pass, g_fail);
