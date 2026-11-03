@@ -464,6 +464,30 @@ int wmain(int argc, wchar_t** argv)
                 lingxi::SaveSettings(s0);
             }
 
+            // P4c3. 双拼方案切换端到端（阶段二③接线钉）：shuangpinScheme 必须
+            // 流经 Predict 转换链——方案1(自然码)"ly"与方案2(微软)"l;"均转"ling"，
+            // 候选列表须与关双拼基准"ling"查询完全一致。③落地的 11 条纯函数用例
+            // 只钉表，钉不住 settings→引擎消费链，本条补此缺口。
+            {
+                lingxi::Settings s0 = lingxi::LoadSettings(); // 沙盒缺省 shuangpin=false
+                lingxi::Prediction ref = py->Predict(L"ling");
+                lingxi::Settings s1 = s0;
+                s1.shuangpin = true;
+                s1.shuangpinScheme = 1;
+                lingxi::SaveSettings(s1);
+                lingxi::Prediction r1 = py->Predict(L"ly");
+                s1.shuangpinScheme = 2;
+                lingxi::SaveSettings(s1);
+                lingxi::Prediction r2 = py->Predict(L"l;");
+                lingxi::SaveSettings(s0);
+                wchar_t detail[192];
+                _snwprintf_s(detail, _TRUNCATE, L"ref=%zu r1=%zu r2=%zu first='%ls'",
+                             ref.cands.size(), r1.cands.size(), r2.cands.size(),
+                             ref.cands.empty() ? L"" : ref.cands[0].c_str());
+                bool ok = !ref.cands.empty() && r1.cands == ref.cands && r2.cands == ref.cands;
+                Report(ok, "pinyin: shuangpin scheme1/2 end-to-end == quanpin ling", detail);
+            }
+
             // P4d. 繁体输出：开启 Traditional 后，"diannao" 首候选为"電腦"
             {
                 lingxi::Settings s0 = lingxi::LoadSettings();
