@@ -636,8 +636,12 @@ static bool EnsurePinyinMode(ITfKeystrokeMgr* pKm)
     return WaitForPinyinMode(pKm, 10);
 }
 
-// 等待 LingxiUI 管道就绪
-static bool WaitUiReady(int tries = 100)
+// 等待 LingxiUI 管道就绪。预算=60s：§八-8 根因确证（2026-11-03，
+// tools\repro_coldstart_race.ps1 Mode2 12/12 采样）冷启动 ready 实测
+// 12.2~19.2s，旧 20s 预算贴着上沿，回归期构建/冷缓存/AV 扫描叠加即越界
+// ——attempt1 "LingxiUI ready" 间歇 FAIL 而 attempt2/3 自然过的根因。
+// 断言语义不变：必须最终就绪，只把计时预算放到实测最差×3。
+static bool WaitUiReady(int tries = 300)
 {
     for (int i = 0; i < tries; i++)
     {
@@ -872,7 +876,7 @@ int wmain()
 
         // ---- 激活灵犀 zh-CN（一次性，无 churn）----
         Report(ActivateLingxiZhCn(10), L"ActivateLanguageProfile (zh-CN)");
-        Report(WaitUiReady(100), L"LingxiUI ready");
+        Report(WaitUiReady(300), L"LingxiUI ready");
         Sleep(1000); // 模式检测（封送消息在泵内执行）+ TIP 重激活余量
         PumpMessages();
 

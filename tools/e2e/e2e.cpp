@@ -810,9 +810,11 @@ static bool RunScenario()
         // 等 LingxiUI 管道服务就绪（冷启动 LLM 加载可达数秒；管道未就绪时 CTX
         // 会被丢弃，之后没有新按键就没有新 CTX）。就绪信号由 LingxiUI 在
         // server.Start 后置位（Local\\LingxiUIReady）。
+        // 预算 60s：§八-8 实测冷启动 ready 12.2~19.2s（repro_coldstart_race.ps1
+        // Mode2），旧 20s 贴边导致间歇超时；断言仍是"必须就绪"。
         {
             bool ready = false;
-            for (int i = 0; i < 100; i++)
+            for (int i = 0; i < 300; i++)
             {
                 PumpMessages();
                 HANDLE h = OpenEventW(SYNCHRONIZE | EVENT_MODIFY_STATE, FALSE, L"Local\\LingxiUIReady");

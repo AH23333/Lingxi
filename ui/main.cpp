@@ -501,6 +501,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     if (!hSingleton || GetLastError() == ERROR_ALREADY_EXISTS)
     {
         if (hSingleton) CloseHandle(hSingleton);
+        // §八-8 取证注：此分支静默退出曾是冷启动竞态的头号嫌疑（外部持锁
+        // 台架 repro_coldstart_race.ps1 Mode1 确证路径可达且无任何日志）。
+        // 补日志后，未来任何"UI 缺席"都能用 PID 时间线直接排除/坐实此分支。
+        LX_LOG(L"ui", L"单例互斥已被占：本实例转发命令后退出 pid=%u", GetCurrentProcessId());
         // 已有实例：把命令转发给它，再退出
         if (wantSymbols) SignalNamedEvent(kEvtShowSymbols);
         if (wantSettings) SignalNamedEvent(kEvtShowSettings);
