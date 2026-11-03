@@ -134,6 +134,26 @@ void CandWindow::LayoutAndPosition()
     // B2 拼音回显：组合串非空时首行多占一行高
     int compH = composing.empty() ? 0 : itemH;
 
+    Settings st = LoadSettings();
+
+    // C 横竖排切换：先定锚点与工作区——横排总宽的回退判定（裁决③）需要
+    // rcWork，必须在算尺寸之前拿到 monitor。
+    const bool caretOk = (_caret.right != 0 || _caret.bottom != 0);
+    POINT pt{};
+    const bool havePt = GetCursorPos(&pt);
+    int ax, ay;
+    if (st.candidatePinned) { ax = st.candidatePinX; ay = st.candidatePinY; }
+    else if (caretOk) { ax = _caret.left; ay = _caret.bottom; }
+    else if (havePt) { ax = pt.x; ay = pt.y; }
+    else { ax = _lastX; ay = _lastY; }
+    HMONITOR mon = MonitorFromPoint(POINT{ ax, ay }, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO mi{ sizeof(mi) };
+    if (!GetMonitorInfoW(mon, &mi))
+    {
+        mi.rcWork.left = 0; mi.rcWork.top = 0;
+        mi.rcWork.right = 1920; mi.rcWork.bottom = 1040;
+    }
+
     _height = pad * 2 + compH + itemH * (int)page.size() + ToolbarHeight(); // 底部工具条
 
     int textMax = 0;
@@ -154,20 +174,64 @@ void CandWindow::LayoutAndPosition()
     }
     _width = max(200, textMax + pad * 2 + MulDiv(28, 96, 96) + 24); // ≥200：工具条两组按钮排开
 
+    // 横排分支（C）：列宽=「序号 词」+行内注音实测 + 列内边距；单词 8 字
+    // cap 省略号（超界词在窄条里逐列截断，避免单列吃掉整屏）。总宽超出所在
+    // 显示器工作区 → 本次渲染回退竖排（裁决③），_colX 作废。
+    // 列边界 _colX 同时供 OnPaint 绘制与 interact 列命中，单一事实源。
+    _horizontal = false;
+    _colX.clear();
+    if (st.candOrientation == 1 && !page.empty())
+    {
+        const int colPad = Scale96(12); // 列左右内边距合计
+        HDC hdc2 = GetDC(_hwnd);
+        if (hdc2)
+        {
+            HGDIOBJ old2 = SelectObject(hdc2, _font);
+            SetBkMode(hdc2, TRANSPARENT);
+            int x = pad;
+            bool overflow = false;
+            _colX.reserve(page.size() + 1);
+            _colX.push_back(x);
+            for (size_t i = 0; i < page.size(); i++)
+            {
+                std::wstring word = page[i];
+                if (word.size() > 8) word = word.substr(0, 8) + L"\u2026"; // 8 字 cap
+                wchar_t buf[512];
+                _snwprintf_s(buf, _TRUNCATE, L"%zu  %s", i + 1, word.c_str());
+                SIZE s2{};
+                GetTextExtentPoint32W(hdc2, buf, (int)wcslen(buf), &s2);
+                if (i < pageAnno.size() && !pageAnno[i].empty())
+                {
+                    std::wstring ab = L"（" + pageAnno[i] + L"）";
+                    SIZE sa{};
+                    GetTextExtentPoint32W(hdc2, ab.c_str(), (int)ab.size(), &sa);
+                    s2.cx += sa.cx;
+                }
+                x += s2.cx + colPad;
+                _colX.push_back(x);
+                if (x + pad > mi.rcWork.right - mi.rcWork.left - 8) { overflow = true; break; }
+            }
+            SelectObject(hdc2, old2);
+            ReleaseDC(_hwnd, hdc2);
+            if (!overflow)
+            {
+                _horizontal = true;
+                _width = max(200, x + pad);
+                _height = pad * 2 + compH + itemH + ToolbarHeight(); // 单行：无行数项
+            }
+            else
+            {
+                _colX.clear();
+            }
+        }
+    }
+
     // 位置固定模式（"固"按钮/拖拽设置）：不再跟随光标，钳制到所在显示器工作区
     // （分辨率变化/拔显示器不丢窗）。固定坐标注册表持久化，重启宿主仍生效。
-    Settings stPin = LoadSettings();
-    if (stPin.candidatePinned)
+    if (st.candidatePinned)
     {
-        int x = stPin.candidatePinX;
-        int y = stPin.candidatePinY;
-        HMONITOR mon = MonitorFromPoint(POINT{ x, y }, MONITOR_DEFAULTTONEAREST);
-        MONITORINFO mi{ sizeof(mi) };
-        if (GetMonitorInfoW(mon, &mi))
-        {
-            x = max(mi.rcWork.left + 4, min(x, mi.rcWork.right - _width - 4));
-            y = max(mi.rcWork.top + 4, min(y, mi.rcWork.bottom - _height - 4));
-        }
+        int x = max(mi.rcWork.left + 4, min(ax, mi.rcWork.right - _width - 4));
+        int y = max(mi.rcWork.top + 4, min(ay, mi.rcWork.bottom - _height - 4));
         _lastX = x;
         _lastY = y;
         SetWindowPos(_hwnd, HWND_TOPMOST, x, y, _width, _height,
@@ -183,21 +247,6 @@ void CandWindow::LayoutAndPosition()
     //   上次记忆位。旧实现退到构造期固定 (120,120)/陈旧历史位 = 空 caret 场景
     //   把面板拍在屏幕角落遮挡内容。y 轴补 work-area 钳制（原实现只钳 x，
     //   下翻场景可整体出屏）。
-    const bool caretOk = (_caret.right != 0 || _caret.bottom != 0);
-    POINT pt{};
-    const bool havePt = GetCursorPos(&pt);
-    int ax, ay;
-    if (caretOk) { ax = _caret.left; ay = _caret.bottom; }
-    else if (havePt) { ax = pt.x; ay = pt.y; }
-    else { ax = _lastX; ay = _lastY; }
-
-    HMONITOR mon = MonitorFromPoint(POINT{ ax, ay }, MONITOR_DEFAULTTONEAREST);
-    MONITORINFO mi{ sizeof(mi) };
-    if (!GetMonitorInfoW(mon, &mi))
-    {
-        mi.rcWork.left = 0; mi.rcWork.top = 0;
-        mi.rcWork.right = 1920; mi.rcWork.bottom = 1040;
-    }
     int x = caretOk ? _caret.left : ax + MulDiv(12, 96, 96);
     int y = caretOk ? ay + 4 : ay + MulDiv(24, 96, 96);
     if (caretOk && y + _height > mi.rcWork.bottom)

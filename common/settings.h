@@ -55,6 +55,10 @@ struct Settings
     uint32_t uiFont = 0;           // 界面字体族（ui/uistyle.h kUiFontFaces）：
                                    // 0 微软雅黑（默认）1 宋体 2 等线 3 Segoe UI
     uint32_t candidateOpacity = 100; // 候选窗不透明度%（70/80/90/100），GAP §3 透明度定制
+    uint32_t candOrientation = 0;    // 候选窗方向（C 横竖排切换）：0 竖排列表（默认，
+                                     // 与历史逐像素一致） 1 横排单行条；横排放不下
+                                     // （超工作区宽）本次渲染回退竖排（裁决 2026-11-03③）。
+                                     // 非法值 clamp 回 0（照 CandidateCount clamp 先例）
                                    // 皮肤 0..6：1 青碧 2 橙 3 红 4 金 5 茶棕 6 玫粉
                                    // ——全 UI 统一换肤
     uint32_t candidatePinned = 0;  // 候选窗位置固定：0 跟随光标（默认） 1 固定在

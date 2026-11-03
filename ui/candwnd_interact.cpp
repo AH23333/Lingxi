@@ -92,6 +92,16 @@ static void OpenWebSearch(const std::wstring& word)
     ShellExecuteW(NULL, L"open", url.c_str(), NULL, NULL, SW_SHOWNORMAL);
 }
 
+// C 横排列命中：客户区 x → 页内列号（列边界 _colX=LayoutAndPosition 写入，
+// 同 UI 线程无锁读）。未命中/竖排返回 -1。
+int CandWindow::HitCol(int x) const
+{
+    if (_colX.size() < 2) return -1;
+    for (size_t i = 0; i + 1 < _colX.size(); i++)
+        if (x >= _colX[i] && x < _colX[i + 1]) return (int)i;
+    return -1;
+}
+
 CandWindow::Btn CandWindow::HitTestButton(int x, int y)
 {
     if (!_hwnd) return Btn::None;
@@ -181,7 +191,9 @@ LRESULT CandWindow::OnMouseMove(HWND hwnd, LPARAM lParam)
     }
     // B2：拼音回显占首行，候选行判定减去该偏移（负值落回显行=无悬停）
     int yOff = pad + (compActive ? itemH : 0);
-    int row = (pt.y - yOff) / itemH;
+    // C 横排：列命中（x 落列边界、y 落单行带内）；竖排：原行号算式不变
+    int row = _horizontal ? ((pt.y >= yOff && pt.y < yOff + itemH) ? HitCol(pt.x) : -1)
+                          : (pt.y - yOff) / itemH;
     bool valid = false;
     {
         EnterCriticalSection(&_cs);
@@ -494,7 +506,9 @@ LRESULT CandWindow::OnLButtonUp(HWND hwnd, LPARAM lParam)
     }
     // B2：拼音回显占首行，点击行判定减去该偏移（点回显行不选中任何候选）
     int yOff = pad + (compActive ? itemH : 0);
-    int row = (pt.y - yOff) / itemH; // 页内行号（0 起）
+    // C 横排：列命中；竖排：原行号算式不变
+    int row = _horizontal ? ((pt.y >= yOff && pt.y < yOff + itemH) ? HitCol(pt.x) : -1)
+                          : (pt.y - yOff) / itemH; // 页内行号（0 起）
 
     uint32_t ver = 0;
     uint32_t globalIdx = 0;
@@ -614,7 +628,9 @@ LRESULT CandWindow::OnRButtonUp(HWND hwnd, LPARAM lParam)
         EnterCriticalSection(&_cs);
         composing = _composing;
         int yOff = pad + (composing.empty() ? 0 : itemH);
-        int row = (pt.y - yOff) / itemH;
+        // C 横排：列命中；竖排：原行号算式不变
+        int row = _horizontal ? ((pt.y >= yOff && pt.y < yOff + itemH) ? HitCol(pt.x) : -1)
+                              : (pt.y - yOff) / itemH;
         size_t pgBegin = 0, pgEnd = 0;
         CurrentPageRangeLocked(&pgBegin, &pgEnd);
         if (row >= 0 && (size_t)row < (pgEnd - pgBegin))
@@ -751,7 +767,9 @@ LRESULT CandWindow::OnMButtonUp(HWND hwnd, LPARAM lParam)
         EnterCriticalSection(&_cs);
         composing = _composing;
         int yOff = pad + (composing.empty() ? 0 : itemH);
-        int row = (pt.y - yOff) / itemH;
+        // C 横排：列命中；竖排：原行号算式不变
+        int row = _horizontal ? ((pt.y >= yOff && pt.y < yOff + itemH) ? HitCol(pt.x) : -1)
+                              : (pt.y - yOff) / itemH;
         size_t pgBegin = 0, pgEnd = 0;
         CurrentPageRangeLocked(&pgBegin, &pgEnd);
         if (row >= 0 && (size_t)row < (pgEnd - pgBegin))

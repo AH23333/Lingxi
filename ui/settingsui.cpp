@@ -121,6 +121,7 @@ constexpr int IDC_BTN_PHRASES = 120;    // R2 自定义短语管理入口
 constexpr int IDC_CMB_OPACITY = 126;    // 候选窗不透明度
 constexpr int IDC_CHK_ASSOCPICK = 130;  // 选词联想开关（GAP §11)
 constexpr int IDC_CMB_UIFONT = 131;     // 界面字体族（候选窗/浮层共用）
+constexpr int IDC_CMB_ORIENT = 144;     // C 横竖排切换：候选窗方向（0 竖 1 横）
 constexpr int IDC_BTN_STATS = 132;      // 打字统计入口（词典页"词典与工具"卡）
 constexpr int IDC_CHK_FWALNUM = 133;    // 全角字母数字（搜狗 F4 对标）
 constexpr int IDC_CMB_SPSCH = 134;      // 双拼方案：0 小鹤 1 自然码 2 微软
@@ -132,7 +133,7 @@ constexpr int IDC_BTN_UPDAPPLY = 143;   // 更新：下载并更新按钮（仅�
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
 HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
      g_hCmbDark = nullptr, g_hCmbFontSize = nullptr, g_hCmbSkin = nullptr,
-     g_hCmbToggleMode = nullptr,
+     g_hCmbToggleMode = nullptr, g_hCmbOrient = nullptr,
      g_hChkCnPunct = nullptr, g_hChkFuzzy = nullptr,
      g_hChkShuangpin = nullptr, g_hCmbSpSch = nullptr, g_hChkSymbolHotkey = nullptr, g_hChkTraditional = nullptr,
       g_hChkLlmRerank = nullptr, g_hChkLlmMultiPath = nullptr, g_hChkAssocPick = nullptr,
@@ -194,6 +195,7 @@ void LoadToControls()
     for (int i = 0; i < 8; i++)
         if (kFontSizes[i] == s.candidateFontSize) fsSel = i;
     ComboBox_SetCurSel(g_hCmbFontSize, fsSel);
+    ComboBox_SetCurSel(g_hCmbOrient, (int)(s.candOrientation <= 1 ? s.candOrientation : 0));
     ComboBox_SetCurSel(g_hCmbSkin, (int)s.skinIndex);
     ComboBox_SetCurSel(g_hCmbDark, (int)s.darkMode);
     ComboBox_SetCurSel(g_hCmbUiFont, (int)(s.uiFont <= 3 ? s.uiFont : 0));
@@ -235,6 +237,8 @@ void SaveFromControls()
     static const uint32_t kFontSizesSave[] = {12, 14, 16, 18, 20, 24, 28, 32};
     int fsIdx = ComboBox_GetCurSel(g_hCmbFontSize);
     if (fsIdx >= 0 && fsIdx < 8) s.candidateFontSize = kFontSizesSave[fsIdx];
+    int orientSel = ComboBox_GetCurSel(g_hCmbOrient);
+    if (orientSel >= 0 && orientSel <= 1) s.candOrientation = (uint32_t)orientSel;
     int skinSel = ComboBox_GetCurSel(g_hCmbSkin);
     if (skinSel >= 0 && skinSel <= 6) s.skinIndex = (uint32_t)skinSel;
     int fontSel = ComboBox_GetCurSel(g_hCmbUiFont);
@@ -670,6 +674,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CMB_FONTSIZE:
         case IDC_CMB_SKIN:
         case IDC_CMB_UIFONT:
+        case IDC_CMB_ORIENT:
         case IDC_CMB_TOGGLEMODE:
         case IDC_CMB_SPSCH:
             if (HIWORD(wParam) == CBN_SELCHANGE) SaveFromControls();
@@ -1230,6 +1235,13 @@ void CreateSettingsWindow(HINSTANCE hInst)
     };
     g_hCmbFontSize = mkCombo(IDC_CMB_FONTSIZE, fillFont);
     mkRow(L"字号", L"候选词条文字大小", g_hCmbFontSize, CK_COMBO, 100);
+    auto fillOrient = [](HWND h) {
+        for (const wchar_t* s : { L"竖排列表", L"横排单行" })
+            ComboBox_AddString(h, s);
+    };
+    g_hCmbOrient = mkCombo(IDC_CMB_ORIENT, fillOrient);
+    mkRow(L"候选方向", L"候选窗排列方式；横排超出屏幕宽度时本次自动回退竖排（下次出候选生效）",
+          g_hCmbOrient, CK_COMBO, 100);
     auto fillUiFont = [](HWND h) {
         for (const wchar_t* s : kUiFontNames)
             ComboBox_AddString(h, s);
@@ -1289,7 +1301,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
         uc.statusLab = g_pages.back().cards.back().rows.back().desc;
         HWND hRepo = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
             WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 10, 30, g_hSettings,
-            (HMENU)IDC_EDT_UPDREPO, (HINSTANCE)GetWindowLongPtrW(g_hSettings, GWLP_HINSTANCE), NULL);
+            (HMENU)(INT_PTR)IDC_EDT_UPDREPO, (HINSTANCE)GetWindowLongPtrW(g_hSettings, GWLP_HINSTANCE), NULL);
         mkRow(L"更新源仓库", L"GitHub 仓库 owner/repo；留空=未配置更新源（正常态，非错误）",
               hRepo, CK_EDIT, 240);
         uc.repoEdit = hRepo;

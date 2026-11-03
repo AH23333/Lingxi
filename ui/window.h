@@ -77,6 +77,9 @@ private:
     int ToolbarHeight();
     // 客户区坐标 → 工具条按钮（非工具条区域返回 None）
     Btn HitTestButton(int x, int y);
+    // 横排列命中（C 横竖排切换；定义在 candwnd_interact.cpp）：x → 页内列号，
+    // 未命中返回 -1。仅 _horizontal=true 时有意义。
+    int HitCol(int x) const;
     // 翻页 ±1 页（与滚轮同夹取语义；页内按钮/滚轮共用）
     void DoPageStep(int steps);
     // 工具条按钮 tooltip：懒建常驻、隐藏复用（避免跨线程 DestroyWindow）
@@ -121,6 +124,12 @@ private:
     bool _toastEnglish = false;
     std::wstring _toastText;   // 文字气泡内容（非空=文字气泡；空=中/英模式气泡）
     int _hoverRow = -1;        // 鼠标悬停的页内行号（-1 无），用于高亮
+    // C 横竖排切换：本次渲染是否横排（settings candOrientation=1 且列总宽
+    // ≤ 工作区宽才真横排，否则回退竖排——裁决 2026-11-03③）。
+    // _colX=横排列边界（客户区 x，size=列数+1；竖排时空）。LayoutAndPosition
+    // （UI 线程）写，OnPaint/WndProc（同 UI 线程）读，无锁安全。
+    bool _horizontal = false;
+    std::vector<int> _colX;
     bool _trackingMouse = false;
     int _hoverBtn = 0;         // 悬停中的工具条按钮（Btn 枚举值，0=None）
     bool _dragging = false;    // 拖拽移动窗口中（回显行/工具条空白按住）

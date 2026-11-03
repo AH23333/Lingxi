@@ -299,7 +299,62 @@ void CandWindow::OnPaint()
     }
 
     HGDIOBJ oldPen = SelectObject(hdc, GetStockObject(NULL_PEN));
-    for (size_t i = pgBegin; i < pgEnd; i++)
+    // C 横排分支：单行左起列排（列边界 _colX=LayoutAndPosition 单一事实源，
+    // 二者同 UI 线程，无锁读安全）。选中/hover 色块、序号+词+行内注音与
+    // 竖排行同语义，仅几何不同；词 8 字截断与布局侧同口径。
+    // 横排度量（列内边距/行高）为纸面推算——待用户重启后真机确认。
+    if (_horizontal && _colX.size() == pgEnd - pgBegin + 1)
+    {
+        const int y0 = pad + compH;
+        const int colIn = Scale96(6); // 列内文本左缩进（布局 colPad 的一半）
+        for (size_t i = pgBegin; i < pgEnd; i++)
+        {
+            size_t row = i - pgBegin;
+            RECT colR = { _colX[row], y0, _colX[row + 1], y0 + itemH };
+            HBRUSH hCol = nullptr;
+            if (row == 0)
+            {
+                hCol = CreateSolidBrush(accent);
+                SetTextColor(hdc, RGB(255, 255, 255));
+            }
+            else if ((int)row == hoverRow)
+            {
+                COLORREF hoverBg = dark ? RGB(64, 64, 64) : _hoverLight;
+                hCol = CreateSolidBrush(hoverBg);
+                SetTextColor(hdc, fg);
+            }
+            else
+            {
+                SetTextColor(hdc, fg);
+            }
+            if (hCol)
+            {
+                HGDIOBJ oldBrush = SelectObject(hdc, hCol);
+                RECT rr = colR;
+                InflateRect(&rr, -1, -1);
+                RoundRect(hdc, rr.left, rr.top, rr.right + 1, rr.bottom + 1, 8, 8);
+                SelectObject(hdc, oldBrush);
+                DeleteObject(hCol);
+            }
+            std::wstring word = cands[i];
+            if (word.size() > 8) word = word.substr(0, 8) + L"\u2026";
+            wchar_t buf[512];
+            _snwprintf_s(buf, _TRUNCATE, L"%zu  %s", row + 1, word.c_str());
+            RECT tR = { colR.left + colIn, colR.top, colR.right, colR.bottom };
+            DrawTextW(hdc, buf, -1, &tR, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+            if (i < anno.size() && !anno[i].empty())
+            {
+                SIZE szMain{};
+                GetTextExtentPoint32W(hdc, buf, (int)wcslen(buf), &szMain);
+                wchar_t abuf[512];
+                _snwprintf_s(abuf, _TRUNCATE, L"（%s）", anno[i].c_str());
+                SetTextColor(hdc, row == 0 ? RGB(240, 240, 240) : annoFg);
+                RECT aR = { tR.left + szMain.cx, colR.top, colR.right, colR.bottom };
+                DrawTextW(hdc, abuf, -1, &aR, DT_SINGLELINE | DT_VCENTER | DT_LEFT | DT_END_ELLIPSIS);
+            }
+        }
+    }
+    else for (size_t i = pgBegin; i < pgEnd; i++)
     {
         size_t row = i - pgBegin;
         RECT rowR = { pad, pad + compH + (int)row * itemH, rc.right - pad,
