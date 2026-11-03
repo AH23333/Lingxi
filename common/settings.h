@@ -25,6 +25,8 @@ struct Settings
                                    // 最近符号与剪贴板历史（预测与收藏不受影响）；
                                    // 托盘开关，单键快读（IncognitoActive）即时生效
     bool cnPunct = true;          // 中文标点：中文模式下 . , / ; 等映射为全角标点
+    bool fullWidthAlnum = false;  // 全角字母数字（搜狗 F4 对标）：非组合数字直出转全角０-９，
+                                   // 原文上屏（回车/标点合并路径的无组合分支）整串转全角
     bool fuzzyPinyin = true;      // 模糊音总开关：关=全部组失效；开=按 fuzzyGroups 位掩码生效
     uint32_t fuzzyGroups = 0xFF;  // 模糊音组位掩码：bit0=zh/z bit1=ch/c bit2=sh/s bit3=n/l bit4=前后鼻音 bit5=f/h bit6=l/r bit7=g/k
                                   // （对标微软拼音"可细分开关"；0 视为仅总开关无组=无互通，默认全组）

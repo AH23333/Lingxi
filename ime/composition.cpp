@@ -683,6 +683,8 @@ void CTextService::PinyinCommitRaw()
         if (!_pinyin.empty())
         {
             std::wstring raw = _pinyin;
+            // 全角字母数字（搜狗 F4 对标，默认关）：原文上屏整串转全角
+            if (LoadSettings().fullWidthAlnum) raw = ToFullWidthStr(raw);
             _fSelfInsert = TRUE;
             InsertTextAtSelection(raw);
             _fSelfInsert = FALSE;
@@ -839,6 +841,12 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
     // 未开始输入：Shift/Caps 下的字母直通，普通字母启动拼音，中文标点转换
     if (shiftOrCaps && IsLetterKey(wParam)) return false;
     if (IsLetterKey(wParam)) return true;
+    // 全角字母数字（搜狗 F4 对标，默认关）：非组合数字认领，KeyDown 侧转全角
+    // 直出；主行 Shift 数字是符号仍走标点道，不认领。
+    if (LoadSettings().fullWidthAlnum &&
+        ((wParam >= L'0' && wParam <= L'9' && !shiftOrCaps) ||
+         (wParam >= VK_NUMPAD0 && wParam <= VK_NUMPAD9)))
+        return true;
     return IsChinesePunctKey(wParam);
 }
 
@@ -1023,6 +1031,29 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
                 }
             }
             if (CommitChinesePunct(wParam)) return;    // 中文标点（已上屏，吃掉）
+            // 全角字母数字（搜狗 F4 对标，默认关）：非组合数字直出转全角０-９。
+            // 主行数字按住 Shift 是符号（已由上方标点道处理），不截；
+            // 小键盘受 NumLock 影响（VK_NUMPAD* 仅数字态出现）；Ctrl/Alt 组合
+            // 已在函数入口放行，数字选词漏网（超页）数字按全角口径写正文。
+            if (LoadSettings().fullWidthAlnum)
+            {
+                wchar_t dch = 0;
+                if (wParam >= L'0' && wParam <= L'9' &&
+                    !(GetKeyState(VK_SHIFT) & 0x8000))
+                    dch = (wchar_t)wParam;
+                else if (wParam >= VK_NUMPAD0 && wParam <= VK_NUMPAD9)
+                    dch = (wchar_t)(L'0' + (wParam - VK_NUMPAD0));
+                if (dch)
+                {
+                    std::wstring fw(1, ToFullWidthW(dch));
+                    _fSelfInsert = TRUE;
+                    InsertTextAtSelection(fw);
+                    _fSelfInsert = FALSE;
+                    *pfEaten = TRUE;
+                    LX_LOG(L"ime", L"全角数字 vk=%u 上屏", (uint32_t)wParam);
+                    return;
+                }
+            }
             *pfEaten = FALSE;
             return;
         }

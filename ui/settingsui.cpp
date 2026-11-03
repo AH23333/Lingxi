@@ -121,6 +121,7 @@ constexpr int IDC_CMB_OPACITY = 126;    // 候选窗不透明度
 constexpr int IDC_CHK_ASSOCPICK = 130;  // 选词联想开关（GAP §11)
 constexpr int IDC_CMB_UIFONT = 131;     // 界面字体族（候选窗/浮层共用）
 constexpr int IDC_BTN_STATS = 132;      // 打字统计入口（词典页"词典与工具"卡）
+constexpr int IDC_CHK_FWALNUM = 133;    // 全角字母数字（搜狗 F4 对标）
 
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
 HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
@@ -128,7 +129,8 @@ HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
      g_hCmbToggleMode = nullptr,
      g_hChkCnPunct = nullptr, g_hChkFuzzy = nullptr,
      g_hChkShuangpin = nullptr, g_hChkSymbolHotkey = nullptr, g_hChkTraditional = nullptr,
-      g_hChkLlmRerank = nullptr, g_hChkLlmMultiPath = nullptr, g_hChkAssocPick = nullptr;
+      g_hChkLlmRerank = nullptr, g_hChkLlmMultiPath = nullptr, g_hChkAssocPick = nullptr,
+      g_hChkFwAlnum = nullptr;
 HWND g_hChkFz[8] = {}; // 模糊音组细分开关（8 组）
 HWND g_hCmbOpacity = nullptr;
 HWND g_hCmbUiFont = nullptr; // 界面字体族下拉
@@ -164,6 +166,7 @@ void LoadToControls()
     SetToggle(g_hChkPinyin, s.pinyinEnabled);
     SetToggle(g_hChkEn, s.enCompletion);
     SetToggle(g_hChkCnPunct, s.cnPunct);
+    SetToggle(g_hChkFwAlnum, s.fullWidthAlnum);
     SetToggle(g_hChkFuzzy, s.fuzzyPinyin);
     for (int fz = 0; fz < 8; fz++) SetToggle(g_hChkFz[fz], (s.fuzzyGroups >> fz) & 1u);
     ComboBox_SetCurSel(g_hCmbToggleMode, (int)(s.toggleMode <= 4 ? s.toggleMode : 1));
@@ -200,6 +203,7 @@ void SaveFromControls()
     s.pinyinEnabled = ToggleOn(g_hChkPinyin);
     s.enCompletion = ToggleOn(g_hChkEn);
     s.cnPunct = ToggleOn(g_hChkCnPunct);
+    s.fullWidthAlnum = ToggleOn(g_hChkFwAlnum);
     s.fuzzyPinyin = ToggleOn(g_hChkFuzzy);
     { unsigned grp = 0; for (int fz = 0; fz < 8; fz++) if (ToggleOn(g_hChkFz[fz])) grp |= 1u << fz;
       s.fuzzyGroups = grp ? grp : 0xFF; } // 一组未勾=退回全组（总开关才是关闭入口，避免"全关静默失聪"）
@@ -624,6 +628,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CHK_PINYIN:
         case IDC_CHK_EN:
         case IDC_CHK_CNPUNCT:
+        case IDC_CHK_FWALNUM:
         case IDC_CHK_FUZZY:
         case IDC_CHK_FZ_ZH: case IDC_CHK_FZ_CH: case IDC_CHK_FZ_SH:
         case IDC_CHK_FZ_NL: case IDC_CHK_FZ_NG:
@@ -1141,6 +1146,9 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_hChkCnPunct = mkToggle(IDC_CHK_CNPUNCT);
     mkRow(L"中文标点", L". , / ; 等自动转全角，Shift 输出 ？：》《 等",
           g_hChkCnPunct, CK_TOGGLE, 44);
+    g_hChkFwAlnum = mkToggle(IDC_CHK_FWALNUM);
+    mkRow(L"全角字母数字", L"数字直接上屏转０-９，拼音原文上屏转全角（对标搜狗 F4）",
+          g_hChkFwAlnum, CK_TOGGLE, 44);
     g_hChkTraditional = mkToggle(IDC_CHK_TRADITIONAL);
     mkRow(L"繁体输出", L"候选简体字转为繁体上屏", g_hChkTraditional, CK_TOGGLE, 44);
 

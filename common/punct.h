@@ -6,6 +6,7 @@
 // 如无 Shift 的 -/= 在拼音活动时作翻页、无 Shift 数字用于选词）。
 //
 #include <cstdint>
+#include <string>
 #include <windows.h>
 
 namespace lingxi {
@@ -46,6 +47,24 @@ inline int MapChinesePunct(WPARAM vk, bool shift, bool& dqOpen, bool& sqOpen,
     case L'0': if (shift) { out[0] = L'\uFF09' /*）*/; return 1; } return 0;
     }
     return 0;
+}
+
+// 全角字母数字（搜狗 F4 对标，纯函数，DLL 直出与原文上屏共用消费）：
+// ASCII 可见字符 0x21..0x7E 映射到全角 U+FF01..FF5E，空格映射全角空格 U+3000，
+// 范围外原样返回。
+inline wchar_t ToFullWidthW(wchar_t c)
+{
+    if (c == L' ') return L'\u3000';
+    if (c >= L'!' && c <= L'~') return (wchar_t)(c - L'!' + L'\uFF01');
+    return c;
+}
+
+inline std::wstring ToFullWidthStr(const std::wstring& s)
+{
+    std::wstring r;
+    r.reserve(s.size());
+    for (wchar_t c : s) r += ToFullWidthW(c);
+    return r;
 }
 
 } // namespace lingxi

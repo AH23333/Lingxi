@@ -191,6 +191,7 @@ Settings LoadSettings()
     if (GetDword(hKey, L"Paused", v)) s.paused = v != 0;
     if (GetDword(hKey, L"Incognito", v)) s.incognito = v != 0;
     if (GetDword(hKey, L"CnPunct", v)) s.cnPunct = v != 0;
+    if (GetDword(hKey, L"FullWidthAlnum", v)) s.fullWidthAlnum = v != 0;
     if (GetDword(hKey, L"FuzzyPinyin", v)) s.fuzzyPinyin = v != 0;
     if (GetDword(hKey, L"FuzzyGroups", v) && v <= 0xFF) s.fuzzyGroups = v; // 缺键=全组，与历史行为一致
     // 中英切换键：新键 ToggleMode 优先；无/越界则旧键 ShiftToggle
@@ -263,6 +264,7 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"Paused", s.paused ? 1 : 0);
     SetDword(hKey, L"Incognito", s.incognito ? 1 : 0);
     SetDword(hKey, L"CnPunct", s.cnPunct ? 1 : 0);
+    SetDword(hKey, L"FullWidthAlnum", s.fullWidthAlnum ? 1 : 0);
     SetDword(hKey, L"FuzzyPinyin", s.fuzzyPinyin ? 1 : 0);
     SetDword(hKey, L"FuzzyGroups", s.fuzzyGroups);
     // 双键兼容：ShiftToggle（旧 bool）与新 ToggleMode 同步写——旧版 UI/DLL 读旧键
@@ -327,6 +329,7 @@ void SaveSettingsDiff(const Settings& s)
     PutDwordDiff(hKey, L"Paused", s.paused ? 1 : 0);
     PutDwordDiff(hKey, L"Incognito", s.incognito ? 1 : 0);
     PutDwordDiff(hKey, L"CnPunct", s.cnPunct ? 1 : 0);
+    PutDwordDiff(hKey, L"FullWidthAlnum", s.fullWidthAlnum ? 1 : 0);
     PutDwordDiff(hKey, L"FuzzyPinyin", s.fuzzyPinyin ? 1 : 0);
     PutDwordDiff(hKey, L"FuzzyGroups", s.fuzzyGroups);
     PutDwordDiff(hKey, L"ShiftToggle", s.toggleMode != 0 ? 1 : 0);
