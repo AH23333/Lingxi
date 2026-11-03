@@ -664,6 +664,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
             return pinyinEngine->MergeUserDict(entries); };
         // L7：导出/备份前在途学习落盘收敛（settingsbackup.cpp / userdictwnd.cpp 消费）
         lingxi::g_hooks.flushUserDict = [pinyinEngine] { pinyinEngine->FlushUserDict(); };
+        // A 细胞词库（cellwnd.cpp）：装/删包重扫请求 + 导入线程音节表快照
+        lingxi::g_hooks.reloadCellPacks = [pinyinEngine] { pinyinEngine->ReloadCellPacks(); };
+        lingxi::g_hooks.getSyllables = [pinyinEngine](std::vector<std::string>& out) {
+            return pinyinEngine->GetSyllableSet(out); };
     }
     lingxi::g_hooks.phrasesChanged = [pinyinEngine] { if (pinyinEngine) pinyinEngine->ReloadUserDict(); };
     lingxi::g_hooks.settingsChanged = syncHotkey;       // 设置保存后动态注册/注销热键

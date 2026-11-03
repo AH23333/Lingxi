@@ -36,6 +36,10 @@ struct UiHooks
     std::function<bool(const std::wstring&, const std::wstring&, int)> nudgeUserWord; // (word,key,±delta) 调频
     std::function<bool(const std::vector<UserDictEntry>&)> mergeUserDict; // 导入合并
     std::function<void()> flushUserDict; // L7：导出/备份前在途学习落盘收敛
+    // A 细胞词库（cellwnd.cpp）：装/删包后请求引擎重扫（只置原子标志）；
+    // 导入线程取音节表快照做词条校验（_syllables 构造后只读，拷贝安全）。
+    std::function<void()> reloadCellPacks;
+    std::function<bool(std::vector<std::string>&)> getSyllables;
 };
 extern UiHooks g_hooks; // 定义于 settingsui.cpp
 
@@ -55,6 +59,8 @@ void AttachSettingsWheelForwarding(HWND settingsWnd); // settingswheel.cpp：组
 
 // ---- userdictwnd.cpp：用户词典窗 + 词典存储 ----
 void CreateUserDictWindow(HINSTANCE hInst);
+// ---- cellwnd.cpp：A 细胞词库管理窗（design-cell-dict-2026-11-03 A5）----
+void ShowCellDictWindow(HINSTANCE hInst);
 std::wstring UserDictPathW();    // %APPDATA%\LingxiIme\userdict.txt
 bool ReadFileBytes(const std::wstring& path, std::string& out);
 bool WriteFileBytes(const std::wstring& path, const std::string& data);
