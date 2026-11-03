@@ -22,6 +22,7 @@
 #include "../../common/shuangpin.h"
 #include "../../common/pipe_util.h"
 #include "../../ui/cand_text.h" // 批9 候选截断口径（纯函数头文件，无链接依赖）
+#include "../../ui/mgmt_logic.h" // 批14 管理窗纯逻辑层（过滤/行解析/选择集/批量启停）
 
 // 批8：ui/fileio.cpp 直链——UI 侧词典文件读写与失败路径实证（ROB 块）共用同一实现
 namespace lingxi {
@@ -3853,6 +3854,64 @@ int wmain(int argc, wchar_t** argv)
         Report(warmed.candidateCount == 5 && wrote, "M5-TTL setup: saved=5, external write landed");
         Report(stale.candidateCount == 5, "M5-TTL stale served within window (cache active)");
         Report(fresh.candidateCount == 7, "M5-TTL staleness bounded: reload reflects direct write");
+    }
+
+    // ===== MG. 批14 管理窗纯逻辑层钉：搜索过滤/行定位/选择集/批量启停（ui/mgmt_logic.h）=====
+    // 管理窗 Win32 消息循环（多选高亮观感、搜索框实时刷新、按钮交互）blocked 待真机；
+    // 这里钉判定层：哪些行被过滤命中、行内容如何定位词条、选择集→操作目标、
+    // 批量启停后停用表的最终形态（Cell.disabled 唯一写入口）。
+    {
+        using namespace lingxi::mgmt;
+        // MG1/MG2 用户词典过滤：空 filter 全过；词条/拼音子串；大小写不敏感双向
+        Report(UdFilterMatch(L"喵喵", L"miamia", L"") &&
+               UdFilterMatch(L"喵喵", L"miamao", L"喵") &&
+               UdFilterMatch(L"小猫", L"xiaomao", L"mao") &&
+               UdFilterMatch(L"猫", L"MAO", L"mao") &&
+               UdFilterMatch(L"猫", L"mao", L"MAO"),
+               "MG1 ud filter: empty/word/key/case-insensitive");
+        Report(!UdFilterMatch(L"猫", L"mao", L"狗") && !UdFilterMatch(L"猫", L"mao", L"maom") &&
+               !UdFilterMatch(L"", L"", L"x"),
+               "MG2 ud filter: miss + longer-than-key + empty entry");
+        // MG3 显示行解析（删除/提升/降低的唯一词条定位路径，4 空格分隔）
+        {
+            std::wstring w, k;
+            bool a = ParseUdDisplayLine(L"猫    mao    5", w, k) && w == L"猫" && k == L"mao";
+            bool b = !ParseUdDisplayLine(L"nosep", w, k);
+            bool c = !ParseUdDisplayLine(L"猫    mao", w, k);       // 半截行（无 count 段）
+            bool d = !ParseUdDisplayLine(L"     mao    5", w, k);   // 空词条
+            Report(a && b && c && d, "MG3 ud line parse: ok/no-sep/half/empty-word");
+        }
+        // MG4 选择集→操作目标：LB_GETSEL 旗标、未选中/解析失败行跳过、保持列表序
+        {
+            std::vector<std::wstring> lines = { L"a    aaa    1", L"broken", L"b    bbb    2", L"c    ccc    3" };
+            std::vector<int> sel = { 1, 1, 0, 1 };
+            auto t = CollectSelected(lines, sel);
+            Report(t.size() == 2 && t[0].word == L"a" && t[0].key == L"aaa" &&
+                   t[1].word == L"c" && t[1].key == L"ccc",
+                   "MG4 selection set: skip unselected/unparseable, order kept");
+        }
+        // MG5/MG6 批量启停停用表（Cell.disabled 唯一写入口口径）
+        Report(ApplyBulkDisabled(L"a,b", { L"b", L"c" }, true) == L"a,b,c" && // 去重+追加
+               ApplyBulkDisabled(L"", { L"x" }, true) == L"x" &&
+               ApplyBulkDisabled(L"a,b,c", { L"a", L"c" }, false) == L"b" &&  // 批量启用双剔
+               ApplyBulkDisabled(L"a", { L"zz" }, false) == L"a",             // 剔不存在项幂等
+               "MG5 bulk disabled table: add-dedup/remove-batch/idempotent");
+        Report(ApplyBulkDisabled(L" a , b\t", { L"b" }, false) == L"a" &&     // 解析去空白
+               ApplyBulkDisabled(L"z,a", { L"m" }, true) == L"z,a,m",         // 原顺序保持
+               "MG6 csv trim + order kept");
+        // MG7 细胞包过滤：id/包名子串、大小写、空 filter
+        Report(CellFilterMatch(L"gamedict", L"游戏词库", L"GAME") &&
+               CellFilterMatch(L"g", L"游戏词库", L"游戏") &&
+               !CellFilterMatch(L"g", L"游戏", L"music") &&
+               CellFilterMatch(L"x", L"y", L""),
+               "MG7 cell filter: id/name/case/empty");
+        // MG8 单 id 启停 == 批量(ids=1) 等价（旧单选路径与新批量路径同口径）
+        {
+            std::vector<std::wstring> one = { L"p2" };
+            Report(ApplyBulkDisabled(L"p1,p2,p3", one, true) == L"p1,p2,p3" &&
+                   ApplyBulkDisabled(L"p1,p2", one, false) == L"p1",
+                   "MG8 single-id toggle == bulk(ids=1) equivalence");
+        }
     }
 
     wprintf(L"=== 结果: PASS=%d FAIL=%d ===\n", g_pass, g_fail);

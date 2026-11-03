@@ -7,6 +7,7 @@
 // 红线：本窗绝不触碰引擎 _entries/索引；导入只在后台线程碰磁盘与内存副本。
 #include "uiinternal.h"
 #include "cellimport.h"
+#include "mgmt_logic.h" // 批14：过滤/停用表/批量启停纯逻辑（engine_test MG5..MG8 直链单测）
 #include "engine/predictor.h"
 
 #include <windows.h>
@@ -35,9 +36,11 @@ enum
     IDC_CELL_DISABLE,
     IDC_CELL_DELETE,
     IDC_CELL_CLOSE,
+    IDC_CELL_SEARCH, // 批14：搜索过滤框（包名/id 子串实时过滤）
 };
 
 HWND g_hCellWnd = NULL;
+HWND g_hCellSearch = NULL; // 批14 搜索框
 bool g_cellImporting = false; // 安装进行中防重入
 std::wstring g_lastImportSrc; // "已存在→确认覆盖"重跑用（源路径在结果回调时已不可得）
 
@@ -48,38 +51,6 @@ std::wstring Utf8ToW(const std::string& s)
     std::wstring w(n, 0);
     MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), w.data(), n);
     return w;
-}
-
-// 停用表读写（settings cellDisabled：逗号分隔 id）
-std::vector<std::wstring> DisabledIds(const std::wstring& raw)
-{
-    std::vector<std::wstring> out;
-    size_t pos = 0;
-    while (pos <= raw.size())
-    {
-        size_t c = raw.find(L',', pos);
-        std::wstring seg = raw.substr(pos, c == std::wstring::npos ? c : c - pos);
-        while (!seg.empty() && (seg.front() == L' ' || seg.front() == L'\t')) seg.erase(seg.begin());
-        while (!seg.empty() && (seg.back() == L' ' || seg.back() == L'\t')) seg.pop_back();
-        if (!seg.empty()) out.push_back(seg);
-        if (c == std::wstring::npos) break;
-        pos = c + 1;
-    }
-    return out;
-}
-
-void SetPackDisabled(const std::wstring& id, bool dis)
-{
-    Settings st = LoadSettings();
-    std::vector<std::wstring> cur = DisabledIds(st.cellDisabled);
-    bool has = false;
-    for (size_t i = 0; i < cur.size(); i++)
-        if (cur[i] == id) { cur.erase(cur.begin() + i); has = true; break; }
-    if (dis && !has) cur.push_back(id);
-    std::wstring joined;
-    for (size_t i = 0; i < cur.size(); i++) { if (i) joined += L','; joined += cur[i]; }
-    st.cellDisabled = joined;
-    SaveSettings(st); // 引擎在下一次 Predict 检出变更并重建（无锁红线）
 }
 
 struct CellRow { std::wstring id, name; size_t entries = 0; bool disabled = false; };
@@ -102,7 +73,7 @@ std::vector<CellRow> ScanPacks()
     FindClose(h);
 
     Settings st = LoadSettings();
-    std::vector<std::wstring> dis = DisabledIds(st.cellDisabled);
+    std::vector<std::wstring> dis = mgmt::SplitIds(st.cellDisabled);
     for (const auto& f : files)
     {
         std::string raw;
@@ -140,32 +111,60 @@ std::vector<CellRow> ScanPacks()
     return rows;
 }
 
-std::wstring SelectedRowId()
+// 批14 多选：选择集（LB_GETSEL）→ id 列表（行格式 "id | name | N 条 | 状态"，
+// 取首个 " |" 前的 id；解析不出的行跳过）
+std::vector<std::wstring> SelectedRowIds()
 {
-    int sel = (int)SendMessageW(GetDlgItem(g_hCellWnd, IDC_CELL_LIST), LB_GETCURSEL, 0, 0);
-    if (sel < 0) return {};
-    wchar_t line[512] = L"";
-    SendMessageW(GetDlgItem(g_hCellWnd, IDC_CELL_LIST), LB_GETTEXT, sel, (LPARAM)line);
-    // 行格式 "id | name | N 条 | 状态"：取首个 " |" 前的 id
-    const wchar_t* sep = wcsstr(line, L" | ");
-    return sep ? std::wstring(line, sep - line) : std::wstring();
+    std::vector<std::wstring> ids;
+    HWND lb = GetDlgItem(g_hCellWnd, IDC_CELL_LIST);
+    int n = (int)SendMessageW(lb, LB_GETCOUNT, 0, 0);
+    for (int i = 0; i < n; i++)
+    {
+        if ((int)SendMessageW(lb, LB_GETSEL, i, 0) <= 0) continue;
+        wchar_t line[512] = L"";
+        SendMessageW(lb, LB_GETTEXT, i, (LPARAM)line);
+        const wchar_t* sep = wcsstr(line, L" | ");
+        if (sep) ids.push_back(std::wstring(line, sep - line));
+    }
+    return ids;
 }
 
 void RefreshCellList()
 {
     HWND lb = GetDlgItem(g_hCellWnd, IDC_CELL_LIST);
     SendMessageW(lb, LB_RESETCONTENT, 0, 0);
+    // 批14 搜索过滤：id 或包名子串（不区分大小写）；判定在 mgmt::CellFilterMatch
+    //（engine_test MG7 钉口径）；空 filter=全量。
+    std::wstring flt;
+    if (g_hCellSearch)
+    {
+        wchar_t buf[128] = L"";
+        GetWindowTextW(g_hCellSearch, buf, 128);
+        flt = buf;
+    }
     std::vector<CellRow> rows = ScanPacks();
+    size_t shown = 0;
     for (const auto& r : rows)
     {
+        if (!mgmt::CellFilterMatch(r.id, r.name, flt)) continue;
         wchar_t buf[512];
         _snwprintf_s(buf, _TRUNCATE, L"%s | %s | %llu 条 | %s", r.id.c_str(),
                      r.name.c_str(), (unsigned long long)r.entries,
                      r.disabled ? L"已停用" : L"启用中");
         SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)buf);
+        shown++;
     }
     if (rows.empty())
         SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"（未安装任何词库包——点「安装包」导入 .lxcell 或深蓝纯文本产物）");
+    else if (shown == 0)
+        SendMessageW(lb, LB_ADDSTRING, 0, (LPARAM)L"（无匹配词库包，清空搜索框恢复全量）");
+    if (!flt.empty())
+    {
+        wchar_t cap[96];
+        _snwprintf_s(cap, _TRUNCATE, L"匹配 %zu / %zu 包（清空搜索框恢复全量）",
+                     shown, rows.size());
+        SetDlgItemTextW(g_hCellWnd, IDC_CELL_STATIC, cap);
+    }
 }
 
 struct CellImportJob { HWND hwnd; std::wstring src; bool overwrite; };
@@ -220,38 +219,60 @@ void DoInstall(HWND hwnd)
 
 void DoToggle(HWND hwnd, bool dis)
 {
-    std::wstring id = SelectedRowId();
-    if (id.empty()) { SetDlgItemTextW(hwnd, IDC_CELL_STATIC, L"请先在列表选中一个词库包"); return; }
-    SetPackDisabled(id, dis);
+    // 批14 批量启停：选择集 id 列表 → mgmt::ApplyBulkDisabled 一次算出新停用表
+    // → 单次 SaveSettings 整批落盘（engine_test MG5/MG8 钉表计算口径）
+    std::vector<std::wstring> ids = SelectedRowIds();
+    if (ids.empty()) { SetDlgItemTextW(hwnd, IDC_CELL_STATIC, L"请先在列表选中词库包（可 Ctrl/Shift 多选）"); return; }
+    Settings st = LoadSettings();
+    st.cellDisabled = mgmt::ApplyBulkDisabled(st.cellDisabled, ids, dis);
+    SaveSettings(st); // 引擎在下一次 Predict 检出变更并重建（无锁红线）
     RefreshCellList();
     wchar_t buf[256];
-    _snwprintf_s(buf, _TRUNCATE, L"%s %s：下一次输入即%s", id.c_str(),
-                 dis ? L"已停用" : L"已启用", dis ? L"消失" : L"出现");
+    _snwprintf_s(buf, _TRUNCATE, L"已%s %d 个包：下一次输入即%s", dis ? L"停用" : L"启用",
+                 (int)ids.size(), dis ? L"消失" : L"出现");
     SetDlgItemTextW(hwnd, IDC_CELL_STATIC, buf);
 }
 
 void DoDelete(HWND hwnd)
 {
-    std::wstring id = SelectedRowId();
-    if (id.empty()) { SetDlgItemTextW(hwnd, IDC_CELL_STATIC, L"请先在列表选中一个词库包"); return; }
-    if (MessageBoxW(hwnd, (L"删除词库包 " + id + L"？（不影响用户词典与自学习数据）").c_str(),
-                    L"确认删除", MB_OKCANCEL | MB_ICONWARNING) != IDOK)
+    // 批14 批量删除：逐包删文件（占用→rename-aside 让位，#89），成功项整批
+    // 剔停用表 + 单次 reload；失败项明示不静默
+    std::vector<std::wstring> ids = SelectedRowIds();
+    if (ids.empty()) { SetDlgItemTextW(hwnd, IDC_CELL_STATIC, L"请先在列表选中词库包（可 Ctrl/Shift 多选）"); return; }
+    std::wstring q;
+    if (ids.size() == 1)
+        q = L"删除词库包 " + ids[0] + L"？（不影响用户词典与自学习数据）";
+    else
+        q = L"删除选中的 " + std::to_wstring(ids.size()) + L" 个词库包？（不影响用户词典与自学习数据）";
+    if (MessageBoxW(hwnd, q.c_str(), L"确认删除", MB_OKCANCEL | MB_ICONWARNING) != IDOK)
         return;
-    std::wstring path = CellPackDirW() + L"\\" + id + L".lxcell";
-    if (!DeleteFileW(path.c_str()))
+    std::vector<std::wstring> deleted, failed;
+    for (const auto& id : ids)
     {
+        std::wstring path = CellPackDirW() + L"\\" + id + L".lxcell";
+        if (DeleteFileW(path.c_str())) { deleted.push_back(id); continue; }
         // 被占用（预测线程正在读）：rename-aside 等效删除（#89）
         std::wstring aside = path + L"." + std::to_wstring(GetTickCount()) + L".del";
-        if (!MoveFileExW(path.c_str(), aside.c_str(), 0))
-        {
-            SetDlgItemTextW(hwnd, IDC_CELL_STATIC, L"删除失败：文件被占用且改名让位未成");
-            return;
-        }
+        if (MoveFileExW(path.c_str(), aside.c_str(), 0)) deleted.push_back(id);
+        else failed.push_back(id);
     }
-    SetPackDisabled(id, false); // 剔停用表残留项
-    if (g_hooks.reloadCellPacks) g_hooks.reloadCellPacks();
+    if (!deleted.empty())
+    {
+        Settings st = LoadSettings();
+        st.cellDisabled = mgmt::ApplyBulkDisabled(st.cellDisabled, deleted, false); // 剔停用表残留项
+        SaveSettings(st);
+        if (g_hooks.reloadCellPacks) g_hooks.reloadCellPacks();
+    }
     RefreshCellList();
-    SetDlgItemTextW(hwnd, IDC_CELL_STATIC, (L"已删除词库包 " + id).c_str());
+    if (deleted.empty())
+        SetDlgItemTextW(hwnd, IDC_CELL_STATIC, L"删除失败：文件被占用且改名让位未成");
+    else
+    {
+        wchar_t buf[256];
+        _snwprintf_s(buf, _TRUNCATE, L"已删除 %d 个词库包%s", (int)deleted.size(),
+                     failed.empty() ? L"" : L"（部分文件被占用未删）");
+        SetDlgItemTextW(hwnd, IDC_CELL_STATIC, buf);
+    }
 }
 
 LRESULT CALLBACK CellWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
@@ -266,6 +287,9 @@ LRESULT CALLBACK CellWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         case IDC_CELL_DISABLE: DoToggle(hwnd, true); return 0;
         case IDC_CELL_DELETE: DoDelete(hwnd); return 0;
         case IDC_CELL_CLOSE: ShowWindow(hwnd, SW_HIDE); return 0;
+        case IDC_CELL_SEARCH:
+            if (HIWORD(wParam) == EN_CHANGE) RefreshCellList(); // 实时过滤
+            return 0;
         }
         break;
     case WM_APP_CELL_DONE:
@@ -351,10 +375,19 @@ void ShowCellDictWindow(HINSTANCE hInst)
                     pad, pad, W - pad * 2, btnH, g_hCellWnd,
                     (HMENU)(INT_PTR)IDC_CELL_STATIC, hInst, NULL);
 
+    // 批14 搜索过滤行（包名/id 子串实时过滤；清空恢复全量）
+    g_hCellSearch = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                    WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                    pad, pad + btnH + 4, W - pad * 2, btnH, g_hCellWnd,
+                                    (HMENU)(INT_PTR)IDC_CELL_SEARCH, hInst, NULL);
+    SendMessageW(g_hCellSearch, 0x1501 /*EM_SETCUEBANNERW*/, TRUE,
+                 (LPARAM)L"搜索：包名或 id（实时过滤）");
+
     int rowBtnY = H - btnH - pad;
-    int listTop = pad + btnH + 6;
+    int listTop = pad + btnH * 2 + 10;
     CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
-                    WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
+                    WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT |
+                    LBS_EXTENDEDSEL, // 批14：批量启停/删除（Ctrl/Shift 点选）
                     pad, listTop, W - pad * 2, rowBtnY - listTop - 8, g_hCellWnd,
                     (HMENU)(INT_PTR)IDC_CELL_LIST, hInst, NULL);
 
@@ -374,7 +407,7 @@ void ShowCellDictWindow(HINSTANCE hInst)
     if (g_hFont)
     {
         SendMessageW(g_hCellWnd, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        for (int id : { IDC_CELL_STATIC, IDC_CELL_LIST, IDC_CELL_INSTALL, IDC_CELL_ENABLE,
+        for (int id : { IDC_CELL_STATIC, IDC_CELL_LIST, IDC_CELL_SEARCH, IDC_CELL_INSTALL, IDC_CELL_ENABLE,
                         IDC_CELL_DISABLE, IDC_CELL_DELETE, IDC_CELL_CLOSE })
             SendMessageW(GetDlgItem(g_hCellWnd, id), WM_SETFONT, (WPARAM)g_hFont, TRUE);
     }

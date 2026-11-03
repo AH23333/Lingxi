@@ -10,6 +10,7 @@
 // - 右键操作（window.cpp 候选窗右键菜单）：置顶/提升/降频/删除/查拼音。
 //
 #include "uiinternal.h"
+#include "mgmt_logic.h" // 批14：过滤/行解析/选择集纯逻辑（engine_test MG 块直链单测）
 // 客户区补偿助手（QA 2026-11-02）：布局代码按客户区 W×H 设计，建窗时经
 // AdjustWindowRectEx 补齐标题栏/边框——旧版直接拿窗口总高当客户区摆放，
 // 底部按钮行被非客户区裁掉 ≈21px 内容，即用户报"没有删除按钮"的裁切根因。
@@ -175,14 +176,14 @@ LRESULT CALLBACK UdListProc(HWND h, UINT msg, WPARAM wParam, LPARAM lParam)
 void RefreshUdList()
 {
     if (!g_hUdList) return;
-    // 搜索过滤：词条或拼音键的子串命中（不区分大小写）；空=全量
+    // 搜索过滤：词条或拼音键的子串命中（不区分大小写）；空=全量。
+    // 判定在 mgmt::UdFilterMatch（批14 提取，engine_test MG1/MG2 钉口径）。
     std::wstring fl;
     if (g_hUdSearch)
     {
         wchar_t filter[64] = L"";
         GetWindowTextW(g_hUdSearch, filter, 64);
-        for (wchar_t ch : std::wstring(filter))
-            fl.push_back((wchar_t)towlower(ch));
+        fl = filter;
     }
     std::string raw;
     std::vector<UserDictEntry> entries;
@@ -191,14 +192,8 @@ void RefreshUdList()
     size_t shown = 0;
     for (size_t i = 0; i < entries.size(); i++)
     {
-        if (!fl.empty())
-        {
-            std::wstring w = entries[i].word, k = entries[i].key;
-            for (auto& ch : w) ch = (wchar_t)towlower(ch);
-            for (auto& ch : k) ch = (wchar_t)towlower(ch);
-            if (w.find(fl) == std::wstring::npos && k.find(fl) == std::wstring::npos)
-                continue;
-        }
+        if (!fl.empty() && !mgmt::UdFilterMatch(entries[i].word, entries[i].key, fl))
+            continue;
         wchar_t line[256];
         _snwprintf_s(line, _TRUNCATE, L"%ls    %ls    %d",
                      entries[i].word.c_str(), entries[i].key.c_str(), entries[i].count);
@@ -216,47 +211,54 @@ void RefreshUdList()
 
 void UdDeleteSelected()
 {
-    int sel = (int)SendMessageW(g_hUdList, LB_GETCURSEL, 0, 0);
-    if (sel < 0)
+    // 批14 多选删除：LBS_EXTENDEDSEL 选择集（LB_GETSEL）→ 行内容定位词条
+    // → 逐条引擎原子删除（调用序列 mgmt::CollectSelected，engine_test MG4 钉）。
+    int n = (int)SendMessageW(g_hUdList, LB_GETCOUNT, 0, 0);
+    std::vector<std::wstring> lines;
+    std::vector<int> sel;
+    bool anySel = false;
+    for (int i = 0; i < n; i++)
     {
-        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"请先在列表中选择词条");
+        wchar_t buf[256] = L"";
+        SendMessageW(g_hUdList, LB_GETTEXT, i, (LPARAM)buf);
+        lines.push_back(buf);
+        int s = (int)SendMessageW(g_hUdList, LB_GETSEL, i, 0);
+        sel.push_back(s);
+        if (s > 0) anySel = true;
+    }
+    if (!anySel)
+    {
+        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"请先在列表中选择词条（可 Ctrl/Shift 多选）");
         return;
     }
-    // 按行内容取 (word,key)：引擎自学习随时重写词典，列表索引与文件会漂移
-    // （按索引删会删错/落空）。行格式 "word    key    count"（4 空格分隔）。
-    wchar_t line[256] = L"";
-    SendMessageW(g_hUdList, LB_GETTEXT, sel, (LPARAM)line);
-    std::wstring word, key;
-    {
-        const wchar_t* sep1 = wcsstr(line, L"    ");
-        if (sep1)
-        {
-            word.assign(line, sep1 - line);
-            const wchar_t* rest = sep1 + 4;
-            const wchar_t* sep2 = wcsstr(rest, L"    ");
-            if (sep2)
-                key.assign(rest, sep2 - rest);
-        }
-    }
-    if (word.empty() || key.empty())
+    std::vector<mgmt::UdTarget> targets = mgmt::CollectSelected(lines, sel);
+    if (targets.empty())
     {
         SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"该词条已不存在（可能刚被学习进程更新），列表已刷新");
         RefreshUdList();
         return;
     }
     // 删除直达引擎原子操作（单写者落盘，无在途旧快照复活）
-    if (!g_hooks.removeUserWord || !g_hooks.removeUserWord(word, key))
+    int ok = 0, miss = 0;
+    for (const auto& t : targets)
     {
-        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"该词条已不存在（可能刚被学习进程更新），列表已刷新");
-        RefreshUdList();
-        return;
+        if (g_hooks.removeUserWord && g_hooks.removeUserWord(t.word, t.key)) ok++;
+        else miss++;
     }
     RefreshUdList();
-    int n = (int)SendMessageW(g_hUdList, LB_GETCOUNT, 0, 0);
-    if (n > 0) SendMessageW(g_hUdList, LB_SETCURSEL, sel < n ? sel : n - 1, 0);
-    SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC,
-        L"已删除并重新加载（基础词典里的常见词仍会出现在候选中）");
-    LX_LOG(L"ui", L"用户词典删除: %ls (key=%ls)", word.c_str(), key.c_str());
+    if (ok == 0)
+    {
+        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC,
+            L"删除落空（引擎未运行或词条已不存在），列表已刷新");
+        return;
+    }
+    wchar_t cap[160];
+    if (miss)
+        _snwprintf_s(cap, _TRUNCATE, L"已删除 %d 条（%d 条已不存在，列表已刷新）", ok, miss);
+    else
+        _snwprintf_s(cap, _TRUNCATE, L"已删除 %d 条（基础词典里的常见词仍会出现在候选中）", ok);
+    SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, cap);
+    LX_LOG(L"ui", L"用户词典批量删除: 请求%zu 成功%d 落空%d", targets.size(), ok, miss);
 }
 
 void UdClearAll()
@@ -402,17 +404,7 @@ void UdNudgeSelected(int delta)
     wchar_t line[256] = L"";
     SendMessageW(g_hUdList, LB_GETTEXT, sel, (LPARAM)line);
     std::wstring word, key;
-    {
-        const wchar_t* sep1 = wcsstr(line, L"    ");
-        if (sep1)
-        {
-            word.assign(line, sep1 - line);
-            const wchar_t* rest = sep1 + 4;
-            const wchar_t* sep2 = wcsstr(rest, L"    ");
-            if (sep2)
-                key.assign(rest, sep2 - rest);
-        }
-    }
+    mgmt::ParseUdDisplayLine(line, word, key);
     // 调频直达引擎原子操作（key 空=该词全部读音一起调；下限 1 引擎侧保证）
     if (word.empty() || key.empty() ||
         !g_hooks.nudgeUserWord || !g_hooks.nudgeUserWord(word, key, delta))
@@ -562,7 +554,8 @@ void CreateUserDictWindow(HINSTANCE hInst)
     int inputY = rowBtnY - btnH - 6;
     int listTop = pad + btnH * 2 + 8;
     g_hUdList = CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
-                                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT,
+                                WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT |
+                                LBS_EXTENDEDSEL, // 批14：多选删除（Ctrl/Shift 点选）
                                 pad, listTop, W - pad * 2, inputY - listTop - 8,
                                 g_hUserDict, (HMENU)(INT_PTR)IDC_UD_LIST, hInst, NULL);
     // Delete 键删除选中（子类化转发，见 UdListProc）
