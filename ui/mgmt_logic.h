@@ -44,19 +44,21 @@ inline bool CellFilterMatch(const std::wstring& id, const std::wstring& name,
            ToLowerW(name).find(fl) != std::wstring::npos;
 }
 
-// 解析用户词典列表行 "word␣␣␣key␣␣␣count"（RefreshUdList 的显示格式，
-// 4 空格分隔）。删除/提升/降低一律按行内容定位词条——引擎自学习随时
-// 重写词典，列表索引与文件会漂移，按索引定位会删错/落空。
+// 解析用户词典列表行 "word\tkey\tcount"（RefreshUdList 的显示格式，N5 起
+// tab 分隔——旧 4 空格分隔在 word/key 含 ≥4 连续空格时切分错位解析错目标，
+// 定宽方案在字段超宽时同样错位；拼音键与词条均不含 tab，无歧义）。删除/
+// 提升/降低一律按行内容定位词条——引擎自学习随时重写词典，列表索引与文件
+// 会漂移，按索引定位会删错/落空。
 inline bool ParseUdDisplayLine(const std::wstring& line,
                                std::wstring& word, std::wstring& key)
 {
     word.clear(); key.clear();
-    size_t p1 = line.find(L"    ");
-    if (p1 == std::wstring::npos) return false;
-    size_t p2 = line.find(L"    ", p1 + 4);
-    if (p2 == std::wstring::npos) return false;
-    word = line.substr(0, p1);
-    key = line.substr(p1 + 4, p2 - p1 - 4);
+    size_t t1 = line.find(L'\t');
+    if (t1 == std::wstring::npos) return false;
+    size_t t2 = line.find(L'\t', t1 + 1);
+    if (t2 == std::wstring::npos) return false;
+    word = line.substr(0, t1);
+    key = line.substr(t1 + 1, t2 - t1 - 1);
     return !word.empty() && !key.empty();
 }
 
@@ -64,17 +66,21 @@ inline bool ParseUdDisplayLine(const std::wstring& line,
 struct UdTarget { std::wstring word, key; };
 
 // 选择集 → 操作目标：selFlags[i] 非零=第 i 行选中（LB_GETSEL 语义）；
-// 顺序保持列表序；选中但解析失败的行跳过（刚被并发重写消失的词条）。
+// 顺序保持列表序；选中但解析失败的行跳过并计入 skipped（N5：不静默——
+// 调用方须在结果文案里报告"跳过 N 条"，刚被并发重写/异常行不再无声消失）。
 inline std::vector<UdTarget> CollectSelected(const std::vector<std::wstring>& lines,
-                                             const std::vector<int>& selFlags)
+                                             const std::vector<int>& selFlags,
+                                             size_t& skipped)
 {
     std::vector<UdTarget> out;
+    skipped = 0;
     size_t n = lines.size() < selFlags.size() ? lines.size() : selFlags.size();
     for (size_t i = 0; i < n; i++)
     {
         if (!selFlags[i]) continue;
         UdTarget t;
         if (ParseUdDisplayLine(lines[i], t.word, t.key)) out.push_back(std::move(t));
+        else skipped++;
     }
     return out;
 }

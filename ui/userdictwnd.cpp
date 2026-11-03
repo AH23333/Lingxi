@@ -195,7 +195,9 @@ void RefreshUdList()
         if (!fl.empty() && !mgmt::UdFilterMatch(entries[i].word, entries[i].key, fl))
             continue;
         wchar_t line[256];
-        _snwprintf_s(line, _TRUNCATE, L"%ls    %ls    %d",
+        // N5：tab 分隔——4 空格分隔在字段含 ≥4 连续空格时切分错位解析错目标；
+        // 词条/拼音键均不含 tab，无歧义（解析口径见 mgmt::ParseUdDisplayLine）
+        _snwprintf_s(line, _TRUNCATE, L"%ls\t%ls\t%d",
                      entries[i].word.c_str(), entries[i].key.c_str(), entries[i].count);
         SendMessageW(g_hUdList, LB_ADDSTRING, 0, (LPARAM)line);
         shown++;
@@ -231,7 +233,8 @@ void UdDeleteSelected()
         SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"请先在列表中选择词条（可 Ctrl/Shift 多选）");
         return;
     }
-    std::vector<mgmt::UdTarget> targets = mgmt::CollectSelected(lines, sel);
+    size_t skipped = 0; // N5：解析失败行不静默——计入"跳过"并报告
+    std::vector<mgmt::UdTarget> targets = mgmt::CollectSelected(lines, sel, skipped);
     if (targets.empty())
     {
         SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, L"该词条已不存在（可能刚被学习进程更新），列表已刷新");
@@ -253,12 +256,14 @@ void UdDeleteSelected()
         return;
     }
     wchar_t cap[160];
-    if (miss)
+    if (skipped) // N5：异常行跳过必须显式报告，不静默
+        _snwprintf_s(cap, _TRUNCATE, L"已删除 %d 条，跳过 %zu 条无法解析的行（列表已刷新）", ok, skipped);
+    else if (miss)
         _snwprintf_s(cap, _TRUNCATE, L"已删除 %d 条（%d 条已不存在，列表已刷新）", ok, miss);
     else
         _snwprintf_s(cap, _TRUNCATE, L"已删除 %d 条（基础词典里的常见词仍会出现在候选中）", ok);
     SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC, cap);
-    LX_LOG(L"ui", L"用户词典批量删除: 请求%zu 成功%d 落空%d", targets.size(), ok, miss);
+    LX_LOG(L"ui", L"用户词典批量删除: 请求%zu 成功%d 落空%d 跳过%zu", targets.size(), ok, miss, skipped);
 }
 
 void UdClearAll()
