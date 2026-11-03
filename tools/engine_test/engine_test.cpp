@@ -44,6 +44,7 @@ bool WriteFileBytes(const std::wstring& path, const std::string& data);
 
 static int g_pass = 0;
 static int g_fail = 0;
+static double g_blDictLoadMs = -1.0; // 批16 基线：本进程首建拼音引擎的词典加载 ms
 
 static void Report(bool ok, const char* name, const wchar_t* detail = L"")
 {
@@ -286,6 +287,7 @@ int wmain(int argc, wchar_t** argv)
         ULONGLONG t0 = GetTickCount64();
         lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
         ULONGLONG loadMs = GetTickCount64() - t0;
+        g_blDictLoadMs = (double)loadMs; // BL 基线行复用（批16）
         wprintf(L"[INFO] pinyin dict load: %llu ms\n", loadMs);
         {
             PROCESS_MEMORY_COUNTERS pmc{};
@@ -3980,6 +3982,30 @@ int wmain(int argc, wchar_t** argv)
             RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_skop");
             SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs[0] ? prevNs : L"");
         }
+    }
+
+    // ===== BL. 批16 冷启动/候选生成耗时基线打点（每次发版可对比的一行数字）=====
+    // 台架可确证的两段：① 词典加载=本进程首建 CreatePinyinPredictor（M5 处
+    // 采集，登录冷启动真路径）；② 逐键候选生成=中位耗时（预热5+30次取 p50，
+    // 线程优先级提升隔离后台抢占，同 latency 块口径）。真机端到端打字手感
+    // （TSF 宿主→IPC→候选窗上屏全程）blocked 待真机。
+    // 断言只设灾难回归上界（约为基线观测值 10 倍量级），不做逐次数比对——
+    // 数字对比靠 [BASELINE] 单行 grep。
+    {
+        double pyMed = -1.0, enMed = -1.0;
+        lingxi::IPredictor* bpy = lingxi::CreatePinyinPredictor();
+        if (bpy) { pyMed = MeasureLatency(bpy, L"zhonghua renmin gongheguo", 30).medianMs; delete bpy; }
+        lingxi::IPredictor* beng = lingxi::CreateDefaultPredictor();
+        if (beng) { enMed = MeasureLatency(beng, L"hello wor", 30).medianMs; delete beng; }
+        wchar_t line[256];
+        _snwprintf_s(line, _TRUNCATE,
+                     L"[BASELINE] dict_load=%.0fms py_gen_med=%.3fms en_gen_med=%.3fms",
+                     g_blDictLoadMs, pyMed, enMed);
+        wprintf(L"%ls\n", line);
+        Report(bpy && beng && g_blDictLoadMs >= 0.0 &&
+               g_blDictLoadMs < 8000.0 && pyMed >= 0.0 && pyMed < 50.0 &&
+               enMed >= 0.0 && enMed < 50.0,
+               "BL1 baseline budget (catastrophic-regression upper bound)");
     }
 
     wprintf(L"=== 结果: PASS=%d FAIL=%d ===\n", g_pass, g_fail);
