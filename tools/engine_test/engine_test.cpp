@@ -4008,6 +4008,72 @@ int wmain(int argc, wchar_t** argv)
                "BL1 baseline budget (catastrophic-regression upper bound)");
     }
 
+    // ===== EX. 审查缺陷① manual 词条淘汰豁免钉（Learn 词级豁免，与键级 protect 同口径）=====
+    // 修复前 Learn 的 victim 按 UserPickScore 最小者（manual 只返回原始 count）→
+    // 低计数 manual 会被高计数自学习词挤掉。EX1/EX2 为复现型断言：修复前必红。
+    {
+        lingxi::IPredictor* pe = lingxi::CreatePinyinPredictor();
+        bool exA = false, exB = false;
+        if (pe)
+        {
+            // 按 key 统计词典文件里该键的 manual/learned 行数与指定词在否
+            auto countKey = [&](const char* kutf, const std::wstring& word,
+                                int& man, int& learned, bool& hasWord) -> bool
+            {
+                man = learned = 0; hasWord = false;
+                std::string f;
+                if (!readBytes(udPath, f)) return false;
+                std::string wu = u8(word.c_str());
+                size_t pos = 0;
+                while (pos < f.size())
+                {
+                    size_t e = f.find('\n', pos);
+                    std::string line = f.substr(pos, e == std::string::npos ? std::string::npos : e - pos);
+                    pos = (e == std::string::npos) ? f.size() : e + 1;
+                    size_t t1 = line.find('\t');
+                    if (t1 == std::string::npos) continue;
+                    size_t t2 = line.find('\t', t1 + 1);
+                    size_t t3 = line.find('\t', t2 + 1);
+                    if (t2 == std::string::npos || t3 == std::string::npos) continue;
+                    if (line.compare(t1 + 1, t2 - t1 - 1, kutf) != 0) continue;
+                    // 序列化格式：manual="word\tkey\tcount\t1"，
+                    // learned="word\tkey\tcount\t0\tlastUsed"
+                    bool isMan = (line.size() > t3 + 1 && line[t3 + 1] == '1');
+                    if (isMan) man++; else learned++;
+                    if (line.compare(0, t1, wu) == 0) hasWord = true;
+                }
+                return true;
+            };
+            // EX1 全 manual 键：Learn 新词一条 manual 不能少、新词也不进
+            const std::wstring kA = L"exemptman";
+            for (int i = 0; i < 8; i++)
+                pe->AddUserWord(std::wstring(L"甲词") + wchar_t(L'0' + i), kA, 1);
+            pe->FlushUserDict();
+            pe->Learn(kA, L"自学习甲");
+            pe->FlushUserDict();
+            int man = 0, learned = 0; bool has = false;
+            exA = countKey("exemptman", L"自学习甲", man, learned, has) &&
+                  man == 8 && learned == 0 && !has;
+            // EX2 混合键：7 manual(count=1) + 1 learned(count=3)——修复前
+            // victim=低计数 manual；修复后 victim=学习词、manual 全存活
+            const std::wstring kB = L"exemptmix";
+            for (int i = 0; i < 7; i++)
+                pe->AddUserWord(std::wstring(L"乙词") + wchar_t(L'0' + i), kB, 1);
+            for (int i = 0; i < 3; i++) pe->Learn(kB, L"高频学习词");
+            pe->FlushUserDict();
+            pe->Learn(kB, L"自学习乙");
+            pe->FlushUserDict();
+            int manB = 0, learnedB = 0; bool hasNew = false, hasOld = false;
+            countKey("exemptmix", L"自学习乙", manB, learnedB, hasNew);
+            int m2 = 0, l2 = 0;
+            countKey("exemptmix", L"高频学习词", m2, l2, hasOld);
+            exB = manB == 7 && hasNew && !hasOld;
+            delete pe;
+        }
+        Report(exA, "EX1 all-manual key: Learn evicts no manual, new word refused");
+        Report(exB, "EX2 mixed key: victim=learned, low-count manual survives");
+    }
+
     wprintf(L"=== 结果: PASS=%d FAIL=%d ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

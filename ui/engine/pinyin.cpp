@@ -1808,13 +1808,24 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 if (vec.size() >= 8)
                 {
                     // 每键最多 8 个偏好：淘汰 score 最小者（B：久不用先出局），
-                    // 而非最近添加的
-                    size_t victim = 0;
-                    double vScore = UserPickScore(vec[0], nowSec, lsp);
-                    for (size_t k = 1; k < vec.size(); k++)
+                    // 而非最近添加的。词级 manual 豁免（审查确证缺陷①）：
+                    // UserPickScore 对 manual 只返回原始 count，不跳过的话
+                    // manual 词会被自学习词挤掉——与 EvictUserDictKeysLocked
+                    // 键级 protect 豁免 manual 的口径（L1649）对齐。
+                    // 全 manual 时放弃本次学习（不为自学习词淘汰手动词），
+                    // 与键级"全 manual 不动用户词"同口径。
+                    size_t victim = SIZE_MAX;
+                    double vScore = 0.0;
+                    for (size_t k = 0; k < vec.size(); k++)
                     {
+                        if (vec[k].manual) continue;
                         double s = UserPickScore(vec[k], nowSec, lsp);
-                        if (s < vScore) { vScore = s; victim = k; }
+                        if (victim == SIZE_MAX || s < vScore) { vScore = s; victim = k; }
+                    }
+                    if (victim == SIZE_MAX)
+                    {
+                        LX_LOG(L"py", L"学习放弃: 键 '%hs' 8 词全 manual，不淘汰手动词", key.c_str());
+                        return;
                     }
                     vec.erase(vec.begin() + victim);
                 }
