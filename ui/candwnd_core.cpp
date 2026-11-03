@@ -1,6 +1,7 @@
 #include "window.h"
 
 #include "candwnd_internal.h"
+#include "cand_text.h"
 
 #include "../common/proto.h"
 #include "../common/log.h"
@@ -180,6 +181,13 @@ void CandWindow::LayoutAndPosition()
         ReleaseDC(_hwnd, hdc);
     }
     _width = max(200, textMax + pad * 2 + MulDiv(28, 96, 96) + 24); // ≥200：工具条两组按钮排开
+    // 批9 竖排屏宽钳制：超长候选（如 200 字短语）曾把窗宽推到超过工作区，
+    // 位置钳制只能把窗体顶到左缘、右段仍出屏——文字被屏缘裁掉且无省略号。
+    // 钳到工作区宽-16 后，行内 DT_END_ELLIPSIS 在窗内自然出"…"，与横排口径一致。
+    {
+        int workW = mi.rcWork.right - mi.rcWork.left;
+        if (workW > 32) _width = min(_width, workW - 16);
+    }
 
     // 横排分支（C）：列宽=「序号 词」+行内注音实测 + 列内边距；单词 8 字
     // cap 省略号（超界词在窄条里逐列截断，避免单列吃掉整屏）。总宽超出所在
@@ -201,8 +209,7 @@ void CandWindow::LayoutAndPosition()
             _colX.push_back(x);
             for (size_t i = 0; i < page.size(); i++)
             {
-                std::wstring word = page[i];
-                if (word.size() > 8) word = word.substr(0, 8) + L"\u2026"; // 8 字 cap
+                std::wstring word = TruncateCandWord(page[i]); // 批9 8 字 cap，口径单一事实源
                 wchar_t buf[512];
                 _snwprintf_s(buf, _TRUNCATE, L"%zu  %s", i + 1, word.c_str());
                 SIZE s2{};

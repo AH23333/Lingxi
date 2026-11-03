@@ -1,6 +1,7 @@
 #include "window.h"
 
 #include "candwnd_internal.h"
+#include "cand_text.h"
 
 #include "../common/proto.h"
 #include "../common/log.h"
@@ -336,8 +337,7 @@ void CandWindow::OnPaint()
                 SelectObject(hdc, oldBrush);
                 DeleteObject(hCol);
             }
-            std::wstring word = cands[i];
-            if (word.size() > 8) word = word.substr(0, 8) + L"\u2026";
+            std::wstring word = TruncateCandWord(cands[i]); // 批9 与列宽同口径（单一事实源）
             wchar_t buf[512];
             _snwprintf_s(buf, _TRUNCATE, L"%zu  %s", row + 1, word.c_str());
             RECT tR = { colR.left + colIn, colR.top, colR.right, colR.bottom };

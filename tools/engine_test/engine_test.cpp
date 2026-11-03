@@ -21,6 +21,7 @@
 #include "../../common/settings.h"
 #include "../../common/shuangpin.h"
 #include "../../common/pipe_util.h"
+#include "../../ui/cand_text.h" // 批9 候选截断口径（纯函数头文件，无链接依赖）
 
 // 批8：ui/fileio.cpp 直链——UI 侧词典文件读写与失败路径实证（ROB 块）共用同一实现
 namespace lingxi {
@@ -3393,6 +3394,33 @@ int wmain(int argc, wchar_t** argv)
             Report(alive && goodLoaded,
                    "ROB5 corrupt dict: survives, valid line loads, garbage dropped");
         }
+    }
+
+    // ===== TR. 批9 候选截断口径：TruncateCandWord 按码点计数/代理对安全钉 =====
+    // 横排列宽（candwnd_core）与渲染（candwnd_render）共用同一 helper，
+    // 这里钉 helper 口径；劈开代理对=豆腐块+测宽失真，必须整对保留或整对丢弃。
+    {
+        using lingxi::TruncateCandWord;
+        std::wstring w7 = L"七个字短语词条";   // 7 个 BMP 字
+        std::wstring w8 = L"八个字短语词条呀"; // 恰 8 字=cap 边界，不动
+        Report(TruncateCandWord(w7) == w7 && TruncateCandWord(w8) == w8,
+               "TR1 <=8 chars untouched");
+        std::wstring w9 = L"九个字短语词条呀哈"; // 9 个 BMP 字
+        Report(TruncateCandWord(w9) == w9.substr(0, 8) + L"\u2026",
+               "TR2 9 BMP chars cut at 8 + ellipsis");
+        // 代理对跨切点：7 BMP + 2 对（9 码点/11 单元）→ 保 8 码点=9 单元，
+        // 省略号前必须是低代理（对完整）
+        std::wstring sp = L"一二三四五六七" L"\xD842\xDF7D" L"\xD842\xDF7D";
+        std::wstring ts = TruncateCandWord(sp);
+        Report(ts.size() == 10 && ts[9] == L'\u2026' &&
+               ts[7] == 0xD842 && ts[8] == 0xDF7D,
+               "TR3 surrogate pair kept whole at cut");
+        // 代理对整体超配额：8 BMP + 1 对 → 对整对丢弃，无悬空高代理
+        std::wstring sp2 = L"一二三四五六七八" L"\xD842\xDF7D";
+        Report(TruncateCandWord(sp2) == L"一二三四五六七八\u2026",
+               "TR4 over-quota pair dropped whole");
+        Report(TruncateCandWord(L"").empty() && TruncateCandWord(L"单") == L"单",
+               "TR5 empty/short passthrough");
     }
 
     // ===== C1. 停机三时序：正常收敛 / 落盘失败快回 / ownerDead 后僵尸不覆盖 =====
