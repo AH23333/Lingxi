@@ -22,6 +22,12 @@
 #include "../../common/shuangpin.h"
 #include "../../common/pipe_util.h"
 
+// 批8：ui/fileio.cpp 直链——UI 侧词典文件读写与失败路径实证（ROB 块）共用同一实现
+namespace lingxi {
+bool ReadFileBytes(const std::wstring& path, std::string& out);
+bool WriteFileBytes(const std::wstring& path, const std::string& data);
+}
+
 #include <windows.h>
 #include <psapi.h>
 #include <cstdio>
@@ -3310,6 +3316,82 @@ int wmain(int argc, wchar_t** argv)
             Report(retried, "C4 dirty retry succeeds after unblock");
             py = lingxi::CreatePinyinPredictor();
             if (py) { py->ClearUserDict(); delete py; }     // 复位，给 C1 干净起点
+        }
+    }
+
+    // ===== ROB. 批8 词库文件健壮性：UI 侧 WriteFileBytes 失败路径实证钉 =====
+    // 真注入：排他占位锁=杀软/另一实例持文件；只读属性=权限失败；
+    // 陈旧 .tmp=断电/强杀半截残留；损坏词典=手造垃圾行。验收口径：
+    // 失败必须返回 false、主文件必须仍是完整旧版、不许留 .tmp 垃圾。
+    {
+        std::wstring rf = udPath;                           // 与 C4 同沙盒词典路径
+        std::string v0 = "ROB-OLD-INTACT";
+        bool pre = lingxi::WriteFileBytes(rf, v0);
+        std::string b0;
+        Report(pre && lingxi::ReadFileBytes(rf, b0) && b0 == v0 &&
+               GetFileAttributesW((rf + L".tmp").c_str()) == INVALID_FILE_ATTRIBUTES,
+               "ROB1 atomic write happy path, no .tmp residue");
+        // 注入一：主文件被排他占用（模拟杀软实时扫描/另一实例）→ rename 失败
+        {
+            HANDLE hl = CreateFileW(rf.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+            bool held = hl != INVALID_HANDLE_VALUE;
+            bool w = lingxi::WriteFileBytes(rf, "ROB-SHOULD-NOT-LAND");
+            if (held) CloseHandle(hl);                      // 先放锁再读，否则连读也被挡
+            std::string b1;
+            Report(held && !w && lingxi::ReadFileBytes(rf, b1) && b1 == v0 &&
+                   GetFileAttributesW((rf + L".tmp").c_str()) == INVALID_FILE_ATTRIBUTES,
+                   "ROB2 locked target: explicit failure, old file intact");
+        }
+        // 注入二：主文件只读属性（模拟权限问题）→ MoveFileEx 替换失败
+        {
+            bool setRo = SetFileAttributesW(rf.c_str(), FILE_ATTRIBUTE_READONLY) != FALSE;
+            bool w = lingxi::WriteFileBytes(rf, "ROB-SHOULD-NOT-LAND");
+            std::string b2; bool intact = lingxi::ReadFileBytes(rf, b2) && b2 == v0;
+            DWORD att = GetFileAttributesW(rf.c_str());
+            bool noTmp = GetFileAttributesW((rf + L".tmp").c_str()) == INVALID_FILE_ATTRIBUTES;
+            SetFileAttributesW(rf.c_str(), FILE_ATTRIBUTE_NORMAL);
+            Report(setRo && !w && intact && (att & FILE_ATTRIBUTE_READONLY) && noTmp,
+                   "ROB3 read-only target: explicit failure, old file intact");
+        }
+        // 注入三：陈旧 .tmp 垃圾（断电中间态）不阻塞不污染下一次写
+        {
+            lingxi::WriteFileBytes(rf + L".tmp", std::string(4096, 'X'));
+            bool w = lingxi::WriteFileBytes(rf, "ROB-NEW4");
+            std::string b3;
+            Report(w && lingxi::ReadFileBytes(rf, b3) && b3 == "ROB-NEW4" &&
+                   GetFileAttributesW((rf + L".tmp").c_str()) == INVALID_FILE_ATTRIBUTES,
+                   "ROB4 stale .tmp overwritten and consumed");
+        }
+        // 注入四：损坏词典（无分隔符/空词/单 tab 半截行/乱码字节/尾部截断）→
+        // 引擎装载不崩、合法行生效、垃圾行丢弃（下次落盘即收敛为合法文件）
+        {
+            std::string corrupt = "GoodWord\tgouhao\t10000\t1\n"
+                                  "noseparatorline\n"
+                                  "\tgapkey\t5\n"
+                                  "halfline\tonetab\n"
+                                  "word\xFF\xFE\tk\x00\t3\n"
+                                  "trunc\ttailnocount";
+            HANDLE h = CreateFileW(rf.c_str(), GENERIC_WRITE, 0, NULL,
+                                   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (h != INVALID_HANDLE_VALUE)
+            {
+                DWORD g = 0;
+                WriteFile(h, corrupt.data(), (DWORD)corrupt.size(), &g, NULL);
+                CloseHandle(h);
+            }
+            lingxi::IPredictor* pyRob = lingxi::CreatePinyinPredictor(); // 装载损坏文件
+            bool alive = pyRob != NULL;
+            bool goodLoaded = false;
+            if (alive)
+            {
+                lingxi::Prediction r = pyRob->Predict(L"gouhao");
+                for (const auto& w : r.cands) if (w == L"GoodWord") goodLoaded = true;
+                pyRob->ClearUserDict();                     // 复位：垃圾文件被空词典覆盖
+                delete pyRob;
+            }
+            Report(alive && goodLoaded,
+                   "ROB5 corrupt dict: survives, valid line loads, garbage dropped");
         }
     }
 

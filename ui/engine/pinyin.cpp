@@ -1693,6 +1693,8 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         if (h == INVALID_HANDLE_VALUE) return false;
         DWORD written = 0;
         BOOL ok = WriteFile(h, content.data(), (DWORD)content.size(), &written, NULL);
+        // 批8：刷盘失败按写失败处理——断电/强杀下未刷盘的 .tmp 不算落盘
+        if (ok && written == (DWORD)content.size()) ok = FlushFileBuffers(h);
         CloseHandle(h);
         if (!ok || written != (DWORD)content.size())
         {

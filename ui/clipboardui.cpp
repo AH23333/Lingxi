@@ -115,6 +115,7 @@ bool WriteBytesAtomic(const std::wstring& path, const std::string& bytes)
     DWORD written = 0;
     bool ok = WriteFile(h, bytes.data(), (DWORD)bytes.size(), &written, NULL) &&
               written == bytes.size();
+    if (ok) ok = FlushFileBuffers(h) != FALSE; // 批8：刷盘失败按写失败
     CloseHandle(h);
     if (!ok)
     {

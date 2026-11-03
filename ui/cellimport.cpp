@@ -67,6 +67,7 @@ bool WriteAllW(const std::wstring& path, const std::string& content)
     if (h == INVALID_HANDLE_VALUE) return false;
     DWORD written = 0;
     BOOL ok = WriteFile(h, content.data(), (DWORD)content.size(), &written, NULL);
+    if (ok && written == (DWORD)content.size()) ok = FlushFileBuffers(h); // 批8：刷盘失败按写失败
     CloseHandle(h);
     if (!ok || written != (DWORD)content.size()) { DeleteFileW(tmp.c_str()); return false; }
     if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))

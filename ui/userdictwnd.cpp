@@ -502,51 +502,7 @@ std::wstring UserDictPathW()
     return std::wstring(exe) + L"userdict.txt";
 }
 
-bool ReadFileBytes(const std::wstring& path, std::string& out)
-{
-    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
-                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD size = GetFileSize(h, NULL);
-    // L13：GetFileSize 失败恒返回 INVALID_FILE_SIZE——不查即 resize(4GB-1)
-    // 抛 length_error/bad_alloc 直接崩 UI 线程；另设 16MB 上限防异常大文件
-    if (size == INVALID_FILE_SIZE || size > 16u * 1024u * 1024u)
-    {
-        CloseHandle(h);
-        return false;
-    }
-    out.resize(size);
-    DWORD got = 0;
-    BOOL ok = ReadFile(h, out.data(), size, &got, NULL);
-    CloseHandle(h);
-    out.resize(ok ? got : 0);
-    return ok != FALSE;
-}
-
-bool WriteFileBytes(const std::wstring& path, const std::string& data)
-{
-    // 原子写：先写 .tmp 再 MoveFileEx 替换。引擎（管道线程自学习落盘）与本
-    // 窗口（UI 线程清空/导入）是同一文件的两个写者，直写 CREATE_ALWAYS 撞车
-    // 会产生截断/半截文件；替换式写入保证读者永远看到完整内容。
-    std::wstring tmp = path + L".tmp";
-    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, NULL,
-                           CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (h == INVALID_HANDLE_VALUE) return false;
-    DWORD put = 0;
-    BOOL ok = WriteFile(h, data.data(), (DWORD)data.size(), &put, NULL);
-    CloseHandle(h);
-    if (!ok || put != (DWORD)data.size())
-    {
-        DeleteFileW(tmp.c_str());
-        return false;
-    }
-    if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
-    {
-        DeleteFileW(tmp.c_str());
-        return false;
-    }
-    return true;
-}
+// ReadFileBytes/WriteFileBytes：批8 迁至 ui/fileio.cpp（engine_test 直链实证失败路径）
 
 bool UserDictReplaceFromRaw(const std::string& rawUtf8)
 {
