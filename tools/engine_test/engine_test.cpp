@@ -3057,6 +3057,126 @@ int wmain(int argc, wchar_t** argv)
         if (reset) delete reset; // 复位沙盒：cell 目录已空
     }
 
+    // ===== CI. 批13 细胞词库导入失败路径真注入钉（批8 ROB 标准） =====
+    // 注入面：缺源文件/伪造 zip 垃圾(非UTF-8)/损坏正文(跳过率)/目标被排他占用
+    // 的覆盖导入/写盘失败回滚。验收口径：失败必须显式提示、不落半截包、
+    // 不留 .tmp/.prev 垃圾、覆盖场景失败后旧包必须仍是完整可用旧版。
+    {
+        std::unordered_set<std::string> sy = { "xi", "bao", "ci", "gang", "hao" };
+        std::wstring cellDir = lingxi::CellPackDirW();
+        auto writeSrc = [&](const std::wstring& name, const std::string& content) -> std::wstring {
+            std::wstring p = ExeDir() + L"\\" + name;
+            HANDLE h = CreateFileW(p.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                                   FILE_ATTRIBUTE_NORMAL, NULL);
+            if (h != INVALID_HANDLE_VALUE)
+            {
+                DWORD w = 0;
+                WriteFile(h, content.data(), (DWORD)content.size(), &w, NULL);
+                CloseHandle(h);
+            }
+            return p;
+        };
+        auto countPattern = [&](const std::wstring& pat) -> int {
+            WIN32_FIND_DATAW fd{};
+            HANDLE h = FindFirstFileW(pat.c_str(), &fd);
+            if (h == INVALID_HANDLE_VALUE) return 0;
+            int n = 0;
+            do { n++; } while (FindNextFileW(h, &fd));
+            FindClose(h);
+            return n;
+        };
+        auto msgHas = [](const lingxi::CellImportResult& r, const wchar_t* sub) {
+            return !r.ok && r.message.find(sub) != std::wstring::npos; };
+
+        // CI1 源文件不存在 → 显式失败，cell 目录无新包
+        {
+            lingxi::CellImportResult r = lingxi::ImportCellPackSync(
+                ExeDir() + L"\\no_such_ci1.lxcell", sy, false);
+            Report(msgHas(r, L"读取源文件失败") &&
+                       countPattern(cellDir + L"\\*.lxcell") == 0 &&
+                       countPattern(cellDir + L"\\*.tmp") == 0,
+                   "CI1 missing source: explicit failure, nothing landed");
+        }
+        // CI2 伪造 zip 垃圾（PK 魔数+非法 UTF-8 字节）→ 整包拒绝
+        {
+            std::string fake = "PK\x03\x04";
+            fake.append(64, '\xFF');
+            fake += "\x00\x01garbage";
+            std::wstring src = writeSrc(L"tmp_ci2.zip", fake);
+            lingxi::CellImportResult r = lingxi::ImportCellPackSync(src, sy, false);
+            bool noLand = countPattern(cellDir + L"\\*.lxcell") == 0;
+            DeleteFileW(src.c_str());
+            Report(msgHas(r, L"UTF-8") && noLand,
+                   "CI2 fake zip garbage: whole-pack reject, nothing landed");
+        }
+        // CI3 损坏正文（合法头+1 有效行+3 垃圾行）→ 跳过率>10% 显式失败
+        {
+            std::string bad = "LXCELL 1\nname=bad ci3\nid=ci3bad\n"
+                              "\xE7\xBB\x86\xE8\x83\x9E\xE8\xAF\x8D\txi bao ci\n"
+                              "noseparator garbage line one\n"
+                              "another bad line two\n"
+                              "third junk line\n";
+            std::wstring src = writeSrc(L"tmp_ci3.lxcell", bad);
+            lingxi::CellImportResult r = lingxi::ImportCellPackSync(src, sy, false);
+            bool noLand = countPattern(cellDir + L"\\*.lxcell") == 0;
+            DeleteFileW(src.c_str());
+            Report(msgHas(r, L"跳过率") && noLand,
+                   "CI3 corrupt body: skip-rate reject, nothing landed");
+        }
+        // CI4 目标被排他占用（杀软/另一实例）+ 覆盖导入 → 让位失败，旧包完好无残留
+        {
+            std::string v0s = "LXCELL 1\nname=hold ci4\nid=ci4hold\n"
+                              "\xE9\x92\xA2\xE8\x80\x97\tgang hao\n";
+            std::wstring src = writeSrc(L"tmp_ci4.lxcell", v0s);
+            lingxi::CellImportResult r0 = lingxi::ImportCellPackSync(src, sy, false);
+            std::wstring target = cellDir + L"\\ci4hold.lxcell";
+            std::string v0;
+            bool landed = r0.ok && lingxi::ReadFileBytes(target, v0) && !v0.empty();
+            HANDLE hl = CreateFileW(target.c_str(), GENERIC_READ | GENERIC_WRITE, 0, NULL,
+                                    OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+            bool held = hl != INVALID_HANDLE_VALUE;
+            std::string v2s = "LXCELL 1\nname=hold ci4 v2\nid=ci4hold\n"
+                              "\xE7\xBB\x86\xE8\x83\x9E\txi bao\n";
+            std::wstring src2 = writeSrc(L"tmp_ci4b.lxcell", v2s);
+            lingxi::CellImportResult r1 = lingxi::ImportCellPackSync(src2, sy, true);
+            if (held) CloseHandle(hl);
+            std::string v1;
+            bool intact = lingxi::ReadFileBytes(target, v1) && v1 == v0;
+            bool noResidue = countPattern(cellDir + L"\\*.prev") == 0 &&
+                             countPattern(cellDir + L"\\*.tmp") == 0;
+            DeleteFileW(src.c_str()); DeleteFileW(src2.c_str());
+            DeleteFileW(target.c_str());
+            Report(landed && held && msgHas(r1, L"占用") && intact && noResidue,
+                   "CI4 locked target overwrite: explicit failure, old pack intact, no residue");
+        }
+        // CI5 写盘失败（.tmp 名被目录占位）→ 回滚恢复旧包完整可用
+        {
+            std::string v0s = "LXCELL 1\nname=hold ci5\nid=ci5hold\n"
+                              "\xE9\x92\xA2\xE8\x80\x97\tgang hao\n";
+            std::wstring src = writeSrc(L"tmp_ci5.lxcell", v0s);
+            lingxi::ImportCellPackSync(src, sy, false);
+            std::wstring target = cellDir + L"\\ci5hold.lxcell";
+            std::string v0;
+            bool landed = lingxi::ReadFileBytes(target, v0) && !v0.empty();
+            std::wstring blocker = target + L".tmp";
+            bool blocked = CreateDirectoryW(blocker.c_str(), NULL) != FALSE;
+            std::string v2s = "LXCELL 1\nname=hold ci5 v2\nid=ci5hold\n"
+                              "\xE7\xBB\x86\xE8\x83\x9E\txi bao\n";
+            std::wstring src2 = writeSrc(L"tmp_ci5b.lxcell", v2s);
+            lingxi::CellImportResult r = lingxi::ImportCellPackSync(src2, sy, true);
+            std::string v1;
+            bool intact = lingxi::ReadFileBytes(target, v1) && v1 == v0;
+            bool noPrev = countPattern(cellDir + L"\\*.prev") == 0;
+            RemoveDirectoryW(blocker.c_str());
+            DeleteFileW(src.c_str()); DeleteFileW(src2.c_str());
+            DeleteFileW(target.c_str());
+            Report(landed && blocked && msgHas(r, L"落盘失败") && intact && noPrev,
+                   "CI5 write blocked: rollback restores old pack intact");
+        }
+        lingxi::IPredictor* resetCi = lingxi::CreatePinyinPredictor();
+        if (resetCi) delete resetCi; // 复位沙盒：cell 目录已空
+    }
+
     // ===== C2. 管道帧层：往返/半帧+对端消失/写向已消失对端/超时取消(H1路径) =====
     // 断言面：坏端点必须"有界返回 false"，不许挂死；H1 取消路径等取消落定后
     // 栈上 OVERLAPPED 才析构——本进程后续用例继续跑即栈未坏的行为证据。
