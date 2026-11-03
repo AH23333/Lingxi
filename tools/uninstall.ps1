@@ -1,11 +1,16 @@
 # Lingxi IME one-click uninstaller (elevated). ASCII only.
 # Companion of uninstall.cmd (elevation wrapper / tray entry).
 # Cleans: COM CLSID (x64+x86), CTF TIP trees (HKLM+HKCU), SortOrder
-# assembly items, language list tips, HKCU settings, APPDATA user data,
-# autostart Run entry, running processes. Verifies zero residue and
-# exits with residue count.
+# assembly items, language list tips, autostart Run entry, running
+# processes. User data (HKCU\Software\LingxiIme settings + %APPDATA%
+# \LingxiIme learned dictionary) is PRESERVED by default: uninstalling
+# must not throw away the user's dictionary. Pass -PurgeUserData to
+# remove it as well. Verifies zero residue and exits with residue
+# count (user-data checks flip: default expects KEPT, purge expects
+# GONE).
 #requires -Version 5.1
-param([string]$Root = (Split-Path -Parent $PSScriptRoot))
+param([string]$Root = (Split-Path -Parent $PSScriptRoot),
+      [switch]$PurgeUserData)
 
 $ErrorActionPreference = 'Continue'
 $tip  = '{ae967759-f054-4e02-ac5d-c172f1e9b99b}'   # CLSID_LingxiTextService
@@ -47,7 +52,7 @@ $null = reg delete "HKLM\SOFTWARE\Classes\CLSID\$tip" /f 2>$null
 $null = reg delete "HKLM\SOFTWARE\Classes\WOW6432Node\CLSID\$tip" /f 2>$null
 $null = reg delete "HKLM\SOFTWARE\Microsoft\CTF\TIP\$tip" /f 2>$null
 $null = reg delete "HKCU\Software\Microsoft\CTF\TIP\$tip" /f 2>$null
-$null = reg delete "HKCU\Software\LingxiIme" /f 2>$null
+if ($PurgeUserData) { $null = reg delete "HKCU\Software\LingxiIme" /f 2>$null }
 
 Step "remove autostart Run entry"
 Remove-ItemProperty -Path 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
@@ -75,8 +80,12 @@ if (-not (Get-Process -Name ctfmon -ErrorAction SilentlyContinue)) {
     Start-Process "$env:windir\System32\ctfmon.exe"
 }
 
-Step "remove user data (APPDATA\LingxiIme: learned dict etc.)"
-Remove-Item "$env:APPDATA\LingxiIme" -Recurse -Force -ErrorAction SilentlyContinue
+if ($PurgeUserData) {
+    Step "purge user data (-PurgeUserData): APPDATA\LingxiIme"
+    Remove-Item "$env:APPDATA\LingxiIme" -Recurse -Force -ErrorAction SilentlyContinue
+} else {
+    Step "keep user data (APPDATA\LingxiIme + HKCU settings); -PurgeUserData to remove"
+}
 
 # ---- zero-residue verification ----
 Step "verify zero residue"
@@ -99,15 +108,17 @@ function Test-LangListResidue {
         Where-Object { $_ -like "*$tip*" })
     return $tips.Count -gt 0
 }
+$udKept = -not $PurgeUserData   # default: user data must SURVIVE the uninstall
+if ($udKept) { Write-Host "  (user-data checks expect KEPT; -PurgeUserData flips them to expect GONE)" }
 $checks = @(
     @{ n = 'HKLM CLSID (x64)';    ok = -not (Test-Path "HKLM:\SOFTWARE\Classes\CLSID\$tip") },
     @{ n = 'HKLM CLSID (x86)';    ok = -not (Test-Path "HKLM:\SOFTWARE\Classes\WOW6432Node\CLSID\$tip") },
     @{ n = 'HKLM CTF TIP tree';   ok = -not (Test-Path "HKLM:\SOFTWARE\Microsoft\CTF\TIP\$tip") },
     @{ n = 'HKCU CTF TIP tree';   ok = -not (Test-Path "HKCU:\Software\Microsoft\CTF\TIP\$tip") },
-    @{ n = 'HKCU settings key';   ok = -not (Test-Path "HKCU:\Software\LingxiIme") },
+    @{ n = 'HKCU settings key (user data)'; ok = ($udKept -eq [bool](Test-Path "HKCU:\Software\LingxiIme")) },
     @{ n = 'SortOrder items';     ok = -not (Test-SortOrderResidue) },
     @{ n = 'language list tips';  ok = -not (Test-LangListResidue) },
-    @{ n = 'APPDATA user data';   ok = -not (Test-Path "$env:APPDATA\LingxiIme") },
+    @{ n = 'APPDATA user data (user data)'; ok = ($udKept -eq [bool](Test-Path "$env:APPDATA\LingxiIme")) },
     @{ n = 'autostart Run entry'; ok = $null -eq (Get-ItemProperty `
         'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
         -Name LingxiIme -ErrorAction SilentlyContinue) }
