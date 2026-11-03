@@ -357,7 +357,7 @@ std::wstring lingxi::BuildDiagnosticsText()
     t += buf;
     lingxi::Settings s = lingxi::LoadSettings();
     _snwprintf_s(buf, _TRUNCATE,
-        L"设置：拼音=%u 候选数=%u 字号=%u 字体=%u 皮肤=%u 不透明度=%u%% "
+        L"设置：拼音=%u 补全候选数=%u 字号=%u 字体=%u 皮肤=%u 不透明度=%u%% "
         L"双拼=%u 繁体=%u 暂停=%u 固定位置=%u 无痕=%u\n",
         (unsigned)s.pinyinEnabled, (unsigned)s.candidateCount,
         (unsigned)s.candidateFontSize, (unsigned)s.uiFont, (unsigned)s.skinIndex,

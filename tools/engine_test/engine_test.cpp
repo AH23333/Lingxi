@@ -2343,6 +2343,16 @@ int wmain(int argc, wchar_t** argv)
         Report(quarantined, "C3 invalid ns writes quarantine key");
         Report(realUntouched, "C3 invalid ns never touches real key");
         Report(sandboxed, "C3 valid ns writes sandbox key");
+
+        // ① 候选数语义收口钉（2026-11-03）：kPageSize 是 DLL/UI 跨进程协议常量
+        // （数字键 1-9 对应页内位置，改它=改帧语义，属 §六 待裁决）；
+        // candidateCount 只作用于英文补全上限（pipeserver.cpp 裁剪处），默认必须为 9
+        // （deep_test T12/T14 的"每页 9"口径以此为准）。
+        Report(lingxi::kPageSize == 9, "PIN kPageSize protocol constant == 9");
+        {
+            lingxi::Settings d;
+            Report(d.candidateCount == 9, "PIN default candidateCount == 9 (English cap only)");
+        }
     }
 
     // 共用：词典字节读 + 逐行严格校验（word\tkey\tcount[\t1]，count 必须纯数字）
