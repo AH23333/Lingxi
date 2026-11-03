@@ -1864,6 +1864,10 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         }
     }
 
+    // 批6 显式词条（AddUserWord/MergeUserDict 通道）长度封顶口径
+    static constexpr size_t kMaxUserWordLen = 32;   // 词条 ≤32 个 UTF-16 字符
+    static constexpr size_t kMaxUserKeyLen = 128;   // 归一拼音键 ≤128 ASCII
+
     bool RemoveUserWord(const std::wstring& word, const std::wstring& key) override
     {
         if (word.empty()) return false;
@@ -1920,8 +1924,11 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     bool AddUserWord(const std::wstring& word, const std::wstring& key, int gain) override
     {
         if (word.empty() || gain <= 0) return false;
+        // 批6 边界：显式词条长度封顶（词 32 字/归一键 128 字符）。Learn 通道
+        // 不受此限（自学习词来自候选，天然有界）；导入通道同口径。
+        if (word.size() > kMaxUserWordLen) return false;
         std::string kNorm = NormKey(ToUtf8(key)); // 新增键一律归一（Learn 口径）
-        if (kNorm.empty()) return false;
+        if (kNorm.empty() || kNorm.size() > kMaxUserKeyLen) return false;
         Settings as = LoadSettings(); // B：锁外载入（settings→_udMtx 顺序）
         const long long nowSec = (long long)std::time(nullptr);
         {
@@ -1972,17 +1979,20 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         return found;
     }
 
-    bool MergeUserDict(const std::vector<UserDictEntry>& entries) override
+    int MergeUserDict(const std::vector<UserDictEntry>& entries) override
     {
-        if (entries.empty()) return false;
+        if (entries.empty()) return 0;
         Settings ms = LoadSettings(); // B：锁外载入（settings→_udMtx 顺序）
         const long long nowSec = (long long)std::time(nullptr);
+        int accepted = 0; // 批6：返回实际合并条数，非法/超长条跳过（调用方据此明示）
         {
             std::lock_guard<std::mutex> lk(_udMtx);
             for (const auto& e : entries)
             {
                 std::string kNorm = NormKey(ToUtf8(e.key)); // 导入键归一，查询可命中
-                if (e.word.empty() || kNorm.empty() || e.count <= 0) continue;
+                if (e.word.empty() || kNorm.empty() || e.count <= 0 ||
+                    e.word.size() > kMaxUserWordLen || kNorm.size() > kMaxUserKeyLen)
+                    continue;
                 if (_userDict.find(kNorm) == _userDict.end())
                     EvictUserDictKeysLocked(nowSec, ms); // L10：新键插入前查键数封顶
                 auto& vec = _userDict[kNorm];
@@ -1991,12 +2001,13 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                     if (up.word == e.word) { up.count += e.count; up.manual = true; merged = true; break; }
                 if (!merged) vec.push_back({ e.word, e.count, true }); // 显式导入=manual，淘汰豁免
                 UpdateUserInitIndexLocked(kNorm);
+                accepted++;
             }
-            _pc->dirty.store(true);
+            if (accepted > 0) _pc->dirty.store(true);
         }
-        FlushUserDict();
-        LX_LOG(L"py", L"词典导入合并: %zu 条", entries.size());
-        return true;
+        if (accepted > 0) FlushUserDict();
+        LX_LOG(L"py", L"词典导入合并: %zu 条中接受 %d 条", entries.size(), accepted);
+        return accepted;
     }
 
     // 模糊音：返回该完整音节的合法等价音节（自身在首位）。

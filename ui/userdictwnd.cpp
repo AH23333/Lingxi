@@ -294,14 +294,25 @@ void UdImport()
                     L"灵犀输入法", MB_OK | MB_ICONWARNING);
         return;
     }
-    // 合并直达引擎原子操作：同 (word,key) 累加 count，否则追加
-    if (!g_hooks.mergeUserDict || !g_hooks.mergeUserDict(imported))
+    // 合并直达引擎原子操作：同 (word,key) 累加 count，否则追加。
+    // 批6：引擎返回实际合并条数，非法/超长条跳过——必须明示，不静默吞。
+    int acc = g_hooks.mergeUserDict ? g_hooks.mergeUserDict(imported) : -1;
+    if (acc < 0)
     {
         MessageBoxW(g_hUserDict, L"导入失败（引擎未运行或写入失败），未合并词条。",
                     L"灵犀输入法", MB_OK | MB_ICONWARNING);
         return;
     }
     RefreshUdList();
+    size_t skipped = imported.size() - (size_t)acc;
+    wchar_t msg[160];
+    if (skipped)
+        _snwprintf_s(msg, _TRUNCATE, L"已导入 %d 条，跳过 %zu 条（空词/非法拼音/次数≤0/词条超32字/拼音超128）",
+                     acc, skipped);
+    else
+        _snwprintf_s(msg, _TRUNCATE, L"已导入 %d 条", acc);
+    MessageBoxW(g_hUserDict, msg, L"导入用户词典",
+                MB_OK | (skipped ? MB_ICONWARNING : MB_ICONINFORMATION));
 }
 
 void UdExport()
@@ -352,6 +363,13 @@ void UdAddWord()
     {
         SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC,
                         L"无法自动推断该词拼音（含词典外字符），请手动填写拼音");
+        return;
+    }
+    // 批6：与引擎 AddUserWord 同口径的长度封顶（先于引擎拒绝给准确文案）
+    if (w.size() > 32 || k.size() > 128)
+    {
+        SetDlgItemTextW(g_hUserDict, IDC_UD_STATIC,
+                        L"词条过长（上限 32 字）或拼音过长（上限 128），未保存");
         return;
     }
     bool merged = UserDictHasWord(w); // 预读：同词已存在 → 状态文案走提升语义
@@ -538,7 +556,12 @@ bool UserDictReplaceFromRaw(const std::string& rawUtf8)
         return false;
     std::vector<UserDictEntry> entries = ParseUserDict(rawUtf8);
     if (entries.empty()) return true;
-    return g_hooks.mergeUserDict && g_hooks.mergeUserDict(entries);
+    int acc = g_hooks.mergeUserDict ? g_hooks.mergeUserDict(entries) : -1;
+    if (acc < 0) return false;
+    if ((size_t)acc < entries.size()) // 批6：备份随行含非法/超长条——记日志明示
+        LX_LOG(L"ui", L"备份恢复词典：%zu 条中合并 %d 条（其余非法/超长被跳过）",
+               entries.size(), acc);
+    return true;
 }
 
 void CreateUserDictWindow(HINSTANCE hInst)

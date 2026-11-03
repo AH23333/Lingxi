@@ -2473,7 +2473,7 @@ int wmain(int argc, wchar_t** argv)
                     e.count = 1;
                     ents.push_back(std::move(e));
                 }
-                bool mOk = py->MergeUserDict(ents);
+                bool mOk = (py->MergeUserDict(ents) == kCap + 1); // 批6：精确接受条数
                 py->FlushUserDict();
                 lines = readUdLines();
                 bool allManual = mOk;
@@ -2491,6 +2491,75 @@ int wmain(int argc, wchar_t** argv)
                            "L10 all-manual 20001: over-cap allowed, no eviction", det);
                 }
                 py->ClearUserDict(); // 复位沙盒词典，别把 2 万测试键留给后续用例
+
+                // C. 批6 管理窗边界钉：空词/空键/非字母键/gain≤0/长度封顶/
+                // 重复键累加/导入接受条数/调频下限/删除全读音（管理窗与引擎同口径）
+                {
+                    auto countFor = [&](const std::wstring& k) -> long {
+                        for (const auto& l : readUdLines())
+                        {
+                            if (keyOf(l) != k) continue;
+                            size_t t1 = l.find(L'\t');
+                            size_t t2 = l.find(L'\t', t1 + 1);
+                            size_t t3 = l.find(L'\t', t2 + 1);
+                            std::wstring c = l.substr(t2 + 1,
+                                (t3 == std::wstring::npos ? l.size() : t3) - t2 - 1);
+                            return wcstol(c.c_str(), NULL, 10);
+                        }
+                        return -1;
+                    };
+                    bool rejEmpty = py->AddUserWord(L"", L"ceshi", 1000);
+                    bool rejKey   = py->AddUserWord(L"测试词", L"", 1000);
+                    bool rejBogus = py->AddUserWord(L"测试词", L"123!@#", 1000); // NormKey 空
+                    bool rejGain  = py->AddUserWord(L"测试词", L"ceshi", 0);
+                    Report(!rejEmpty && !rejKey && !rejBogus && !rejGain,
+                           "UD-C1 add: empty word/key/gain rejected");
+
+                    bool rejLongW = py->AddUserWord(std::wstring(33, L'测'), L"chang", 1);
+                    bool rejLongK = py->AddUserWord(L"长键词", std::wstring(129, L'a'), 1);
+                    bool okW32    = py->AddUserWord(std::wstring(32, L'测'), L"sanchang", 1);
+                    bool okK128   = py->AddUserWord(L"边界键", std::wstring(128, L'a'), 1);
+                    Report(!rejLongW && !rejLongK && okW32 && okK128,
+                           "UD-C2 add: caps word<=32 key<=128, boundary accepted");
+
+                    py->ClearUserDict();
+                    py->AddUserWord(L"重复词", L"chongfu", 1000);
+                    py->AddUserWord(L"重复词", L"chongfu", 1000);
+                    py->FlushUserDict();
+                    Report(countFor(L"chongfu") == 2000,
+                           "UD-C3 dup add: one line, count accumulates");
+
+                    std::vector<lingxi::UserDictEntry> mix;
+                    auto mk = [](const wchar_t* w, const wchar_t* k, int c) {
+                        lingxi::UserDictEntry e; e.word = w; e.key = k; e.count = c;
+                        return e; };
+                    mix.push_back(mk(L"有效一", L"youxiaoyi", 5));
+                    mix.push_back(mk(L"有效二", L"youxiaoer", 7));
+                    mix.push_back(mk(L"", L"kongci", 5));                 // 空词
+                    mix.push_back(mk(L"空键词", L"123!@#", 5));            // 归一空键
+                    mix.push_back(mk(L"零次词", L"lingci", 0));            // count≤0
+                    mix.push_back(mk(std::wstring(33, L'超').c_str(), L"chaochang", 5)); // 超长词
+                    int acc = py->MergeUserDict(mix);
+                    Report(acc == 2 && countFor(L"youxiaoyi") == 5 &&
+                           countFor(L"lingci") < 0,
+                           "UD-C4 merge: accepted count, invalid skipped not silent");
+
+                    py->NudgeUserWord(L"有效一", L"youxiaoyi", -100000);
+                    py->FlushUserDict();
+                    Report(countFor(L"youxiaoyi") == 1,
+                           "UD-C5 nudge floor: count clamps to 1");
+
+                    py->ClearUserDict();
+                    py->AddUserWord(L"多音词", L"duoyina", 5);
+                    py->AddUserWord(L"多音词", L"duoyinb", 5);
+                    bool rmEmpty = py->RemoveUserWord(L"", L"");
+                    bool rmAll   = py->RemoveUserWord(L"多音词", L"");
+                    py->FlushUserDict();
+                    Report(!rmEmpty && rmAll && countFor(L"duoyina") < 0 &&
+                           countFor(L"duoyinb") < 0,
+                           "UD-C6 remove: empty word false, key-empty kills all readings");
+                    py->ClearUserDict(); // 复位，不留 C 块词条给后续用例
+                }
                 delete py;
                 }
             }

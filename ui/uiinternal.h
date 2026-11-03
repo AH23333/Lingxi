@@ -34,7 +34,7 @@ struct UiHooks
     std::function<bool()> clearUserDict; // 清空全部词条
     std::function<bool(const std::wstring&, const std::wstring&, int)> addUserWord; // (word,key,gain) upsert
     std::function<bool(const std::wstring&, const std::wstring&, int)> nudgeUserWord; // (word,key,±delta) 调频
-    std::function<bool(const std::vector<UserDictEntry>&)> mergeUserDict; // 导入合并
+    std::function<int(const std::vector<UserDictEntry>&)> mergeUserDict; // 导入合并；返回实际合并条数，-1=引擎未运行
     std::function<void()> flushUserDict; // L7：导出/备份前在途学习落盘收敛
     // A 细胞词库（cellwnd.cpp）：装/删包后请求引擎重扫（只置原子标志）；
     // 导入线程取音节表快照做词条校验（_syllables 构造后只读，拷贝安全）。

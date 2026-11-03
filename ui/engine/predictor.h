@@ -52,11 +52,13 @@ public:
     // 内存+落盘并等收敛后返回；默认 false=引擎不支持（词表/LLM 桩）。
     // key 空=该词全部读音键；AddUserWord 已存在则 count+=gain 否则新增；
     // NudgeUserWord count+=delta（下限 1）；MergeUserDict 同 (word,key) 累加。
+    // 批6 边界口径：AddUserWord 拒空词/归一空键/gain≤0/词>32字/键>128；
+    // MergeUserDict 返回实际合并条数（跳过非法/超长条），-1=引擎不支持。
     virtual bool RemoveUserWord(const std::wstring& /*word*/, const std::wstring& /*key*/) { return false; }
     virtual bool ClearUserDict() { return false; }
     virtual bool AddUserWord(const std::wstring& /*word*/, const std::wstring& /*key*/, int /*gain*/) { return false; }
     virtual bool NudgeUserWord(const std::wstring& /*word*/, const std::wstring& /*key*/, int /*delta*/) { return false; }
-    virtual bool MergeUserDict(const std::vector<UserDictEntry>& /*entries*/) { return false; }
+    virtual int MergeUserDict(const std::vector<UserDictEntry>& /*entries*/) { return -1; }
     // A 细胞词库（设计稿 design-cell-dict-2026-11-03）：装包/删包后请求重扫
     // %APPDATA%\LingxiIme\cell\（裁决⑤红线：本方法只置原子标志，真正的
     // _entries/索引重建发生在预测线程 Predict 入口——与模糊音组变更同先例，
