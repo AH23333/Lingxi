@@ -308,3 +308,13 @@ x64/x86 两份哈希与 §12.3 InprocServer32 记录逐字一致（快照即被�
 - 证据 2（本轮取证读数）：以 7754943 同源码（三文件 mtime 15:36 < 构建 17:18）干净 Release 构建 `bin\work\enginetest_rel\engine_test.exe`（966144B，0 警告 0 错误），17:48:30 单实例运行，独立沙盒（`LINGXI_SETTINGS_NS=myrel` + 私有 exeDir\userdata，与并行实例零共享）：**PASS=334 FAIL=0**，`jintianqi` median=**0.878ms**（阈值 10ms），全程 53s（Debug 同套件 ~20min，~20× 慢，与未优化解释自洽）。
 - 证据 3：历史 Release 读数同断言 0.419ms（12:54 regress-run4-manual）/0.470ms（00:21），跨 Debug 五连跑 19.4~25.0ms——差异稳定复现于构建配置而非负载。
 - 结论：tier1-4 diff 与延迟 FAIL 均无关（这点 §13.3 判断正确），但"绿"的依据应改为本 Release 读数 334/0；**后续任何门禁读数必须先核对 lastbuildstate=Release**，Debug 件跑出的延迟数不可作为放行或定性依据。有意替换记录（§13.3 的 D0089F4C 哈希、ImeCore 未动）经复核属实，无需变更。
+
+### 13.5 Tier1-5 农历/无年份日期/明天后天——门禁与有意替换记录（commit `da3c0e0`）
+
+- 功能：`rq` 追加无年份 `%u月%u日`；新触发词 `mt`/`ht`（明天/后天，FileTime+1/2 天，含星期）、`nl`（农历今日 + 干支年两种形态，1900-2100 纯本地表查，不依赖 OS 日历）。引擎代码仅编译进 LingxiUI.exe 与 engine_test，**两枚 ImeCore.dll 冻结件未动**。
+- 首跑 `tmp\et_run7.txt` PASS=345 FAIL=8，全为 P5d 农历锚点。根因静态定位：`LunarDateStr` 逐年天数位循环 `for(bit=0x8000; bit; bit>>=1)` 把低 4 位（闰月编号）也当月份位计数，124 年累计虚增 ~78 天（≈Σpopcount(闰月号)），落点系统性偏移约两个闰月；原 calendar.js 口径为 `i > 0x8`（仅 1..12 月 12 位）。修正后 PS 重演全 9 锚点（1900-01-31/2023-01-22/2024-02-10/2025-01-29/2025-07-25 闰六月初一/2026-02-17/2027-02-06 正月初一、2024-09-17/2026-09-25 八月十五）OK。
+- 门禁（均单实例 Release、私有 APPDATA 沙盒 + 独立 LINGXI_SETTINGS_NS）：`tmp\et_run8.txt`（工作区树）PASS=**353** FAIL=**0**；`tmp\et_run9.txt`（**da3c0e0 干净 worktree 件**）PASS=**353** FAIL=**0**。基线 334 + P5d 新增 19 条，精确吻合。
+- 替换件来源说明：工作区存在并行会话未提交改动（`common/settings.h/.cpp`、`ui/candwnd_core/interact/render.cpp`、`ui/window.h`——Tier3-C 文件域）。为不让他人 WIP 混入用户加载件，替换件由 `git worktree`（detached da3c0e0）构建，且以同树 engine_test 读数（et_run9 353/0）背书。
+- 替换：`bin\Debug\LingxiUI.exe` = 3509248B `01760F1E60B11E241799FC2A306CCA447AB6F56B7C9269D8DABA84A2C3077138`（旧件 3261440B=D0089F4C… 备份 `LingxiUI.exe.20261103182459.prev`）。
+- 复验：imecheck Self-check PASSED；`--diagnostics` 探针正常（构建日期 Nov 3 2026、路径 bin\Debug、用户词库 716 条只读加载、符号/模糊/纠错节齐）。替换时 LingxiUI 进程未在运行，新件将由 IME 下次拉起自动拾取。
+- **待用户重启后真机确认**：`rq` 第 6 形态、`mt`/`ht`/`nl` 触发注入与上屏（候选窗在 LingxiUI.exe 内，UI 进程重生即可，无需注销）。
