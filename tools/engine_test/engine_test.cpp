@@ -726,6 +726,47 @@ int wmain(int argc, wchar_t** argv)
                            !c2.empty() && c2[0] == L"1",
                            "calc 200k unary-minus probe: depth-gated empty, no overflow");
                 }
+                // P5v-12. Tier1-6 万亿级：10^12/10^13（小写一十归约）/16 位封顶/17 位拒
+                Report(has(lingxi::CalcCandidates(L"v1000000000000"), L"壹万亿"),
+                       "calc tier1-6 1e12 upper = 壹万亿");
+                Report(has(lingxi::CalcCandidates(L"v1000000000000"), L"壹万亿元整"),
+                       "calc tier1-6 1e12 rmb = 壹万亿元整");
+                Report(has(lingxi::CalcCandidates(L"v10000000000000"), L"十万亿"),
+                       "calc tier1-6 1e13 lower yishi fold");
+                Report(has(lingxi::CalcCandidates(L"v9999999999999999"),
+                          L"玖仟玖佰玖拾玖万亿玖仟玖佰玖拾玖亿玖仟玖佰玖拾玖万玖仟玖佰玖拾玖"),
+                       "calc tier1-6 16-digit max upper");
+                Report(lingxi::CalcCandidates(L"v10000000000000000").empty(),
+                       "calc tier1-6 17-digit rejected");
+                // P5v-13. Tier1-6 负数金额：负读法既有基础上补金额+负前缀；
+                // 舍入归零的负小数不产"负零元整"
+                {
+                    auto c = lingxi::CalcCandidates(L"v-12.34");
+                    bool ok = !c.empty() && c[0] == L"-12.34" &&
+                              has(c, L"负壹拾贰元叁角肆分");
+                    auto z = lingxi::CalcCandidates(L"v-0.004");
+                    Report(ok && has(lingxi::CalcCandidates(L"v-5"), L"负伍元整") &&
+                           has(z, L"负零点零零肆") && !has(z, L"负零元整"),
+                           "calc tier1-6 negative rmb + no fu-ling-yuan-zheng");
+                }
+                // P5v-14. Tier1-6 小数边界：≥3 位四舍五入到分（进/舍/进位到元）
+                Report(has(lingxi::CalcCandidates(L"v12.345"), L"壹拾贰元叁角伍分") &&
+                       has(lingxi::CalcCandidates(L"v12.344"), L"壹拾贰元叁角肆分") &&
+                       has(lingxi::CalcCandidates(L"v12.999"), L"壹拾叁元整") &&
+                       has(lingxi::CalcCandidates(L"v0.004"), L"零元整") &&
+                       has(lingxi::CalcCandidates(L"v1/3"), L"叁角叁分"),
+                       "calc tier1-6 frac rounding to fen (up/down/carry/expr)");
+                // P5v-15. Tier1-6 口语读法：数首/亿/万/负 后"二"在千万亿前读两；
+                // 二百/十二万等语境保守不动
+                Report(has(lingxi::CalcCandidates(L"v2000000"), L"两百万") &&
+                       has(lingxi::CalcCandidates(L"v20000"), L"两万") &&
+                       has(lingxi::CalcCandidates(L"v20020000"), L"两千零二万") &&
+                       has(lingxi::CalcCandidates(L"v220000"), L"二十二万") &&
+                       !has(lingxi::CalcCandidates(L"v220000"), L"两十二万") &&
+                       has(lingxi::CalcCandidates(L"v200"), L"二百") &&
+                       !has(lingxi::CalcCandidates(L"v200"), L"两百") &&
+                       has(lingxi::CalcCandidates(L"v-20000"), L"负两万"),
+                       "calc tier1-6 colloquial liang/er contexts");
             }
 
             // P5s. 符号搜索（ui/symsearch.cpp，符号面板搜索行共用）：

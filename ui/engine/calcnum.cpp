@@ -105,6 +105,48 @@ void CnFromNumberStr(const std::wstring& s, std::wstring& upper, std::wstring& l
     }
 }
 
+// 无符号十进制串 +1（四舍五入进位用；保留前导零宽度无所谓，IntToCn 剥零）。
+std::wstring StrInc1(const std::wstring& digits)
+{
+    std::wstring d = digits;
+    size_t i = d.size();
+    while (i > 0)
+    {
+        d[--i]++;
+        if (d[i] <= L'9') return d;
+        d[i] = L'0';
+    }
+    return L"1" + d;
+}
+
+// 口语读法（Tier1-6）：组首"二"（数首或 亿/万/负 之后）按组内位权读"两"——
+// 千位（两千/二千万→两千万）、万/亿位（两万/两亿）、百位仅当本组带 万/亿
+// 单位（二百万→两百万；纯二百 保守不动）；十位/个位/小数保留"二"
+// （二十万、零二万、二点五 不动——与搜狗口径一致）。
+std::wstring ColloquialLower(const std::wstring& s0)
+{
+    std::wstring s = s0;
+    for (size_t i = 0; i < s.size(); i++)
+    {
+        if (s[i] != L'二') continue;
+        bool groupStart = (i == 0) || s[i - 1] == L'亿' || s[i - 1] == L'万' ||
+                          s[i - 1] == L'负';
+        if (!groupStart || i + 1 >= s.size()) continue;
+        wchar_t nxt = s[i + 1];
+        if (nxt == L'千' || nxt == L'万' || nxt == L'亿')
+            s[i] = L'两';
+        else if (nxt == L'百')
+        {
+            for (size_t j = i + 2; j < s.size(); j++)
+            {
+                if (s[j] == L'万' || s[j] == L'亿') { s[i] = L'两'; break; }
+                if (s[j] == L'点') break; // 小数点=整数部分终点
+            }
+        }
+    }
+    return s;
+}
+
 // 人民币金额：intD 无符号整数串，frac2 恰 2 位（角分）。
 // 整数部分超 16 位返回空（不产金额候选）。
 std::wstring RmbFrom(const std::wstring& intD, const std::wstring& frac2)
@@ -126,6 +168,37 @@ std::wstring RmbFrom(const std::wstring& intD, const std::wstring& frac2)
     else                           s += std::wstring(1, kDigU[j]) + L"角" +
                                         std::wstring(1, kDigU[f]) + L"分"; // 12.34 → 叁角肆分
     return s;
+}
+
+// 金额候选（Tier1-6 小数边界）：无符号数字串（可含小数）→ 人民币大写。
+// 小数 ≤2 位精确；≥3 位按第 3 位四舍五入到分（12.999 → 壹拾叁元整 进位；
+// 12.344 → 叁角肆分 舍）。旧行为=纯数字 3 位以上直接不产金额候选。
+std::wstring RmbRoundFrom(const std::wstring& absNum)
+{
+    size_t fd = absNum.find(L'.');
+    std::wstring intD = (fd == std::wstring::npos) ? absNum : absNum.substr(0, fd);
+    std::wstring fp = (fd == std::wstring::npos) ? std::wstring() : absNum.substr(fd + 1);
+    if (intD.empty()) intD = L"0"; // ".5" 前导点
+    std::wstring f2;
+    if (fp.size() <= 2)
+    {
+        f2 = fp;
+        if (f2.empty()) f2 = L"00";
+        else if (f2.size() == 1) f2 += L"0";
+    }
+    else
+    {
+        int cents = (fp[0] - L'0') * 10 + (fp[1] - L'0');
+        if (fp[2] >= L'5') // 第 3 位 ≥5 即进——尾随位只可能加大进位方向
+        {
+            cents++;
+            if (cents >= 100) { cents -= 100; intD = StrInc1(intD); }
+        }
+        f2 = std::wstring(2, L'0');
+        f2[0] = (wchar_t)(L'0' + cents / 10);
+        f2[1] = (wchar_t)(L'0' + cents % 10);
+    }
+    return RmbFrom(intD, f2);
 }
 
 // double → 可读串：|r|<1e16 且（近）整数 → 整数串；小数 → %.6f 去尾零；
@@ -291,16 +364,8 @@ std::vector<std::wstring> CalcCandidates(const std::wstring& s)
         CnFromNumberStr(rest, upper, lower);
         PushUnique(out, upper);
         PushUnique(out, lower);
-        // 金额候选：小数 ≤2 位（"12.3" 补 "30" 角位）
-        size_t fd = rest.find(L'.');
-        std::wstring fp = (fd == std::wstring::npos) ? std::wstring() : rest.substr(fd + 1);
-        if (fp.size() <= 2)
-        {
-            std::wstring f2 = fp;
-            if (f2.empty()) f2 = L"00";
-            else if (f2.size() == 1) f2 += L"0";
-            PushUnique(out, RmbFrom((fd == std::wstring::npos) ? rest : rest.substr(0, fd), f2));
-        }
+        PushUnique(out, RmbRoundFrom(rest)); // 金额（Tier1-6：≥3 位小数四舍五入到分）
+        PushUnique(out, ColloquialLower(lower)); // 口语读法（两/二）
         return out;
     }
 
@@ -313,17 +378,28 @@ std::vector<std::wstring> CalcCandidates(const std::wstring& s)
     std::wstring rs = FormatDouble(r);
     if (rs.empty()) return out; // 超界/非有限
     PushUnique(out, rs);
-    // 结果的中文读法（负数/小数支持；金额不适用表达式结果）
-    std::wstring abs = (rs[0] == L'-') ? rs.substr(1) : rs;
+    // 结果的中文读法（负数/小数支持）；Tier1-6 增强：金额与口语读法按值
+    // 追加（旧口径"金额不适用表达式结果"仅因负数金额无处落地，现负数经
+    // 表达式分支可达，统一按四舍五入到分出金额候选）
+    bool neg = (rs[0] == L'-');
+    std::wstring abs = neg ? rs.substr(1) : rs;
     std::wstring upper, lower;
     CnFromNumberStr(abs, upper, lower);
-    if (rs[0] == L'-')
+    if (neg)
     {
         if (!upper.empty()) upper.insert(0, L"负");
         if (!lower.empty()) lower.insert(0, L"负");
     }
     PushUnique(out, upper);
     PushUnique(out, lower);
+    std::wstring rmb = RmbRoundFrom(abs);
+    if (!rmb.empty())
+    {
+        if (neg && rmb == L"零元整") rmb.clear(); // 舍入归零的负小数不产"负零元整"
+        else if (neg) rmb.insert(0, L"负");
+        PushUnique(out, rmb);
+    }
+    PushUnique(out, ColloquialLower(lower));
     return out;
 }
 
