@@ -569,3 +569,12 @@
 - **规约**：① 手搓 runner 的每个环境变量都要对照 regress.cmd 原文核语义（`0` 与空串在 `GetEnvironmentVariableW` 判据下完全不同）；② e2e 批内红而 deep 同窗绿=基建步竞争签名，先查前台窗口类与 LingxiUI 实例来源（StartTime/Path），再单跑复测定性，勿动产品代码；③ e2e 出现 `[WARN] user IME restore failed` 时立刻探针 `GetKeyboardLayout(前台线程)` 确认用户会话未被卡在测试 TIP 上。
 - **关联**：#70、#86、#66；docs/DEVLOG.md 1256 行留案；tmp\regress-run5-411806557\。
 
+## 批9 候选截断轮（2026-11-03）
+
+### 96. UTF-16 代理对劈裂——按 wchar 计数截断把 emoji/生僻字切成两半 ⭐⭐（批9 抓到，已修 `7690ee0`）
+- **症状**：候选词 8 字 cap 截断（横排两处重复实现）按 `wstring::size()`（即 wchar 数）切 `substr(0,8)`——词中第 8 个单元恰是代理对高半区时，产出**孤立高半区**（半个 emoji / 半个𠮷），渲染成豆腐块或问号；用户看不到"截断"，看到的是乱码。
+- **根因**：`std::wstring::size()` 数的是 UTF-16 **码元**不是**码点**。emoji（U+1F600 族）、CJK 扩展 B 及以上（U+20000+）都占两个码元；任何"按 N 个字符截断/计数"的逻辑按码元算就必然存在劈裂位。这是 C++ 处理中文/emoji 的经典坑，**还会再犯**——凡新写截断、计数、宽度计算都先问一句：按码点还是按码元？
+- **正确做法**：按码点计数、整对处理——高半区 `0xD800..0xDBFF` 出现时连同下一码元一起算 1 个单位；切点落高半区则整对保留（配额内）或整对丢弃（超配额），绝不留孤立高/低半区。参考实现 `ui/cand_text.h` `TruncateCandWord`（批9 单一事实源，横排两处+竖排 tooltip 全部改走它）；简繁表装载/转换同型处理见 `ui/engine/pinyin.cpp` `FirstCodePoint`/`ToTraditional`（逐码点步进，代理对整对进出）。
+- **断言**：engine_test `TR3 surrogate pair kept whole at cut`、`TR4 over-quota pair dropped whole`（另 TR1/TR2/TR5 钉 BMP 边界与透传）；任何改动截断路径的代码必须保持这五条全绿。
+- **关联**：批9 commit `7690ee0`；#85（同为"编码单元口径"类坑——UTF-16LE 无 BOM 误读）。
+
