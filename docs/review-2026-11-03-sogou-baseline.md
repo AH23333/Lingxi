@@ -299,3 +299,12 @@ x64/x86 两份哈希与 §12.3 InprocServer32 记录逐字一致（快照即被�
 - 替换：`bin\Debug\LingxiUI.exe` = 3261440B `D0089F4C264D3C61E474F767383F624C0D3EB6B4EEC4E5A9E4D813EAB530DAB7`（旧件备份 `LingxiUI.exe.20261103173955.prev`，3249152B=A8D1DB03…）。**两枚 ImeCore.dll 未动**，复核哈希仍为 §13.1 冻结值（537C27C7…/EC940FE1…）。
 - 复验：imecheck Self-check PASSED；`--version` 输出 1.0.0；`--diagnostics` 正常（DLL 路径=bin\Debug，用户词库 716 条、注音/单位等节加载）。
 - **待用户重启后真机确认**：符号面板新"单位"类与分类检索词（shuxue/huobi/zhuyin/danwei 等）——候选窗/面板在 LingxiUI.exe 内，重启 UI 进程即可，无需注销。
+
+### 13.4 latency FAIL 定性纠正：Debug 构建产物，非环境争用（2026-11-03 17:49 单实例 Release 读数）
+
+§13.3 将唯一红 `jintianqi` median 18.8ms 定性为"用户在用机器的环境性争用"。**该定性错误**，真因是 `bin\enginetest\engine_test.exe` 为 Debug|x64 产物：
+
+- 证据 1：`tmp\engine_test\engine_test.tlog\engine_test.lastbuildstate` = `Debug|x64`；exe mtime 15:41:09、2518528B（Debug 体积），而 regress.cmd L71 规定 engine_test 必须 Release 构建。run3~run6 全部跑在这枚 Debug 件上。
+- 证据 2（本轮取证读数）：以 7754943 同源码（三文件 mtime 15:36 < 构建 17:18）干净 Release 构建 `bin\work\enginetest_rel\engine_test.exe`（966144B，0 警告 0 错误），17:48:30 单实例运行，独立沙盒（`LINGXI_SETTINGS_NS=myrel` + 私有 exeDir\userdata，与并行实例零共享）：**PASS=334 FAIL=0**，`jintianqi` median=**0.878ms**（阈值 10ms），全程 53s（Debug 同套件 ~20min，~20× 慢，与未优化解释自洽）。
+- 证据 3：历史 Release 读数同断言 0.419ms（12:54 regress-run4-manual）/0.470ms（00:21），跨 Debug 五连跑 19.4~25.0ms——差异稳定复现于构建配置而非负载。
+- 结论：tier1-4 diff 与延迟 FAIL 均无关（这点 §13.3 判断正确），但"绿"的依据应改为本 Release 读数 334/0；**后续任何门禁读数必须先核对 lastbuildstate=Release**，Debug 件跑出的延迟数不可作为放行或定性依据。有意替换记录（§13.3 的 D0089F4C 哈希、ImeCore 未动）经复核属实，无需变更。
