@@ -5,6 +5,7 @@
 #include "../common/guids.h"
 #include "../common/log.h"
 #include "../common/settings.h"
+#include "../common/version.h"
 
 extern LONG g_cComponents;
 
@@ -106,7 +107,7 @@ STDMETHODIMP CTextService::ActivateEx(ITfThreadMgr* pThreadMgr, TfClientId tid, 
 {
     // 版本戳随激活落日志：宿主进程加载的镜像在进程启动时冻结，重建不更新
     // 在跑实例——"体感没变"多半是旧件，本行是新旧件的直接判据（%TEMP%\lingxi-ime.log）。
-    LX_LOG(L"ime", L"ActivateEx tid=%u build=%hs %hs", tid, __DATE__, __TIME__);
+    LX_LOG(L"ime", L"ActivateEx tid=%u ver=%hs build=%hs %hs", tid, LINGXI_VERSION_STRING, __DATE__, __TIME__);
     if (!pThreadMgr) return E_INVALIDARG;
 
     _pThreadMgr = pThreadMgr;

@@ -19,6 +19,7 @@
 #include "engine/predictor.h"
 #include "../common/log.h"
 #include "../common/settings.h"
+#include "../common/version.h"
 
 // ===== 单实例命令转发 =====
 // 第二个实例（--symbols/--settings）不直接建窗，而是通过命名事件通知已运行
@@ -437,7 +438,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     if (argv && argc >= 2 && wcscmp(argv[1], L"--version") == 0)
     {
         wchar_t msg[96];
-        _snwprintf_s(msg, _TRUNCATE, L"灵犀输入法 1.0（构建于 %hs）\n", __DATE__);
+        _snwprintf_s(msg, _TRUNCATE, L"灵犀输入法 " LINGXI_VERSION_WSTR L"（构建于 %hs）\n", __DATE__);
         EmitCliText(msg);
         LocalFree(argv);
         return 0;

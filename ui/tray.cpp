@@ -9,6 +9,7 @@
 //
 #include "settingsui.h"
 #include "uiinternal.h"
+#include "../common/version.h"
 
 #include <windows.h>
 #include <shellapi.h>
@@ -153,7 +154,7 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         AppendMenuW(menu, MF_SEPARATOR, 0, NULL);
         { // 版本号灰显项：菜单底部一眼可查（与 --version 同源）
             wchar_t ver[96] = {};
-            _snwprintf_s(ver, _TRUNCATE, L"版本 1.0（构建于 %hs）", __DATE__);
+            _snwprintf_s(ver, _TRUNCATE, L"版本 " LINGXI_VERSION_WSTR L"（构建于 %hs）", __DATE__);
             AppendMenuW(menu, MF_STRING | MF_GRAYED, 0, ver);
         }
         POINT pt;
