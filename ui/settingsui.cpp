@@ -12,6 +12,7 @@
 #include "settingsui.h"
 #include "uiinternal.h"
 #include "style_logic.h" // 批15 透明度下拉↔数值映射单一口径（engine_test SK3 钉）
+#include "combo_logic.h" // 审查缺陷⑤ 域内非选项值回显 CB_ERR + 保存保留原值（engine_test CS 钉）
 #include "hotphraseui.h"
 #include "phraseui.h"
 #include "updateui.h"
@@ -182,9 +183,8 @@ void LoadToControls()
     ComboBox_SetCurSel(g_hCmbToggleMode, (int)(s.toggleMode <= 4 ? s.toggleMode : 1));
     SetToggle(g_hChkShuangpin, s.shuangpin);
     ComboBox_SetCurSel(g_hCmbSpSch, s.shuangpinScheme <= 2 ? (int)s.shuangpinScheme : 0);
-    { const uint32_t kPgSizes[] = {3, 5, 6, 9}; int pi = 3; // 非选项值回退显示缺省 9
-      for (int z = 0; z < 4; z++) if (kPgSizes[z] == s.candPageSize) pi = z;
-      if (g_hCmbPgSize) ComboBox_SetCurSel(g_hCmbPgSize, pi); }
+    // 审查缺陷⑤：域内非选项值（1/2/4/7/8）回显 CB_ERR 无选择，保存侧保留原值
+    { if (g_hCmbPgSize) ComboBox_SetCurSel(g_hCmbPgSize, lingxi::PageSizeComboIndex(s.candPageSize)); }
     SetToggle(g_hChkSymbolHotkey, s.symbolHotkey);
     SetToggle(g_hChkTraditional, s.traditionalOutput);
     SetToggle(g_hChkLlmRerank, s.llmRerank);
@@ -225,13 +225,13 @@ void SaveFromControls()
         if (tsel >= 0 && tsel <= 4) s.toggleMode = (uint32_t)tsel;
     s.shuangpin = ToggleOn(g_hChkShuangpin);
     { int spsch = ComboBox_GetCurSel(g_hCmbSpSch); s.shuangpinScheme = (spsch >= 0 && spsch <= 2) ? (uint32_t)spsch : 0; }
-    { const uint32_t kPgSizes[] = {3, 5, 6, 9}; int pis = g_hCmbPgSize ? ComboBox_GetCurSel(g_hCmbPgSize) : -1;
-      s.candPageSize = (pis >= 0 && pis < 4) ? kPgSizes[pis] : 9; }
+    { int pis = g_hCmbPgSize ? ComboBox_GetCurSel(g_hCmbPgSize) : -1;
+      s.candPageSize = lingxi::PageSizeFromComboSel(pis, s.candPageSize); } // 缺陷⑤：无选择=保留原值，不强制 9
     s.symbolHotkey = ToggleOn(g_hChkSymbolHotkey);
     s.traditionalOutput = ToggleOn(g_hChkTraditional);
     s.llmRerank = ToggleOn(g_hChkLlmRerank);
     { int oi = g_hCmbOpacity ? ComboBox_GetCurSel(g_hCmbOpacity) : -1;
-      s.candidateOpacity = OpacityFromComboSel(oi); }
+      s.candidateOpacity = OpacityFromComboSel(oi, s.candidateOpacity); } // 缺陷⑤：无选择=保留原值，不强制 100
     s.llmMultiPath = ToggleOn(g_hChkLlmMultiPath);
     s.assocAfterPick = ToggleOn(g_hChkAssocPick);
     wchar_t buf[16] = L"";

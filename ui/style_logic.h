@@ -31,19 +31,21 @@ inline int OpacityToAlpha(uint32_t op)
 }
 
 // 设置页"不透明度"下拉：显示序 {不透明,90%,80%,70%} ↔ 数值 {100,90,80,70}。
-// 越界选择（控件未就绪等）回缺省 100。
-inline uint32_t OpacityFromComboSel(int sel)
+// 审查缺陷⑤：combo 选项集 {100,90,80,70} 窄于合法域 [70,100]——越界选择
+//（无选择/控件未就绪）保留 cur，不再强制回缺省 100（静默重置）。
+inline uint32_t OpacityFromComboSel(int sel, uint32_t cur)
 {
     static const uint32_t kOps[] = { 100, 90, 80, 70 };
-    return (sel >= 0 && sel < 4) ? kOps[sel] : 100;
+    return (sel >= 0 && sel < 4) ? kOps[sel] : cur;
 }
 
-// 数值 → 下拉项（非选项值回显缺省"不透明"，与旧内联逻辑一致）
+// 数值 → 下拉项；非选项值（如 85）回显 CB_ERR 无选择——配合保存侧
+// 保留语义，"打开设置页保存"不会把 85 静默改成 100。
 inline int OpacityComboIndex(uint32_t op)
 {
     static const uint32_t kOps[] = { 100, 90, 80, 70 };
     for (int i = 0; i < 4; i++) if (kOps[i] == op) return i;
-    return 0;
+    return CB_ERR;
 }
 
 } // namespace lingxi
