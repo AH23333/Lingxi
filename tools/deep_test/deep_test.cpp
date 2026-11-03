@@ -1233,19 +1233,41 @@ int wmain()
             std::wstring mid;
             std::wstring trace; // 取证：每个数字尝试的提交码点序列
             int digitNi = -1;
-            for (int dig = 2; dig <= 9; dig++) // 1=你好(cover=5 全收)跳过；你≠首位的保证来自 engine_test P6c4
+            // 批3：页宽可配——按注册表 CandPageSize（缺省 9，clamp 1..9）跨页扫描
+            // （页宽<8 时"你"可能不在首页）；数字键=页内下标语义不变，行为断言
+            // （cover=2 部分提交"你"+残"hao"）不动，只参数化测试输入。
+            uint32_t ps = 9;
             {
+                HKEY hk = nullptr;
+                if (OpenLingxiReg(&hk))
+                {
+                    DWORD v = 0, t = 0, cb = sizeof(v);
+                    if (RegQueryValueExW(hk, L"CandPageSize", NULL, &t, (LPBYTE)&v, &cb) == ERROR_SUCCESS
+                        && v >= 1 && v <= 9) ps = (uint32_t)v;
+                    RegCloseKey(hk);
+                }
+            }
+            for (int page = 0; page <= 2 && digitNi < 0; page++)
+            for (int dig = 1; dig <= (int)ps && digitNi < 0; dig++)
+            {
+                if (page == 0 && dig == 1) continue; // 1=你好(cover=5 全收)跳过；你≠首位的保证来自 engine_test P6c4
                 ClearFocusedText(pTm);
                 TypeLetters(pKm, L"nihao");
                 PumpMessages();
                 Sleep(400); // 等候选回包
+                for (int pg = 0; pg < page; pg++)
+                {
+                    TypeKey(pKm, VK_NEXT); // 翻到目标页（重打后页码归 0，逐页翻）
+                    PumpMessages();
+                    Sleep(150);
+                }
                 TypeKey(pKm, (WPARAM)(L'0' + dig));
                 PumpMessages();
                 Sleep(300); // 等部分提交 + "hao" 新候选
                 mid = ReadFocusedText(pTm);
                 {
                     wchar_t buf[48];
-                    swprintf_s(buf, L"d%d=", dig);
+                    swprintf_s(buf, L"p%dd%d=", page, dig);
                     trace += buf;
                     for (wchar_t ch : mid) { swprintf_s(buf, L"%04X", (unsigned)ch); trace += buf; }
                     trace += L" ";

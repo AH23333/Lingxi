@@ -125,6 +125,7 @@ constexpr int IDC_CMB_ORIENT = 144;     // C 横竖排切换：候选窗方向�
 constexpr int IDC_BTN_STATS = 132;      // 打字统计入口（词典页"词典与工具"卡）
 constexpr int IDC_CHK_FWALNUM = 133;    // 全角字母数字（搜狗 F4 对标）
 constexpr int IDC_CMB_SPSCH = 134;      // 双拼方案：0 小鹤 1 自然码 2 微软
+constexpr int IDC_CMB_PGSIZE = 145;     // 每页候选数：3/5/6/9（批3 收编 kPageSize）
 constexpr int IDC_EDT_UPDREPO = 140;    // 更新：仓库 owner/repo 输入框（批次 5）
 constexpr int IDC_CHK_UPDAUTO = 141;    // 更新：自动检查开关（默认关）
 constexpr int IDC_BTN_UPDCHECK = 142;   // 更新：手动检查按钮
@@ -141,6 +142,7 @@ HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
 HWND g_hChkFz[8] = {}; // 模糊音组细分开关（8 组）
 HWND g_hCmbOpacity = nullptr;
 HWND g_hCmbUiFont = nullptr; // 界面字体族下拉
+HWND g_hCmbPgSize = nullptr; // 每页候选数下拉（批3 可配页宽）
 HFONT g_hFontLabel = nullptr;   // 设置行标题 14px
 HFONT g_hFontDesc = nullptr;    // 设置行描述 12px（次级色）
 HFONT g_hFontTitle = nullptr;   // 设置页标题 20px 半粗
@@ -179,6 +181,9 @@ void LoadToControls()
     ComboBox_SetCurSel(g_hCmbToggleMode, (int)(s.toggleMode <= 4 ? s.toggleMode : 1));
     SetToggle(g_hChkShuangpin, s.shuangpin);
     ComboBox_SetCurSel(g_hCmbSpSch, s.shuangpinScheme <= 2 ? (int)s.shuangpinScheme : 0);
+    { const uint32_t kPgSizes[] = {3, 5, 6, 9}; int pi = 3; // 非选项值回退显示缺省 9
+      for (int z = 0; z < 4; z++) if (kPgSizes[z] == s.candPageSize) pi = z;
+      if (g_hCmbPgSize) ComboBox_SetCurSel(g_hCmbPgSize, pi); }
     SetToggle(g_hChkSymbolHotkey, s.symbolHotkey);
     SetToggle(g_hChkTraditional, s.traditionalOutput);
     SetToggle(g_hChkLlmRerank, s.llmRerank);
@@ -221,6 +226,8 @@ void SaveFromControls()
         if (tsel >= 0 && tsel <= 4) s.toggleMode = (uint32_t)tsel;
     s.shuangpin = ToggleOn(g_hChkShuangpin);
     { int spsch = ComboBox_GetCurSel(g_hCmbSpSch); s.shuangpinScheme = (spsch >= 0 && spsch <= 2) ? (uint32_t)spsch : 0; }
+    { const uint32_t kPgSizes[] = {3, 5, 6, 9}; int pis = g_hCmbPgSize ? ComboBox_GetCurSel(g_hCmbPgSize) : -1;
+      s.candPageSize = (pis >= 0 && pis < 4) ? kPgSizes[pis] : 9; }
     s.symbolHotkey = ToggleOn(g_hChkSymbolHotkey);
     s.traditionalOutput = ToggleOn(g_hChkTraditional);
     s.llmRerank = ToggleOn(g_hChkLlmRerank);
@@ -1186,6 +1193,13 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_hCmbSpSch = mkCombo(IDC_CMB_SPSCH, fillSpSch);
     mkRow(L"双拼方案", L"韵母键位差异：ing 键 小鹤K/自然码Y/微软分号；微软零声母加 o 前缀（oa=啊 oh=昂）",
           g_hCmbSpSch, CK_COMBO, 150);
+    auto fillPgSize = [](HWND h) {
+        for (const wchar_t* s : { L"3", L"5", L"6", L"9" })
+            ComboBox_AddString(h, s);
+    };
+    g_hCmbPgSize = mkCombo(IDC_CMB_PGSIZE, fillPgSize);
+    mkRow(L"每页候选数", L"拼音候选窗每页条数；数字键只选页内项（超出页宽的数字与超候选数同口径）；与英文补全候选数无关",
+          g_hCmbPgSize, CK_COMBO, 100);
     addCard(L"输出");
     g_hChkCnPunct = mkToggle(IDC_CHK_CNPUNCT);
     mkRow(L"中文标点", L". , / ; 等自动转全角，Shift 输出 ？：》《 等",
@@ -1214,7 +1228,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_hChkEn = mkToggle(IDC_CHK_EN);
     mkRow(L"英文逐键补全", L"词中自动补全英文单词", g_hChkEn, CK_TOGGLE, 44);
     g_hEdtCount = mkEdit(IDC_EDT_COUNT);
-    mkRow(L"补全候选数", L"英文补全显示的候选数量（1-9）；拼音候选每页固定 9 个，不受此项影响", g_hEdtCount, CK_EDIT, 64);
+    mkRow(L"补全候选数", L"英文补全显示的候选数量（1-9）；与拼音每页候选数无关（见常规页「每页候选数」）", g_hEdtCount, CK_EDIT, 64);
 
     // ---- 页 3：外观 ----
     addPage(L"外观");

@@ -19,7 +19,7 @@ public:
     void Shutdown();
 
     // caretScreen：光标屏幕矩形（全 0 表示未知，沿用上次位置）
-    // cands 为全量候选（窗口内部分页，每页 kPageSize 个），ver 变化时回到第一页。
+    // cands 为全量候选（窗口内部分页，每页 _pageSize 个，缺省 9），ver 变化时回到第一页。
     // composing：当前拼音组合串（B2 回显，纯 UI 内部不走协议）；非空时首行绘制，
     // 候选行整体下移一行，hover/点击行判定同步偏移。空串=无组合（英文补全等）。
     void Show(const RECT& caretScreen, const std::vector<std::wstring>& cands,
@@ -115,7 +115,8 @@ private:
     std::vector<std::wstring> _cands; // 全量候选
     std::vector<std::wstring> _anno;  // 候选注音（GAP R6，与 _cands 平行；可短于/空）
     std::wstring _composing;          // 当前拼音组合串（B2 首行回显；空=无）
-    uint32_t _pageStart = 0;          // 当前页首个候选的全局索引
+    uint32_t _pageStart = 0; // 当前页首候选全局下标（窗内翻页；ver 变化回首页）
+    uint32_t _pageSize = 9;  // 每页候选数（批3 可配：LayoutAndPosition 快照前从 Settings.candPageSize 刷新、非法回退 9；渲染/命中/滚轮/工具条共用同一成员，避免一次事件内不一致）
     int _width = 0, _height = 0;
     int _lastX = 120, _lastY = 120;
     int _opacityApplied = -1; // 上次应用的透明度%，去重 SetLayeredWindowAttributes

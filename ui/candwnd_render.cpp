@@ -239,9 +239,9 @@ void CandWindow::OnPaint()
     size_t total = cands.size();
     size_t pgBegin = pageStart;
     if (pgBegin >= total) pgBegin = 0; // 容错：异常 pageStart 回首页
-    size_t pgEnd = min(total, pgBegin + kPageSize);
-    size_t totalPages = total ? (total + kPageSize - 1) / kPageSize : 1;
-    size_t curPage = pgBegin / kPageSize + 1;
+    size_t pgEnd = min(total, pgBegin + _pageSize);
+    size_t totalPages = total ? (total + _pageSize - 1) / _pageSize : 1;
+    size_t curPage = pgBegin / _pageSize + 1;
 
     // WinUI 浮层配色：深色 #2C2C2C / 浅色近白，中性描边，强调色只用于选中
     COLORREF bg = dark ? RGB(44, 44, 44) : kUiFlyoutBg;

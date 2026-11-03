@@ -1197,33 +1197,53 @@ int wmain(int argc, wchar_t** argv)
 
             // P6b. 翻页页码纯函数 NextPageStart：边界/夹取（不依赖引擎数据）
             {
-                struct Case { size_t total; uint32_t cur; int delta; uint32_t expect; };
+                // 批3：pageSize 参数化——原 18 例填缺省页宽 9（期望值与断言语义不动），
+                // 新增 5/3/1 边界例 18 条（末页夹取/整页/页宽 1 逐格步进/空表）。
+                struct Case { size_t total; uint32_t cur; int delta; uint32_t ps; uint32_t expect; };
                 const Case cases[] = {
-                    {0,  0,  +1, 0},   // 空
-                    {1,  0,  +1, 0},   // 单页：下页不动
-                    {1,  0,  -1, 0},   // 单页：上页不动
-                    {9,  0,  +1, 0},   // 恰好一页
-                    {10, 0,  +1, 9},   // 两页(末页1)
-                    {10, 9,  +1, 9},   // 末页再向下：夹到末页
-                    {10, 9,  -1, 0},   // 末页向上
-                    {18, 0,  +1, 9},   // 恰好两页
-                    {18, 9,  +1, 9},   // 第二页已到底
-                    {19, 0,  +1, 9},
-                    {19, 9,  +1, 18},  // 三页(末页1)
-                    {19, 18, -1, 9},
-                    {56, 0,  +1, 9},
-                    {56, 9,  +1, 18},
-                    {56, 36, +1, 45},
-                    {56, 45, +1, 54},  // 56=6*9+2 → 7 页，末页起点 54(含 54、55)
-                    {56, 54, +1, 54},  // 末页夹取
-                    {56, 54, -1, 45},
+                    {0,  0,  +1, 9, 0},   // 空
+                    {1,  0,  +1, 9, 0},   // 单页：下页不动
+                    {1,  0,  -1, 9, 0},   // 单页：上页不动
+                    {9,  0,  +1, 9, 0},   // 恰好一页
+                    {10, 0,  +1, 9, 9},   // 两页(末页1)
+                    {10, 9,  +1, 9, 9},   // 末页再向下：夹到末页
+                    {10, 9,  -1, 9, 0},   // 末页向上
+                    {18, 0,  +1, 9, 9},   // 恰好两页
+                    {18, 9,  +1, 9, 9},   // 第二页已到底
+                    {19, 0,  +1, 9, 9},
+                    {19, 9,  +1, 9, 18},  // 三页(末页1)
+                    {19, 18, -1, 9, 9},
+                    {56, 0,  +1, 9, 9},
+                    {56, 9,  +1, 9, 18},
+                    {56, 36, +1, 9, 45},
+                    {56, 45, +1, 9, 54},  // 56=6*9+2 → 7 页，末页起点 54(含 54、55)
+                    {56, 54, +1, 9, 54},  // 末页夹取
+                    {56, 54, -1, 9, 45},
+                    {11, 0,  +1, 5, 5},   // ps=5：11=2*5+1 → 3 页
+                    {11, 5,  +1, 5, 10},  // 末页起点(含 idx10)
+                    {11, 10, +1, 5, 10},  // 末页夹取
+                    {11, 10, -1, 5, 5},
+                    {11, 5,  -1, 5, 0},
+                    {9, 0,   +1, 5, 5},   // ps=5：恰好两页(末页4)
+                    {9, 5,   +1, 5, 5},   // 第二页已到底
+                    {9, 5,   -1, 5, 0},
+                    {7, 0,   +1, 3, 3},   // ps=3：7=2*3+1 → 3 页
+                    {7, 3,   +1, 3, 6},
+                    {7, 6,   +1, 3, 6},   // 末页夹取(含 idx6)
+                    {7, 6,   -1, 3, 3},
+                    {6, 0,   +1, 3, 3},   // ps=3：恰好两页
+                    {6, 3,   +1, 3, 3},
+                    {3, 0,   +1, 1, 1},   // ps=1：逐格步进
+                    {3, 2,   +1, 1, 2},   // 末页夹取
+                    {3, 2,   -1, 1, 1},
+                    {0, 0,   +1, 5, 0},   // 空表+非缺省页宽
                 };
                 for (const auto& cs : cases)
                 {
-                    uint32_t got = lingxi::NextPageStart(cs.total, cs.cur, cs.delta);
+                    uint32_t got = lingxi::NextPageStart(cs.total, cs.cur, cs.delta, cs.ps);
                     wchar_t detail[128];
-                    _snwprintf_s(detail, _TRUNCATE, L"total=%zu cur=%u d=%+d -> %u (expect %u)",
-                                 cs.total, cs.cur, cs.delta, got, cs.expect);
+                    _snwprintf_s(detail, _TRUNCATE, L"total=%zu cur=%u d=%+d ps=%u -> %u (expect %u)",
+                                 cs.total, cs.cur, cs.delta, cs.ps, got, cs.expect);
                     Report(got == cs.expect, "NextPageStart paging boundary", detail);
                 }
             }
@@ -2952,14 +2972,52 @@ int wmain(int argc, wchar_t** argv)
         Report(realUntouched, "C3 invalid ns never touches real key");
         Report(sandboxed, "C3 valid ns writes sandbox key");
 
-        // ① 候选数语义收口钉（2026-11-03）：kPageSize 是 DLL/UI 跨进程协议常量
-        // （数字键 1-9 对应页内位置，改它=改帧语义，属 §六 待裁决）；
-        // candidateCount 只作用于英文补全上限（pipeserver.cpp 裁剪处），默认必须为 9
-        // （deep_test T12/T14 的"每页 9"口径以此为准）。
-        Report(lingxi::kPageSize == 9, "PIN kPageSize protocol constant == 9");
+        // ① 候选数语义收口钉（2026-11-03，批3 裁决后更新）：kPageSize 收编为
+        // 可配缺省页宽（Settings.candPageSize，1..9），协议帧不变（pageStart 是
+        // 全局下标，页宽不经帧传递，两侧活读同一注册表键）；此钉锚定"缺省 9"
+        // =零行为变化基线（deep_test T12/T14 的"每页 9"口径以此为准）。
+        // candidateCount 只作用于英文补全上限（pipeserver.cpp 裁剪处），默认必须为 9。
+        Report(lingxi::kPageSize == 9, "PIN kPageSize default page size constant == 9");
         {
             lingxi::Settings d;
             Report(d.candidateCount == 9, "PIN default candidateCount == 9 (English cap only)");
+            Report(d.candPageSize == 9, "PIN default candPageSize == 9 (batch3 configurable)");
+        }
+        // CandPageSize 往返/clamp 钉（独立沙盒 ns，键不同=M5 缓存必 miss，
+        // 不受 TTL 影响）：Save(5)→Load==5；外部直写非法值 0/10→Load 回退 9。
+        {
+            wchar_t prevNs[64] = L"";
+            GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs, 64);
+            bool rt5 = false, cl0 = false, cl10 = false;
+            SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", L"pgsz");
+            RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_pgsz");
+            {
+                lingxi::Settings s; s.candPageSize = 5;
+                lingxi::SaveSettings(s);
+                rt5 = lingxi::LoadSettings().candPageSize == 5;
+            }
+            auto clampRead = [](const wchar_t* ns, const wchar_t* path, DWORD raw) -> bool {
+                RegDeleteTreeW(HKEY_CURRENT_USER, path);
+                HKEY hk = nullptr;
+                if (RegCreateKeyExW(HKEY_CURRENT_USER, path, 0, NULL, REG_OPTION_NON_VOLATILE,
+                                    KEY_WRITE, NULL, &hk, NULL) != ERROR_SUCCESS)
+                    return false;
+                LONG w = RegSetValueExW(hk, L"CandPageSize", 0, REG_DWORD,
+                                       (const BYTE*)&raw, sizeof(raw));
+                RegCloseKey(hk);
+                if (w != ERROR_SUCCESS) { RegDeleteTreeW(HKEY_CURRENT_USER, path); return false; }
+                SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", ns);
+                bool ok = lingxi::LoadSettings().candPageSize == 9;
+                RegDeleteTreeW(HKEY_CURRENT_USER, path);
+                return ok;
+            };
+            cl0 = clampRead(L"pgs0", L"Software\\LingxiIme_pgs0", 0);
+            cl10 = clampRead(L"pgs10", L"Software\\LingxiIme_pgs10", 10);
+            SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs[0] ? prevNs : L"");
+            RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_pgsz");
+            Report(rt5, "CandPageSize Save/Load roundtrip == 5");
+            Report(cl0, "CandPageSize clamp: direct 0 -> default 9");
+            Report(cl10, "CandPageSize clamp: direct 10 -> default 9");
         }
 
         // ③ 双拼方案表往返用例（每方案至少一条；键位依据见 common/shuangpin.h 头注）

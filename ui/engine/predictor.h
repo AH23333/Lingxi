@@ -9,7 +9,7 @@
 
 namespace lingxi {
 
-// 引擎一次返回的最大候选数（支持候选翻页；UI 按 kPageSize 分页）。
+// 引擎一次返回的最大候选数（支持候选翻页；UI 按 candPageSize 分页，缺省 9）。
 constexpr size_t kPredictMaxCandidates = 60;
 
 struct Prediction

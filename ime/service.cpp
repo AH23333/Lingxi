@@ -525,10 +525,11 @@ void CTextService::PageCandidates(int delta)
     uint32_t ver = 0;
     uint32_t newStart = 0;
     bool can = false;
+    const uint32_t ps = LoadSettings().candPageSize; // 锁外活读（批3 可配页宽）
     EnterCriticalSection(&_cs);
     if (!_cands.empty() && _verCands == _verSent)
     {
-        uint32_t nxt = NextPageStart(_cands.size(), _pageStart, delta);
+        uint32_t nxt = NextPageStart(_cands.size(), _pageStart, delta, ps);
         if (nxt != _pageStart)
         {
             _pageStart = nxt;
@@ -552,11 +553,12 @@ void CTextService::PageCandidatesHomeEnd(bool last)
     if (!_csInit) return;
     uint32_t ver = 0, newStart = 0;
     bool can = false;
+    const uint32_t ps = LoadSettings().candPageSize; // 锁外活读（批3 可配页宽）
     EnterCriticalSection(&_cs);
     if (!_cands.empty() && _verCands == _verSent)
     {
         uint32_t total = (uint32_t)_cands.size();
-        uint32_t target = last ? (total - 1) / kPageSize * kPageSize : 0;
+        uint32_t target = last ? (total - 1) / ps * ps : 0;
         if (target != _pageStart)
         {
             _pageStart = target;

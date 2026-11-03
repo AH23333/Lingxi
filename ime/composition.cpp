@@ -813,8 +813,9 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
             if (shiftOrCaps) return IsChinesePunctKey(wParam);
             {
                 bool multi = false;
+                const uint32_t ps = LoadSettings().candPageSize; // 锁外活读（批3 可配页宽）
                 EnterCriticalSection(&_cs);
-                multi = _cands.size() > kPageSize && _verCands == _verSent;
+                multi = _cands.size() > ps && _verCands == _verSent;
                 LeaveCriticalSection(&_cs);
                 return multi;
             }
@@ -1003,13 +1004,15 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
                 bool dismiss = (wParam == VK_ESCAPE);
                 uint32_t idx = 0;
                 bool ok = false;
+                const uint32_t ps = LoadSettings().candPageSize; // 锁外活读（批3：数字键只选页内项）
                 EnterCriticalSection(&_cs);
                 shown = (_verCands == _verSent && !_cands.empty());
                 if (shown)
                 {
                     if (wParam == VK_SPACE || wParam == VK_TAB)
                         idx = _pageStart;
-                    else if (wParam >= L'1' && wParam <= L'9')
+                    else if (wParam >= L'1' && wParam <= L'9' &&
+                             (uint32_t)(wParam - L'1') < ps)
                         idx = _pageStart + (uint32_t)(wParam - L'1');
                     else
                         idx = 0xFFFFFFFF;
@@ -1199,9 +1202,13 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         {
             std::wstring hanzi;
             uint32_t cover = 0;
-            uint32_t idx = _pageStart + (uint32_t)(wParam - L'1');
+            const uint32_t off = (uint32_t)(wParam - L'1');
+            uint32_t idx = _pageStart + off;
             WaitForLatestCandidates(400); // 与空格同口径：候选在途时有界等待
-            if (GetCandidateEx(idx, hanzi, cover)) { NotifyPicked(idx); PinyinCommitHanzi(hanzi, cover); }
+            // 批3 可配页宽：超出页宽的数字不选词（页宽 9 时 off 恒 <9，零变化），
+            // 与"超出候选数"同口径落原文上屏；非组合道数字闸同语义。
+            if (off < LoadSettings().candPageSize &&
+                GetCandidateEx(idx, hanzi, cover)) { NotifyPicked(idx); PinyinCommitHanzi(hanzi, cover); }
             else                                   PinyinCommitRaw();
             return;
         }

@@ -103,9 +103,9 @@ void CandWindow::CurrentPageRangeLocked(size_t* begin, size_t* end) const
     size_t total = _cands.size();
     size_t start = _pageStart;
     if (start > total) start = 0;
-    if (total > 0 && start >= total) start = (total - 1) / kPageSize * kPageSize;
+    if (total > 0 && start >= total) start = (total - 1) / _pageSize * _pageSize;
     size_t b = start;
-    size_t e = min(total, b + kPageSize);
+    size_t e = min(total, b + _pageSize);
     *begin = b;
     *end = e;
 }
@@ -114,6 +114,13 @@ void CandWindow::LayoutAndPosition()
 {
     int itemH = 0, pad = 0;
     LayoutMetrics(&itemH, &pad);
+
+    // 批3：快照前刷新页宽（注册表活读在锁外；渲染/命中/滚轮/工具条共用
+    // 同一成员，避免一次事件内不一致；非法值回退缺省 9）
+    {
+        uint32_t ps = LoadSettings().candPageSize;
+        _pageSize = (ps >= 1 && ps <= 9) ? ps : 9;
+    }
 
     // 锁内只取当前页候选快照（避免在锁内调 GetDC/GDI）
     std::vector<std::wstring> page;
@@ -492,10 +499,10 @@ void CandWindow::DoPageStep(int steps)
     bool changed = false;
     EnterCriticalSection(&_cs);
     size_t total = _cands.size();
-    if (total > kPageSize)
+    if (total > _pageSize)
     {
-        size_t maxStart = (total - 1) / kPageSize * kPageSize;
-        long long ns = (long long)_pageStart + (long long)steps * (long long)kPageSize;
+        size_t maxStart = (total - 1) / _pageSize * _pageSize;
+        long long ns = (long long)_pageStart + (long long)steps * (long long)_pageSize;
         if (ns < 0) ns = 0;
         if (ns > (long long)maxStart) ns = (long long)maxStart;
         if ((size_t)ns != _pageStart)

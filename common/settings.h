@@ -15,7 +15,7 @@ struct Settings
 {
     bool pinyinEnabled = true;    // 拼音组合模式（zh-CN profile 字母上屏汉字）
     uint32_t candidateCount = 9;  // 英文补全候选数（1..9）。注意：拼音候选不受此项控制——
-                                  // 每页固定 kPageSize=9、总量 kMaxCandidates=60（common/proto.h），
+                                  // 每页条数见 candPageSize、总量 kMaxCandidates=60（common/proto.h），
                                   // 拼音翻页由数字键 1-9 对应页内位置（pipeserver.cpp Predict 分发处消费）。
     uint32_t candidateFontSize = 16; // 候选字号（12..32，按 DPI 缩放）
     uint32_t darkMode = 0;        // 0 跟随系统 1 浅色 2 深色（R7：跟随=宿主直读系统主题）
@@ -55,6 +55,11 @@ struct Settings
     uint32_t uiFont = 0;           // 界面字体族（ui/uistyle.h kUiFontFaces）：
                                    // 0 微软雅黑（默认）1 宋体 2 等线 3 Segoe UI
     uint32_t candidateOpacity = 100; // 候选窗不透明度%（70/80/90/100），GAP §3 透明度定制
+    uint32_t candPageSize = 9;       // 拼音候选每页条数（批3 收编：原 proto.h kPageSize 常量；
+                                     // 1..9，缺省 9=与历史逐键一致）。DLL 键路径（翻页/数字
+                                     // 选词）与 UI 布局（渲染/滚轮/工具条）各自活读同一注册表
+                                     // 键 CandPageSize，协议帧不变。数字键语义=页内下标：
+                                     // 超出页宽的数字不选词（页宽 9 时恒不触发，零行为变化）
     uint32_t candOrientation = 0;    // 候选窗方向（C 横竖排切换）：0 竖排列表（默认，
                                      // 与历史逐像素一致） 1 横排单行条；横排放不下
                                      // （超工作区宽）本次渲染回退竖排（裁决 2026-11-03③）。

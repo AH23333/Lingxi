@@ -199,6 +199,7 @@ Settings LoadSettings()
     DWORD v = 0;
     if (GetDword(hKey, L"PinyinEnabled", v)) s.pinyinEnabled = v != 0;
     if (GetDword(hKey, L"CandidateCount", v) && v >= 1 && v <= 9) s.candidateCount = v;
+    if (GetDword(hKey, L"CandPageSize", v) && v >= 1 && v <= 9) s.candPageSize = v;
     if (GetDword(hKey, L"CandidateFontSize", v) && v >= 12 && v <= 32) s.candidateFontSize = v;
     if (GetDword(hKey, L"CandOrientation", v) && v <= 1) s.candOrientation = v;
     if (GetDword(hKey, L"DecayEnabled", v) && v <= 1) s.decayEnabled = v;
@@ -280,6 +281,7 @@ void SaveSettings(const Settings& s)
 
     SetDword(hKey, L"PinyinEnabled", s.pinyinEnabled ? 1 : 0);
     SetDword(hKey, L"CandidateCount", s.candidateCount);
+    SetDword(hKey, L"CandPageSize", s.candPageSize);
     SetDword(hKey, L"CandidateFontSize", s.candidateFontSize);
     SetDword(hKey, L"CandOrientation", s.candOrientation);
     SetDword(hKey, L"DecayEnabled", s.decayEnabled);
@@ -353,6 +355,7 @@ void SaveSettingsDiff(const Settings& s)
         return;
     PutDwordDiff(hKey, L"PinyinEnabled", s.pinyinEnabled ? 1 : 0);
     PutDwordDiff(hKey, L"CandidateCount", s.candidateCount);
+    PutDwordDiff(hKey, L"CandPageSize", s.candPageSize);
     PutDwordDiff(hKey, L"CandidateFontSize", s.candidateFontSize);
     PutDwordDiff(hKey, L"CandOrientation", s.candOrientation);
     PutDwordDiff(hKey, L"DecayEnabled", s.decayEnabled);

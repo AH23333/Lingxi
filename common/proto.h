@@ -26,18 +26,23 @@ constexpr UINT WM_APP_LX_PICK = WM_APP + 1;
 // 封送窗口：插入任意文本（符号面板）。lParam=堆分配的 std::wstring*，UI 线程取出后 delete
 constexpr UINT WM_APP_LX_INSERT = WM_APP + 3;
 
-// 候选分页：数字键 1-9 对应一页内的 9 个候选，翻页键切换页。
+// 候选分页缺省页宽：数字键对位上限，翻页键按页宽切换页。批3 收编为可配：
+// 实际页宽 = Settings.candPageSize（注册表 CandPageSize，1..9，缺省 9=零行为
+// 变化），DLL 键路径与 UI 布局各自活读同一键——协议帧不变（MsgPage.pageStart
+// 本就是全局下标，页宽不随帧传递；混装旧 DLL 按旧页宽 9 选词，重启后收敛）。
+// 本常量保留为缺省值与协议文档锚点（engine_test PIN 钉此值==9）。
 constexpr uint32_t kPageSize = 9;
 // 引擎一次返回、经 IPC 传递的最大候选数（足够翻 6 页以上）。
 constexpr uint32_t kMaxCandidates = 60;
 
-// 纯函数：由候选总数、当前页起始、翻页方向(delta=±1) 求新页起始，已夹到
-// 合法范围（首页 0；末页起点为 total 内最后一个整页起点）。total=0 → 0。
-inline uint32_t NextPageStart(size_t total, uint32_t cur, int delta)
+// 纯函数：由候选总数、当前页起始、翻页方向(delta=±1)、页宽 求新页起始，
+// 已夹到合法范围（首页 0；末页起点为 total 内最后一个整页起点）。total=0 → 0。
+// pageSize 由调用方传入 Settings.candPageSize（批3 收编可配；缺省 9）。
+inline uint32_t NextPageStart(size_t total, uint32_t cur, int delta, uint32_t pageSize)
 {
-    if (total == 0) return 0;
-    size_t last = (total - 1) / kPageSize * kPageSize;
-    long n = (long)cur + (long)kPageSize * delta;
+    if (total == 0 || pageSize == 0) return 0;
+    size_t last = (total - 1) / pageSize * pageSize;
+    long n = (long)cur + (long)pageSize * delta;
     if (n < 0) n = 0;
     if ((size_t)n > last) n = (long)last;
     return (uint32_t)n;

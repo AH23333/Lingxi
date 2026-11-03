@@ -116,7 +116,7 @@ CandWindow::Btn CandWindow::HitTestButton(int x, int y)
         LeaveCriticalSection(&_cs);
     }
     RECT rPrev, rPg, rNext, rPin, rSym, rSet;
-    CalcToolbarRects(rc.right, rc.bottom, tbH, total > kPageSize,
+    CalcToolbarRects(rc.right, rc.bottom, tbH, total > _pageSize,
                      &rPrev, &rPg, &rNext, &rPin, &rSym, &rSet);
     auto in = [&x, &y](const RECT& r)
     {
@@ -419,10 +419,10 @@ LRESULT CandWindow::OnMouseWheel(WPARAM wParam)
     bool changed = false;
     EnterCriticalSection(&_cs);
     size_t total = _cands.size();
-    if (total > kPageSize && steps != 0)
+    if (total > _pageSize && steps != 0)
     {
-        size_t maxStart = (total - 1) / kPageSize * kPageSize;
-        long long ns = (long long)_pageStart - (long long)steps * (long long)kPageSize;
+        size_t maxStart = (total - 1) / _pageSize * _pageSize;
+        long long ns = (long long)_pageStart - (long long)steps * (long long)_pageSize;
         if (ns < 0) ns = 0;
         if (ns > (long long)maxStart) ns = (long long)maxStart;
         if ((size_t)ns != _pageStart)
