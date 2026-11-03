@@ -1,6 +1,6 @@
 # 检查更新 + 一键自助更新 —— 设计文档
 
-日期：2026-11-03 ｜ 状态：批次 1-5 已落地（检查/下载校验解压/替换自验回滚/UI 接线完成），实现批次见 §10 台账
+日期：2026-11-03 ｜ 状态：批次 1-6 全部落地（含本地假服务端到端演练 27/0，见 §10 台账与 §12 演练说明）
 
 ## 0. 目标与非目标
 
@@ -163,7 +163,7 @@ TSF 的 DLL 由宿主进程（explorer、微信、编辑器、各 WebView2 宿�
 | 3 | 下载/校验/解压（zip-slip、上限、可取消）+ 单测 | 已完成（update_test 114/0；§2 契约修订：允许相对子目录） |
 | 4 | 替换/自验/回滚（rename-aside、双位替换、UAC 一次性提权）+ 集成测试 | 已完成（update_test 163/0；假 bin 树全流程含 5 类回滚路径；工装发现并修掉同秒重跑 `.prev-<ts>` 撞名破坏幂等的缺陷——快照名加序号） |
 | 5 | 设置页 UI 接线 + 自动检查 | 已完成（`ui/updateui.h/.cpp` 新文件承载全部逻辑；共享文件最小追加：settings 三键 `UpdateRepo/UpdateAutoCheck/UpdateLastCheck`、settingsui 页6"更新"卡 + 四控件接线、main.cpp `--update-apply` 提权侧分支 + 空闲自动检查、LingxiUI.vcxproj 编译项与 winhttp/bcrypt；构建产物隔离 `bin\work\ui\` 零污染 bin\Debug（时间戳独立复核）；update_test 重建 163/0、engine_test 333/1（唯一失败为并行会话 CPU 争抢的延迟假红）） |
-| 6 | 端到端演练脚本（本地假服务） | 未开始 |
+| 6 | 端到端演练脚本（本地假服务） | 已完成（`fake_release_server.py`+`drill_e2e.ps1`+`--e2e` 模式；E2E 27/0 ALL PASS；抓出并修掉 repo 字符集漏 `/`、状态机资产门槛顺序两处真缺陷，见 §12） |
 
 ## 11. 硬约束备忘（实现时逐条对照）
 
@@ -173,3 +173,33 @@ TSF 的 DLL 由宿主进程（explorer、微信、编辑器、各 WebView2 宿�
 - 共享文件（settings.h/.cpp、settingsui.cpp、ui/main.cpp、构建脚本）只做最小追加，
   改前用 PowerShell 核对真实内容，发现并行会话痕记即停。
 - 不跑 deep_test / e2e（#92 双实例假红）。
+
+## 12. 演练钩子与端到端演练（批次 6）
+
+> 与项目 e2e 套件无关——本节 `--e2e` 是更新功能专用的本地假服务演练。
+
+**钩子**：环境变量 `LINGXI_UPDATE_TEST_BASE`（如 `http://127.0.0.1:8765`）。
+仅当值为 http(s) 且 host **精确为 `127.0.0.1` / `localhost`** 时生效：
+`CheckLatest` 改打 `<base>/repos/<repo>/releases/latest`，白名单为回环 host 开一条
+旁路（下载与重定向同口径，逐跳复核不变）。非回环 / 非法值 → 整体忽略，
+生产行为与不设完全一致（T1/T2 对真实网络零放宽，旁路只此一条）。
+
+**假服务**：`tools/update_test/fake_release_server.py`（Python 3 标准库，只绑
+127.0.0.1）。发布场景按仓库名路由：`lingxi/new`（v9.9.9 完整三资产）、
+`lingxi/same`（= 本机版本 → 已是最新）、`lingxi/empty`（404 → 尚未发布）、
+`lingxi/missing86`（缺 x86 资产 → 不完整）、`lingxi/badsum`（x64 字节被篡改 →
+校验失败整包拒）。包内 `LingxiUI.exe` 即 `update_test.exe` 副本（`--version`
+输出 9.9.9），使替换后自验走**真实探针解码路径**而非桩。
+
+**演练**：`powershell -File tools\update_test\drill_e2e.ps1`——起服务、等 READY、
+设钩子环境变量、跑 `update_test.exe --e2e`（全链路：检查→选资产→下载→SHA256→
+zip 预校验→解压 staging→路径自检→假 bin 树替换（真 rename-aside/真 imecheck/
+真探针，仅 regsvr32 打桩）→幂等重跑→篡改包拒绝），只动 `%TEMP%\lingxi-e2e-<pid>`，
+**绝不碰 `bin\Debug*`**。读数：E2E 27/0，DRILL=ALLPASS。
+
+**演练抓出的真实缺陷**（批次 2-4 单测未能覆盖，因未打真 HTTP）：
+1. `CheckLatest` repo 字符集漏 `/`——一切合法 `owner/repo` 被误判"非法字符"（已修，
+   常规套件加 3 条回归锁定）；
+2. `ProcessLatestReply` 在版本比较**之前**做资产完整性门槛——"同版本+无资产"的
+   正常 release 被误判 Incomplete；门槛移到"确实有新版"之后（已修）；
+3. 工装自身缺陷：404 用例复用了上一条的残留 err 变量（已修，断言前必须 clear）。

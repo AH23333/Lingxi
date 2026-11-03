@@ -341,6 +341,43 @@ bool SelectAssets(const ReleaseInfo& rel, SelectedAssets* out, std::wstring* rea
 
 // ---------------------------------------------------------------- 域名白名单 + HTTP
 
+// ===== 批次 6 演练钩子：LINGXI_UPDATE_TEST_BASE =====
+// 仅当该环境变量为 http(s)://127.0.0.1[:port] 或 http(s)://localhost[:port] 时生效，
+// 供本地假发布服务（tools/update_test/fake_release_server.py）驱动全链路演练。
+// 非回环 / 非法值 → 整体忽略，生产行为与不设完全一致；白名单旁路也只放行
+// 回环 host，重定向逐跳复核口径不变（T1/T2 对生产网络零放宽）。
+const std::wstring* TestBaseUrl() {
+    static const std::wstring base = [] {
+        wchar_t buf[256] = {};
+        DWORD n = GetEnvironmentVariableW(L"LINGXI_UPDATE_TEST_BASE", buf, ARRAYSIZE(buf));
+        if (n == 0 || n >= ARRAYSIZE(buf)) return std::wstring();
+        URL_COMPONENTS uc = {};
+        wchar_t host[256] = {};
+        uc.dwStructSize = sizeof(uc);
+        uc.lpszHostName = host;
+        uc.dwHostNameLength = ARRAYSIZE(host);
+        // 无路径形态（http://127.0.0.1:8765）CrackUrl 可能拒 → 补 "/" 重试一次。
+        if (!WinHttpCrackUrl(buf, 0, 0, &uc)) {
+            size_t len = wcslen(buf);
+            if (len + 2 >= ARRAYSIZE(buf)) return std::wstring();
+            buf[len] = L'/';
+            buf[len + 1] = 0;
+            uc.dwStructSize = sizeof(uc);
+            uc.lpszHostName = host;
+            uc.dwHostNameLength = ARRAYSIZE(host);
+            if (!WinHttpCrackUrl(buf, 0, 0, &uc)) return std::wstring();
+        }
+        if (uc.nScheme != INTERNET_SCHEME_HTTP && uc.nScheme != INTERNET_SCHEME_HTTPS)
+            return std::wstring();
+        if (_wcsicmp(host, L"127.0.0.1") != 0 && _wcsicmp(host, L"localhost") != 0)
+            return std::wstring(); // 非回环绝不开旁路
+        std::wstring s(buf);
+        while (!s.empty() && s.back() == L'/') s.pop_back();
+        return s;
+    }();
+    return base.empty() ? nullptr : &base;
+}
+
 bool IsUrlAllowed(const std::wstring& url) {
     static const wchar_t* kAllow[] = {L"api.github.com", L"github.com",
                                       L"objects.githubusercontent.com"};
@@ -354,9 +391,14 @@ bool IsUrlAllowed(const std::wstring& url) {
     uc.dwUrlPathLength = ARRAYSIZE(path);
     if (!WinHttpCrackUrl(url.c_str(), 0, 0, &uc)) return false;
     if (url.find(L'@') != std::wstring::npos) return false; // userinfo 夹带（T2 走私面）
-    if (uc.nScheme != INTERNET_SCHEME_HTTPS) return false; // 仅 HTTPS（T1/T2）
+    const bool loopback = _wcsicmp(host, L"127.0.0.1") == 0 || _wcsicmp(host, L"localhost") == 0;
+    if (uc.nScheme != INTERNET_SCHEME_HTTPS) {
+        // 仅 HTTPS（T1/T2）；http 只在演练钩子激活且 host 为回环时放行
+        if (!(TestBaseUrl() && uc.nScheme == INTERNET_SCHEME_HTTP && loopback)) return false;
+    }
     for (const wchar_t* h : kAllow)
         if (_wcsicmp(host, h) == 0) return true; // 精确匹配，子域伪装拒
+    if (TestBaseUrl() && loopback) return true;   // 演练旁路：只此一条，回环限定
     return false;
 }
 
@@ -414,7 +456,8 @@ HttpReply HttpGet(const std::wstring& url, size_t maxBytes, const volatile LONG*
         HINTERNET conn = WinHttpConnect(sess, h2, uc.nPort, 0);
         if (!conn) { reply.err = L"连接失败（DNS/网络）"; break; }
         HINTERNET req = WinHttpOpenRequest(conn, L"GET", p2, nullptr, WINHTTP_NO_REFERER,
-                                           WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+                                           WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                           uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
         if (!req) { WinHttpCloseHandle(conn); reply.err = L"请求创建失败"; break; }
         WinHttpAddRequestHeaders(req, L"Accept: application/vnd.github+json\r\n"
                                       L"X-GitHub-Api-Version: 2022-11-28\r\n",
@@ -575,20 +618,27 @@ State ProcessLatestReply(const HttpReply& reply, const SemVer& local,
     }
     ReleaseInfo parsed;
     if (!ParseReleaseJson(reply.body, &parsed, err)) return State::Failed;
+    SemVer rv;
+    if (!ParseSemVer(parsed.tag, &rv)) {
+        if (err) *err = L"版本号无法解析：" + parsed.tag;
+        return State::Failed;
+    }
+    // 资产完整性只在"确实有新版"时才是门槛（批次 6 演练抓出：旧顺序把
+    // "同版本+无资产"的正常 release 误判 Incomplete——无新版可下时资产残缺无关）。
+    if (CompareSemVer(rv, local) <= 0) {
+        if (rel) *rel = std::move(parsed);
+        if (remote) *remote = rv;
+        return State::UpToDate;
+    }
     SelectedAssets sel;
     std::wstring reason;
     if (!SelectAssets(parsed, &sel, &reason)) {
         if (err) *err = reason;
         return State::Incomplete;
     }
-    SemVer rv;
-    if (!ParseSemVer(parsed.tag, &rv)) {
-        if (err) *err = L"版本号无法解析：" + parsed.tag;
-        return State::Failed;
-    }
     if (rel) *rel = std::move(parsed);
     if (remote) *remote = rv;
-    return CompareSemVer(rv, local) > 0 ? State::NewVersion : State::UpToDate;
+    return State::NewVersion;
 }
 
 State CheckLatest(const std::wstring& repo, const volatile LONG* cancelFlag,
@@ -604,15 +654,20 @@ State CheckLatest(const std::wstring& repo, const volatile LONG* cancelFlag,
     }
     for (size_t i = 0; i < repo.size(); i++) {
         wchar_t c = repo[i];
+        // '/' 必须在字符集内：单斜杠结构已由上方校验钉死（owner/repo 各段无斜杠）。
+        // 批次 6 演练抓出的真缺陷：旧字符集漏 '/'，一切合法 owner/repo 被误判非法。
         bool okc = (c >= L'A' && c <= L'Z') || (c >= L'a' && c <= L'z') ||
-                   (c >= L'0' && c <= L'9') || c == L'.' || c == L'_' || c == L'-';
+                   (c >= L'0' && c <= L'9') || c == L'.' || c == L'_' || c == L'-' ||
+                   c == L'/';
         if (!okc) {
             if (err) *err = L"仓库地址含非法字符";
             return State::Failed;
         }
     }
-    HttpReply reply = HttpGet(L"https://api.github.com/repos/" + repo + L"/releases/latest",
-                              8u * 1024u * 1024u, cancelFlag);
+    std::wstring latestUrl = L"https://api.github.com/repos/" + repo + L"/releases/latest";
+    if (const std::wstring* tb = TestBaseUrl())
+        latestUrl = *tb + L"/repos/" + repo + L"/releases/latest"; // 批次 6 演练：本地假服务
+    HttpReply reply = HttpGet(latestUrl, 8u * 1024u * 1024u, cancelFlag);
     return ProcessLatestReply(reply, LocalVersion(), rel, remote, err);
 }
 

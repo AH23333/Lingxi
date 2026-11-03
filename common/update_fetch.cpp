@@ -169,7 +169,8 @@ bool DownloadToFile(const std::wstring& url, const std::wstring& destPath, size_
         HINTERNET conn = WinHttpConnect(ws.sess, h2, uc.nPort, 0);
         if (!conn) return fail(L"连接失败（DNS/网络）");
         HINTERNET req = WinHttpOpenRequest(conn, L"GET", p2, nullptr, WINHTTP_NO_REFERER,
-                                           WINHTTP_DEFAULT_ACCEPT_TYPES, WINHTTP_FLAG_SECURE);
+                                           WINHTTP_DEFAULT_ACCEPT_TYPES,
+                                           uc.nScheme == INTERNET_SCHEME_HTTPS ? WINHTTP_FLAG_SECURE : 0);
         if (!req) {
             WinHttpCloseHandle(conn);
             return fail(L"请求创建失败");

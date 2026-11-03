@@ -245,6 +245,134 @@ static std::string OldestPrevContent(const std::wstring& dstPath) {
     return ReadAll(dir + L"\\" + fd.cFileName);
 }
 
+// ---------- 批次 6：--e2e 端到端演练（本地假服务全链路，只动假 bin 树） ----------
+static long long g_e2eDone = 0;
+static bool E2eProgress(long long done, long long, void*) { g_e2eDone = done; return true; }
+
+static int RunE2E() {
+    PrintW(L"== update_test --e2e: 本地假服务端到端演练（批次 6）==\n");
+    wchar_t base[260] = {};
+    GetTempPathW(ARRAYSIZE(base), base);
+    g_tmp = std::wstring(base) + L"lingxi-e2e-" + std::to_wstring(GetCurrentProcessId());
+    {
+        wchar_t tb[256] = {};
+        DWORD n = GetEnvironmentVariableW(L"LINGXI_UPDATE_TEST_BASE", tb, ARRAYSIZE(tb));
+        CHECK(n > 0, L"演练前置：LINGXI_UPDATE_TEST_BASE 已设（假服务须已就绪）");
+        if (n == 0) { PrintW(L"== E2E 汇总：PASS=%d FAIL=%d ==\n", g_pass, g_fail); return 1; }
+    }
+    const std::wstring dl = g_tmp + L"\\dl";
+    CHECK(MkdirP(dl), L"建 dl 目录");
+
+    // ----- 状态机四类服务端形态（真 HTTP，走演练钩子） -----
+    ReleaseInfo relNew;
+    SemVer remote = {};
+    std::wstring err;
+    State st = CheckLatest(L"lingxi/new", nullptr, &relNew, &remote, &err);
+    PrintW(L"[diag] first CheckLatest state=%d err='%ls'\n", (int)st, err.c_str());
+    CHECK(st == State::NewVersion && SemEq(remote, 9, 9, 9) && !relNew.notes.empty() &&
+              relNew.assets.size() == 3,
+          L"假新版 v9.9.9 → NewVersion（附 notes 与三资产）");
+    {
+        ReleaseInfo r; SemVer rv; std::wstring e2;
+        CHECK(CheckLatest(L"lingxi/same", nullptr, &r, &rv, &e2) == State::UpToDate,
+              L"tag=本机版本 → 已是最新");
+        e2.clear(); // 工装缺陷修正：不得带上一条用例的残留 err 进断言
+        State se = CheckLatest(L"lingxi/empty", nullptr, &r, &rv, &e2);
+        CHECK(se == State::NotPublished && e2.empty(),
+              L"404 → 尚未发布任何版本（正常态，无错误文案）");
+        CHECK(CheckLatest(L"lingxi/missing86", nullptr, &r, &rv, &e2) == State::Incomplete,
+              L"缺 x86 资产 → 发布包不完整（不可用）");
+    }
+
+    // ----- 全链路 happy path：检查→选资产→下载→校验→解压→staging→替换→自验 -----
+    SelectedAssets sel;
+    std::wstring reason;
+    CHECK(SelectAssets(relNew, &sel, &reason), L"契约三资产选择通过");
+    std::wstring sumsPath = dl + L"\\SHA256SUMS.txt";
+    CHECK(DownloadToFile(sel.sums.downloadUrl, sumsPath, 64u * 1024u, nullptr, nullptr, nullptr, &err),
+          L"SHA256SUMS.txt 下载（假服务 http 回环钩子放行）");
+    std::vector<std::pair<std::wstring, std::string>> sums;
+    CHECK(ParseSha256Sums(ReadAll(sumsPath), &sums, &err) && sums.size() == 2, L"SUMS 解析 2 条");
+    std::wstring z64 = dl + L"\\LingxiIme-win-x64.zip", z86 = dl + L"\\LingxiIme-win-x86.zip";
+    g_e2eDone = 0;
+    CHECK(DownloadToFile(sel.x64.downloadUrl, z64, kMaxDownloadBytes, nullptr, E2eProgress, nullptr, &err) &&
+              g_e2eDone > 0,
+          L"x64 包下载 + 进度回调有字节数");
+    CHECK(DownloadToFile(sel.x86.downloadUrl, z86, kMaxDownloadBytes, nullptr, nullptr, nullptr, &err),
+          L"x86 包下载");
+    CHECK(VerifyAgainstSums(sums, L"LingxiIme-win-x64.zip", z64, &err) &&
+              VerifyAgainstSums(sums, L"LingxiIme-win-x86.zip", z86, &err),
+          L"两包 SHA256 与 SUMS 匹配");
+    std::vector<ZipEntry> ents;
+    CHECK(PreflightZip(z64, &ents, &err) && PreflightZip(z86, &ents, &err), L"两包 zip 预校验通过");
+
+    const std::wstring fakeBin = g_tmp + L"\\bin";
+    const std::wstring workRoot = fakeBin + L"\\work";
+    const std::wstring staging = workRoot + L"\\staging\\9.9.9";
+    CHECK(MkdirP(staging + L"\\x64") && MkdirP(staging + L"\\x86"), L"建 staging 双树");
+    CHECK(ExtractZipTo(z64, staging + L"\\x64", nullptr, &err) &&
+              ExtractZipTo(z86, staging + L"\\x86", nullptr, &err),
+          L"两包解压到 staging（tar.exe 真实路径）");
+    CHECK(VerifyExtractedDir(staging + L"\\x64", &err) && VerifyExtractedDir(staging + L"\\x86", &err),
+          L"解出后复核通过");
+    {
+        SemVer sv;
+        CHECK(ValidateStagingPath(staging, workRoot, &sv, &err) && SemEq(sv, 9, 9, 9),
+              L"ValidateStagingPath 自检（提权侧同口径）");
+    }
+    CHECK(MkdirP(fakeBin + L"\\Debug") && MkdirP(fakeBin + L"\\Debug32") &&
+              WriteStr(fakeBin + L"\\Debug\\ImeCore.dll", "OLD64") &&
+              WriteStr(fakeBin + L"\\Debug\\LingxiUI.exe", "OLDEXE") &&
+              WriteStr(fakeBin + L"\\Debug32\\ImeCore.dll", "OLD32"),
+          L"假 bin 树放旧件（真 bin 零接触）");
+    const std::wstring imePs = g_tmp + L"\\imecheck_fake.ps1";
+    CHECK(WriteStr(imePs, "exit 0\r\n"), L"写假 imecheck.ps1（真 RunImecheck 走 powershell 退出码）");
+    ApplyRequest req;
+    req.binRoot = fakeBin;
+    req.stagingDir = staging;
+    req.versionStr = L"9.9.9";
+    req.imecheckScript = imePs;
+    req.doRegister = true;
+    ApplyHooks hooks;
+    hooks.reRegister = StubReRegister; // 真实 regsvr32 需管理员+真 DLL，演练打桩
+    std::wstring log;
+    g_regCalls = 0;
+    bool ok = ApplyUpdate(req, hooks, &err, &log);
+    CHECK(ok, L"ApplyUpdate 全流程成功（真探针自验：staging 内 LingxiUI.exe=本 exe 副本输出 9.9.9）");
+    CHECK(ok && ReadAll(fakeBin + L"\\Debug\\ImeCore.dll") == "E2E-NEW64" &&
+              ReadAll(fakeBin + L"\\Debug32\\ImeCore.dll") == "E2E-NEW32" &&
+              ReadAll(fakeBin + L"\\Debug\\data\\pinyin.txt") == "PY64",
+          L"x64 与 x86 两份都换成新件 + 子目录文件落位");
+    CHECK(g_regCalls == 1 && g_regDll64 == fakeBin + L"\\Debug\\ImeCore.dll" &&
+              g_regDll32 == fakeBin + L"\\Debug32\\ImeCore.dll",
+          L"重注册桩收到两侧 DLL 路径（真实注册留真机验证）");
+    CHECK(CountPrev(fakeBin + L"\\Debug\\ImeCore.dll") >= 1 &&
+              OldestPrevContent(fakeBin + L"\\Debug\\ImeCore.dll") == "OLD64",
+          L".prev 快照保留且内容为旧件（回滚依据在位）");
+    {
+        std::wstring err2, log2;
+        CHECK(ApplyUpdate(req, hooks, &err2, &log2), L"幂等重跑：第二次 ApplyUpdate 仍成功");
+    }
+
+    // ----- 篡改包：下载成功但哈希不匹配 → 拒，绝不进 staging -----
+    {
+        ReleaseInfo relBad;
+        SemVer rv;
+        std::wstring e2;
+        State sb = CheckLatest(L"lingxi/badsum", nullptr, &relBad, &rv, &e2);
+        SelectedAssets selB;
+        std::wstring why;
+        CHECK(sb == State::NewVersion && SelectAssets(relBad, &selB, &why), L"篡改发布：检查与选资产通过");
+        std::wstring badZip = dl + L"\\bad-x64.zip";
+        CHECK(DownloadToFile(selB.x64.downloadUrl, badZip, kMaxDownloadBytes, nullptr, nullptr, nullptr, &e2),
+              L"篡改包下载本身成功（200）");
+        CHECK(!VerifyAgainstSums(sums, L"LingxiIme-win-x64.zip", badZip, &e2) && !e2.empty(),
+              L"篡改包 SHA256 不匹配 → 拒（整包丢弃，绝不替换）");
+    }
+    PrintW(L"== E2E 汇总：PASS=%d FAIL=%d ==\n", g_pass, g_fail);
+    return g_fail ? 1 : 0;
+}
+
 int wmain(int argc, wchar_t** argv) {
     // 集成测试把本 exe 复制为假 bin 树的 LingxiUI.exe 充当探针桩：
     // 按 EmitCliText 重定向分支形态输出无 BOM UTF-16LE（真实探针解码路径）。
@@ -255,6 +383,8 @@ int wmain(int argc, wchar_t** argv) {
                   (DWORD)(wcslen(msg) * sizeof(wchar_t)), &w, nullptr);
         return 0;
     }
+    if (argc >= 2 && wcscmp(argv[1], L"--e2e") == 0)
+        return RunE2E();
     PrintW(L"== update_test: 检查 + 下载/校验/解压 + 替换/自验/回滚（批次 2-4）==\n");
 
     // ---------- 版本真源一致性 ----------
@@ -266,6 +396,21 @@ int wmain(int argc, wchar_t** argv) {
         SemVer loc = LocalVersion();
         CHECK(SemEq(loc, LINGXI_VERSION_MAJOR, LINGXI_VERSION_MINOR, LINGXI_VERSION_PATCH),
               L"LocalVersion 取自真源");
+    }
+
+    // ---------- CheckLatest 入参校验（批次 6 缺陷回归锁定：字符集曾漏 '/'） ----------
+    {
+        volatile LONG cancel = 1;
+        std::wstring e;
+        State s = CheckLatest(L"lingxi/new", &cancel, nullptr, nullptr, &e);
+        CHECK(s == State::Failed && e == L"已取消",
+              L"合法 owner/repo 过校验抵达 HTTP 层（取消口）——'/' 误判非法的回归锁定");
+        CHECK(CheckLatest(L"a/b/c", nullptr, nullptr, nullptr, &e) == State::Failed &&
+                  e.find(L"owner/repo") != std::wstring::npos,
+              L"双斜杠 → 格式拒");
+        CHECK(CheckLatest(L"a b/c", nullptr, nullptr, nullptr, &e) == State::Failed &&
+                  e.find(L"非法字符") != std::wstring::npos,
+              L"空格 → 非法字符拒（收紧面未被 '/' 放宽破坏）");
     }
 
     // ---------- ParseSemVer ----------
