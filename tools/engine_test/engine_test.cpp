@@ -683,6 +683,20 @@ int wmain()
                 py->Learn(L"v123", L"XXX污染");
                 Report(py->Predict(L"v123").cands[0] == L"壹佰贰拾叁",
                        "calc Learn rejected, dict not polluted");
+                // P5v-11. L11 复探针（audit §八-5 销账依据）：一元/括号共用深度闸
+                // 64（calcnum.cpp ParseFactor）落地后，20 万连发负号（修复前实测
+                // 0xC00000FD 栈溢出）必须被闸拒=空候选且进程存活——若栈溢出回潮，
+                // 本用例会直接崩掉 engine_test，门禁即红，无需人工判读。
+                {
+                    std::wstring deep = std::wstring(L"v") + std::wstring(200000, L'-') + L"1";
+                    bool gatedEmpty = lingxi::CalcCandidates(deep).empty();
+                    // 浅层 sanity：闸内连负号语义不变（-1→-1，--1→1）
+                    std::vector<std::wstring> c1 = lingxi::CalcCandidates(L"v-1");
+                    std::vector<std::wstring> c2 = lingxi::CalcCandidates(L"v--1");
+                    Report(gatedEmpty && !c1.empty() && c1[0] == L"-1" &&
+                           !c2.empty() && c2[0] == L"1",
+                           "calc 200k unary-minus probe: depth-gated empty, no overflow");
+                }
             }
 
             // P5s. 符号搜索（ui/symsearch.cpp，符号面板搜索行共用）：
