@@ -1,17 +1,20 @@
 //
-// ===== 自助更新单测工装（批次 2-3：检查侧 + 下载/校验/解压）=====
+// ===== 自助更新单测工装（批次 2-4：检查 + 下载/校验/解压 + 替换/自验/回滚）=====
 // 真断言（设计 §9）：版本比较 / JSON 解析 / 资产选择 / SUMS 解析 / 白名单 / 状态机 /
-// SHA256 / zip-slip 与上限（测试内自建 stored zip 构造恶意包）/ tar 解包 / 解出复核。
+// SHA256 / zip-slip 与上限（测试内自建 stored zip 构造恶意包）/ tar 解包 / 解出复核 /
+// staging 校验 / 替换计划 / rename-aside+复制+回滚全流程（假 bin 树，绝不碰真 bin）。
 // 不打真实 GitHub；网络路径由批次 6 本地假服务集成测试覆盖。
 //
 #include <windows.h>
 
 #include <cstdio>
+#include <cstring>
 #include <string>
 #include <vector>
 
 #include "../../common/update.h"
 #include "../../common/update_fetch.h"
+#include "../../common/update_apply.h"
 #include "../../common/version.h"
 
 using namespace lingxi::updater;
@@ -208,8 +211,51 @@ static bool PrefZip(const std::vector<unsigned char>& z, const std::wstring& pkg
     return ok;
 }
 
-int wmain() {
-    PrintW(L"== update_test: 检查侧 + 下载/校验/解压（批次 2-3）==\n");
+// ---------- 批次 4：hooks 桩（记录调用；真实文件替换/哈希自验不打桩）----------
+static int g_regCalls = 0;
+static bool g_regOk = true;
+static std::wstring g_regDll64, g_regDll32;
+static bool StubReRegister(const std::wstring& d64, const std::wstring& d32, std::wstring*) {
+    g_regCalls++;
+    g_regDll64 = d64;
+    g_regDll32 = d32;
+    return g_regOk;
+}
+static int g_imeCalls = 0;
+static bool g_imeOk = true;
+static bool StubImecheck(const std::wstring&, std::wstring*) { g_imeCalls++; return g_imeOk; }
+
+// 数 dst 旁边 .prev-* 快照个数（回滚断言用）。
+static int CountPrev(const std::wstring& dstPath) {
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((dstPath + L".prev-*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    int n = 0;
+    do { if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY)) n++; } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return n;
+}
+// 最早建出的 .prev-*（FindFirst 按名字序；时间戳定宽 10 位 → 字典序=时间序）。
+static std::string OldestPrevContent(const std::wstring& dstPath) {
+    WIN32_FIND_DATAW fd;
+    HANDLE h = FindFirstFileW((dstPath + L".prev-*").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return std::string();
+    std::wstring dir = dstPath.substr(0, dstPath.find_last_of(L'\\'));
+    FindClose(h);
+    return ReadAll(dir + L"\\" + fd.cFileName);
+}
+
+int wmain(int argc, wchar_t** argv) {
+    // 集成测试把本 exe 复制为假 bin 树的 LingxiUI.exe 充当探针桩：
+    // 按 EmitCliText 重定向分支形态输出无 BOM UTF-16LE（真实探针解码路径）。
+    if (argc >= 2 && wcscmp(argv[1], L"--version") == 0) {
+        const wchar_t* msg = L"灵犀输入法 9.9.9（构建于 fake probe）\n";
+        DWORD w = 0;
+        WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), msg,
+                  (DWORD)(wcslen(msg) * sizeof(wchar_t)), &w, nullptr);
+        return 0;
+    }
+    PrintW(L"== update_test: 检查 + 下载/校验/解压 + 替换/自验/回滚（批次 2-4）==\n");
 
     // ---------- 版本真源一致性 ----------
     {
@@ -553,6 +599,202 @@ int wmain() {
         CHECK(!DownloadToFile(L"http://github.com/a.zip", TPath(L"d.bin"), kMaxDownloadBytes,
                               nullptr, nullptr, nullptr, &err),
               L"http 明文 → 拒绝");
+    }
+
+    // ---------- 批次 4：ValidateStagingPath（T10）----------
+    std::wstring bw = g_tmp + L"\\binwork";
+    {
+        SemVer v;
+        std::wstring err;
+        CHECK(MkdirP(bw + L"\\staging\\1.2.3"), L"建 binwork\\staging\\1.2.3");
+        CHECK(ValidateStagingPath(bw + L"\\staging\\1.2.3", bw, &v, &err) && SemEq(v, 1, 2, 3),
+              L"合法 staging 通过并解出版本");
+        CHECK(ValidateStagingPath(bw + L"\\StAgInG\\1.2.3", bw, &v, &err),
+              L"父目录大小写不敏感比较通过（Windows FS 本不敏感，判定逻辑须一致）");
+        CHECK(!ValidateStagingPath(bw + L"\\staging\\notaversion", bw, &v, &err) &&
+                  err.find(L"版本号") != std::wstring::npos,
+              L"子目录名非法版本 → 拒");
+        CHECK(MkdirP(g_tmp + L"\\elsewhere\\1.2.3"), L"建 elsewhere\\1.2.3");
+        CHECK(!ValidateStagingPath(g_tmp + L"\\elsewhere\\1.2.3", bw, &v, &err) &&
+                  err.find(L"之下") != std::wstring::npos,
+              L"不在 bin\\work\\staging 之下 → 拒（任意路径提权防线）");
+        CHECK(!ValidateStagingPath(bw + L"\\staging\\..\\evil\\1.2.3", bw, &v, &err),
+              L"路径穿越规范化后仍被拒");
+        CHECK(MkdirP(bw + L"\\staging\\1.2.3\\sub"), L"建 staging\\1.2.3\\sub");
+        CHECK(!ValidateStagingPath(bw + L"\\staging\\1.2.3\\sub", bw, &v, &err),
+              L"非直接子目录 → 拒");
+        CHECK(!ValidateStagingPath(bw + L"\\staging\\5.5.5", bw, &v, &err) &&
+                  err.find(L"不存在") != std::wstring::npos,
+              L"目录不存在 → 拒");
+    }
+
+    // ---------- 批次 4：BuildReplacePlan（双位缺一不可）----------
+    std::wstring stg = g_tmp + L"\\int\\staging\\9.9.9";
+    {
+        std::vector<FileOp> plan;
+        std::wstring err;
+        CHECK(MkdirP(stg + L"\\x64\\data") && MkdirP(stg + L"\\x86"), L"建 staging 双树");
+        CHECK(WriteStr(stg + L"\\x64\\ImeCore.dll", "NEW64") &&
+                  WriteStr(stg + L"\\x64\\data\\pinyin.txt", "PY") &&
+                  WriteStr(stg + L"\\x86\\ImeCore.dll", "NEW32"),
+              L"写 staging 内容");
+        CHECK(BuildReplacePlan(stg, g_tmp + L"\\int\\bin", &plan, &err) && plan.size() == 3,
+              L"计划 3 文件（x64 两件 + x86 一件）");
+        bool d64 = false, d32 = false, sub = false;
+        for (const auto& op : plan) {
+            if (op.rel == L"ImeCore.dll" && op.dst.find(L"\\Debug\\") != std::wstring::npos) d64 = true;
+            if (op.rel == L"ImeCore.dll" && op.dst.find(L"\\Debug32\\") != std::wstring::npos) d32 = true;
+            if (op.rel == L"data\\pinyin.txt") sub = true;
+        }
+        CHECK(d64 && d32, L"同一 rel 映射到 Debug 与 Debug32 两侧");
+        CHECK(sub, L"子目录相对路径保留");
+        std::wstring no86 = g_tmp + L"\\int\\no86";
+        CHECK(MkdirP(no86 + L"\\x64") && WriteStr(no86 + L"\\x64\\ImeCore.dll", "X"),
+              L"建 no86（只有 x64 树）");
+        CHECK(!BuildReplacePlan(no86, g_tmp + L"\\int\\bin", &plan, &err) &&
+                  err.find(L"x86") != std::wstring::npos,
+              L"缺 x86 子树 → 拒（漏 32 位历史教训）");
+        std::wstring e86 = g_tmp + L"\\int\\empty86";
+        CHECK(MkdirP(e86 + L"\\x64") && MkdirP(e86 + L"\\x86") &&
+                  WriteStr(e86 + L"\\x64\\ImeCore.dll", "X") &&
+                  !BuildReplacePlan(e86, g_tmp + L"\\int\\bin", &plan, &err) &&
+                  err.find(L"32 位包内容为空") != std::wstring::npos,
+              L"x86 空树 → 拒");
+        std::wstring nodll = g_tmp + L"\\int\\nodll";
+        CHECK(MkdirP(nodll + L"\\x64") && MkdirP(nodll + L"\\x86") &&
+                  WriteStr(nodll + L"\\x64\\a.txt", "1") &&
+                  WriteStr(nodll + L"\\x86\\b.txt", "2") &&
+                  !BuildReplacePlan(nodll, g_tmp + L"\\int\\bin", &plan, &err) &&
+                  err.find(L"ImeCore") != std::wstring::npos,
+              L"x64 缺 ImeCore.dll → 拒（重注册依赖）");
+    }
+
+    // ---------- 批次 4：RunImecheck / RunVersionProbe 真实进程路径 ----------
+    {
+        std::wstring err;
+        CHECK(WriteStr(TPath(L"ime_ok.ps1"), "exit 0\n"), L"写 ime_ok.ps1");
+        CHECK(WriteStr(TPath(L"ime_bad.ps1"), "exit 3\n"), L"写 ime_bad.ps1");
+        CHECK(RunImecheck(TPath(L"ime_ok.ps1"), &err), L"imecheck 真跑 powershell：退出码 0 通过");
+        CHECK(!RunImecheck(TPath(L"ime_bad.ps1"), &err) &&
+                  err.find(L"退出码") != std::wstring::npos,
+              L"imecheck 非 0 → 拒（不采信自报）");
+        CHECK(!RunImecheck(TPath(L"no_such.ps1"), &err), L"imecheck 脚本缺失 → 拒");
+        wchar_t self[MAX_PATH] = {};
+        GetModuleFileNameW(NULL, self, ARRAYSIZE(self));
+        std::wstring selfCopy = TPath(L"probe_self.exe");
+        CHECK(CopyFileW(self, selfCopy.c_str(), FALSE), L"复制自身为探针桩");
+        CHECK(RunVersionProbe(selfCopy, L"9.9.9", &err),
+              L"探针真跑：无 BOM UTF-16LE 输出解码匹配");
+        CHECK(!RunVersionProbe(selfCopy, L"8.8.8", &err) &&
+                  err.find(L"不含") != std::wstring::npos,
+              L"探针版本不符 → 拒");
+        CHECK(!RunVersionProbe(TPath(L"definitely_missing.exe"), L"9.9.9", &err),
+              L"探针 exe 缺失 → 拒不崩溃");
+    }
+
+    // ---------- 批次 4：ApplyUpdate 全流程（假 bin 树：替换→自验→回滚）----------
+    {
+        std::wstring fakeBin = g_tmp + L"\\int\\bin";
+        CHECK(MkdirP(fakeBin + L"\\Debug\\data") && MkdirP(fakeBin + L"\\Debug32"), L"建假 bin 双目录");
+        CHECK(WriteStr(fakeBin + L"\\Debug\\ImeCore.dll", "OLD64") &&
+                  WriteStr(fakeBin + L"\\Debug\\LingxiUI.exe", "OLDUI") &&
+                  WriteStr(fakeBin + L"\\Debug\\extra.txt", "keep") &&
+                  WriteStr(fakeBin + L"\\Debug32\\ImeCore.dll", "OLD32"),
+              L"假 bin 旧件就绪（含计划外 extra.txt）");
+        // staging 的 LingxiUI.exe = 自身副本（真探针可跑）
+        wchar_t self[MAX_PATH] = {};
+        GetModuleFileNameW(NULL, self, ARRAYSIZE(self));
+        CHECK(CopyFileW(self, (stg + L"\\x64\\LingxiUI.exe").c_str(), FALSE), L"staging 放探针桩 exe");
+
+        ApplyHooks hk;
+        hk.reRegister = StubReRegister;  // imecheck/probe 走真实实现
+        ApplyRequest req;
+        req.binRoot = fakeBin;
+        req.stagingDir = stg;
+        req.versionStr = L"9.9.9";
+        req.imecheckScript = TPath(L"ime_ok.ps1");
+        req.doRegister = true;
+        std::wstring err, log;
+        CHECK(ApplyUpdate(req, hk, &err, &log), L"全流程成功（真替换+真 imecheck+真探针+哈希自验）");
+        CHECK(g_regCalls == 1 && g_regDll64 == fakeBin + L"\\Debug\\ImeCore.dll" &&
+                  g_regDll32 == fakeBin + L"\\Debug32\\ImeCore.dll",
+              L"重注册收到双侧 DLL 路径");
+        CHECK(ReadAll(fakeBin + L"\\Debug\\ImeCore.dll") == "NEW64" &&
+                  ReadAll(fakeBin + L"\\Debug32\\ImeCore.dll") == "NEW32",
+              L"x64 与 x86 两份都换成新件（缺一不可）");
+        CHECK(ReadAll(fakeBin + L"\\Debug\\data\\pinyin.txt") == "PY" &&
+                  ReadAll(fakeBin + L"\\Debug\\extra.txt") == "keep",
+              L"子目录新建 + 计划外文件不动");
+        CHECK(OldestPrevContent(fakeBin + L"\\Debug\\ImeCore.dll") == "OLD64" &&
+                  CountPrev(fakeBin + L"\\Debug\\ImeCore.dll") >= 1,
+              L"旧件保留 .prev-<ts> 快照且内容=替换前旧件");
+        CHECK(log.find(L"自验 3/3") != std::wstring::npos, L"log 含三项自验全过");
+
+        // 幂等：再跑一次同样成功
+        std::wstring err2;
+        CHECK(ApplyUpdate(req, hk, &err2, nullptr), L"幂等重跑仍成功");
+
+        // 自验失败（探针版本不符）→ 整体回滚
+        ApplyRequest reqBad = req;
+        reqBad.versionStr = L"8.8.8";
+        std::wstring err3;
+        CHECK(!ApplyUpdate(reqBad, hk, &err3, nullptr) &&
+                  err3.find(L"自验失败（探针") != std::wstring::npos &&
+                  err3.find(L"已整体回滚") != std::wstring::npos,
+              L"探针不符 → 回滚（不采信步骤返回值，T12）");
+        CHECK(ReadAll(fakeBin + L"\\Debug\\ImeCore.dll") == "NEW64" &&
+                  ReadAll(fakeBin + L"\\Debug32\\ImeCore.dll") == "NEW32",
+              L"回滚后磁盘仍是上一轮新件（无半替换态）");
+
+        // 重注册失败 → 回滚
+        g_regOk = false;
+        std::wstring err4;
+        CHECK(!ApplyUpdate(req, hk, &err4, nullptr) &&
+                  err4.find(L"TSF 重注册失败") != std::wstring::npos,
+              L"重注册失败 → 整体回滚");
+        g_regOk = true;
+
+        // imecheck 失败（桩）→ 回滚
+        g_imeOk = false;
+        ApplyRequest req2 = req;
+        req2.imecheckScript = TPath(L"whatever.ps1");
+        std::wstring err5;
+        CHECK(!ApplyUpdate(req2, hk, &err5, nullptr) &&
+                  err5.find(L"自验失败（imecheck）") != std::wstring::npos,
+              L"imecheck 失败 → 回滚");
+        g_imeOk = true;
+
+        // 复制中途失败（路径段被同名文件占用）→ 全量回滚
+        std::wstring stg2 = g_tmp + L"\\int\\stg2";
+        CHECK(MkdirP(stg2 + L"\\x64\\sub") && MkdirP(stg2 + L"\\x86"), L"建 stg2");
+        CHECK(WriteStr(stg2 + L"\\x64\\ImeCore.dll", "N6") &&
+                  WriteStr(stg2 + L"\\x64\\sub\\f.txt", "F") &&
+                  WriteStr(stg2 + L"\\x86\\ImeCore.dll", "N3"),
+              L"stg2 含 sub/f.txt（与假 bin 的 sub 文件冲突）");
+        CHECK(WriteStr(fakeBin + L"\\Debug\\sub", "iam-a-file"), L"假 bin Debug 放同名文件 sub");
+        ApplyRequest req3 = req;
+        req3.stagingDir = stg2;
+        std::wstring err6;
+        CHECK(!ApplyUpdate(req3, hk, &err6, nullptr) &&
+                  err6.find(L"同名文件占用") != std::wstring::npos,
+              L"中途建目录失败 → 拒并回滚");
+        CHECK(ReadAll(fakeBin + L"\\Debug\\ImeCore.dll") == "NEW64" &&
+                  ReadAll(fakeBin + L"\\Debug\\sub") == "iam-a-file",
+              L"失败后旧态完整恢复（要么全换要么全回滚，T9）");
+    }
+
+    // ---------- 批次 4：VerifyInstalledHashes 直接对（篡改兜底）----------
+    {
+        std::wstring err;
+        std::vector<FileOp> one;
+        one.push_back({L"x.bin", stg + L"\\x64\\ImeCore.dll", TPath(L"vh_dst.bin")});
+        CHECK(CopyFileW(one[0].src.c_str(), one[0].dst.c_str(), FALSE) &&
+                  VerifyInstalledHashes(one, &err),
+              L"哈希一致 → 通过");
+        WriteStr(one[0].dst, "TAMPERED");
+        CHECK(!VerifyInstalledHashes(one, &err) &&
+                  err.find(L"不一致") != std::wstring::npos,
+              L"落盘被篡改 → 拒（替换后独立复核）");
     }
 
     PrintW(L"\n== update_test 汇总：PASS=%d FAIL=%d ==\n", g_pass, g_fail);

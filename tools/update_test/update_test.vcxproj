@@ -51,13 +51,14 @@
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
-      <AdditionalDependencies>winhttp.lib;bcrypt.lib;ole32.lib;kernel32.lib;advapi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>winhttp.lib;bcrypt.lib;ole32.lib;shell32.lib;kernel32.lib;advapi32.lib;user32.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="update_test.cpp" />
     <ClCompile Include="..\..\common\update.cpp" />
     <ClCompile Include="..\..\common\update_fetch.cpp" />
+    <ClCompile Include="..\..\common\update_apply.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
 </Project>
