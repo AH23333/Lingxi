@@ -2615,6 +2615,36 @@ int wmain(int argc, wchar_t** argv)
         }
     }
 
+    // ===== M5-TTL. 外部直写陈旧窗口有界断言（audit §八-3 收口）=====
+    // 契约：绕过 SaveSettings 的直写（reg.exe 类，不 bump SettingsSeq）由
+    // kSetCacheTtlMs=500ms 兜底——窗口内缓存陈旧是设计行为，窗口后必反映新值。
+    // 断言两侧都钉：①窗口内确走缓存（证明本测真的在压 TTL 路径而非 miss 直读）；
+    // ②TTL 过期后 LoadSettings 必达新值（陈旧有界）。用后即删沙盒键。
+    {
+        wchar_t prevNs[64] = L"";
+        GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs, 64);
+        SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", L"ttl");   // 独立沙盒键
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_ttl");
+        lingxi::Settings s; s.candidateCount = 5;
+        lingxi::SaveSettings(s);                                  // SaveSettings 路径：落 5 + bump seq
+        lingxi::Settings warmed = lingxi::LoadSettings();         // 首读 miss→全量→填缓存（TTL 起点）
+        bool wrote = false;
+        { HKEY hk = nullptr;
+          if (RegOpenKeyExW(HKEY_CURRENT_USER, L"Software\\LingxiIme_ttl", 0, KEY_WRITE, &hk) == ERROR_SUCCESS) {
+              DWORD v = 7;
+              wrote = RegSetValueExW(hk, L"CandidateCount", 0, REG_DWORD, (const BYTE*)&v, sizeof(v)) == ERROR_SUCCESS;
+              RegCloseKey(hk);
+          } }
+        lingxi::Settings stale = lingxi::LoadSettings();          // 立即读：seq 未变+TTL 内→缓存命中
+        Sleep(700);                                               // > kSetCacheTtlMs(500ms)
+        lingxi::Settings fresh = lingxi::LoadSettings();          // TTL 过期→全量重读→必见 7
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_ttl");
+        SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs[0] ? prevNs : L"");
+        Report(warmed.candidateCount == 5 && wrote, "M5-TTL setup: saved=5, external write landed");
+        Report(stale.candidateCount == 5, "M5-TTL stale served within window (cache active)");
+        Report(fresh.candidateCount == 7, "M5-TTL staleness bounded: reload reflects direct write");
+    }
+
     wprintf(L"=== 结果: PASS=%d FAIL=%d ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

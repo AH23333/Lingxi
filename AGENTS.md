@@ -2,12 +2,12 @@
 
 > P0 立规（docs/ARCH-ASSESSMENT.md §五，2026-10-31 随 P1-P3 重构落地）。
 > 全量流水见 docs/DEVLOG.md；动手前先查 docs/PITFALLS.md（#1-#94，多数"程序坏了"实为环境/工装坑）。
-> 2026-11-02 只读深度 Bug 审查结论（高 H1-H6/中 M1-M7/低 L1-L13，含证据、复现状态与已排除项清单）：docs/audit-2026-11-02-bug-audit.md——排查崩溃/竞态/乱码类问题先查此表，勿重复排查"已排除项"。2026-11-02 晚状态已按修复代码对齐；2026-11-03 复核销账 L10（`53f0aaf` 封顶淘汰）/L12（`bda5094`）并确认 H3 根治闭环（`b8d1d8d` 停机不析构+落盘线程去 this 化）；同日 L11 复探针入门禁（`8fbd016`，§八-5 销账）、L10 边界单测入门禁（`485727a`）——26 条全部有修复落地且有验证（H5 原判定撤回；仅 L6/L7/L8 待真机行为验证）。残余风险见该文档 §八-3/-6/-7/-8 与 §7.5 复核增补。
+> 2026-11-02 只读深度 Bug 审查结论（高 H1-H6/中 M1-M7/低 L1-L13，含证据、复现状态与已排除项清单）：docs/audit-2026-11-02-bug-audit.md——排查崩溃/竞态/乱码类问题先查此表，勿重复排查"已排除项"。2026-11-02 晚状态已按修复代码对齐；2026-11-03 复核销账 L10（`53f0aaf` 封顶淘汰）/L12（`bda5094`）并确认 H3 根治闭环（`b8d1d8d` 停机不析构+落盘线程去 this 化）；同日 L11 复探针入门禁（`8fbd016`，§八-5 销账）、L10 边界单测入门禁（`485727a`）——26 条全部有修复落地且有验证（H5 原判定撤回；仅 L6/L7/L8 待真机行为验证）。残余风险见该文档 §八-4/-6/-7 与 §7.5 复核增补（§八-3 M5 TTL 窗口、§八-8 冷启动竞态已销账）。
 
 ## 构建与门禁入口
 
 - 构建：`cmd /c "tools\build.cmd [Debug|Release]"`（x64 UI+ImeCore）；`cmd /c "tools\build32.cmd"`（Win32 ImeCore）
-- 全量回归：`cmd /c tools\regress.cmd`（engine_test 310 断言 / fix_readings --check / deep_test / e2e 四套件，**ALL PASS 才算过**；沙箱内 `cmd /c` 被禁时按 §PITFALLS 用 MSBuild 直调 + 逐套件手跑等效）
+- 全量回归：`cmd /c tools\regress.cmd`（engine_test 313 断言 / fix_readings --check / deep_test / e2e 四套件，**ALL PASS 才算过**；沙箱内 `cmd /c` 被禁时按 §PITFALLS 用 MSBuild 直调 + 逐套件手跑等效）
 - 真机走查：`tmp\smoke1.ps1`（16 项，含 usage.txt 播种备份/还原）+ `tmp\smoke2.ps1`（8 项）；行为探针 `LingxiUI.exe --probe-pinyin`（基线：gylg=4 候 / gylgl=供应链管理 1 候 / xian 首选西安）
 - 提交纪律：build 零错 + regress ALL PASS；涉 UI/窗口/焦点的改动加跑 smoke 双套件；重构类改动加跑 probe 基线
 
