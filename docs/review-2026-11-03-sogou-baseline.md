@@ -39,14 +39,15 @@
 ### 1.4 让新件真正生效的步骤（可执行）
 
 1. **重建 32 位**：`cmd /c tools\build32.cmd Debug`（注册表 WOW64 视图指向它；当前落后一整天）。
+   ~~已完成~~：13:31 已用 MSBuild 直调 `/m:1` 重建（证据见 §九）。
 2. **重启宿主**：关闭并重开每个要打字的程序（Trae、终端、浏览器、微信）。最低成本全覆盖 = **注销再登录**（或重启）；explorer 不重启则任务栏/搜索框路径仍是旧件。
 3. **无需重新注册**：磁盘路径未变，注册表指向即新件；若要彻底可跑 `tools\register.cmd Debug`（需管理员）。
 4. **UI 进程**：每次重建 LingxiUI 后 `taskkill /IM LingxiUI.exe`，IME 会自动重生新实例（`pipeclient.cpp:52-87` 拉起链）。
 5. **生效验证探针**（重启宿主后）：
-   - `bin\Debug\LingxiUI.exe --version` 看构建日期（`main.cpp:325` 打 `__DATE__`）；
-   - `LingxiUI.exe --probe-pinyin` 基线：gylg=4 候 / gylgl=供应链管理 1 候 / xian 首选西安（AGENTS.md 口径）；
+   - `bin\Debug\LingxiUI.exe --version` 看构建日期（`main.cpp:325` 打 `__DATE__`）——实测输出"版本 1.0 构建日期 Nov  3 2026"；
+   - ~~`LingxiUI.exe --probe-pinyin`~~ **本轮实测异常，暂勿依赖**：探针进程打完 `probe: 开始` 一行即退出，"引擎已加载"未落日志（两次复现，无 dump；待查，见 §九）；行为基线改由 engine_test 313 断言背书；
    - 打字路径抽查：新键语义（如 Home/End 末页）在宿主里生效即证明 DLL 为新件。
-6. **建议（待裁决）**：DllGetClassObject/OnActivate 时把 DLL 的 `__DATE__ __TIME__` 写入 `%TEMP%\lingxi-ime.log`，"旧件/新件"以后一条日志即可判定，不必再考古。
+6. ~~建议~~ **已落地（F3, `86216bd`）**：`ActivateEx` 每次宿主激活把 DLL 的 `__DATE__ __TIME__` 写入 `%TEMP%\lingxi-ime.log`（需 `LINGXI_LOG=1`），新旧件一行日志即可判定。自查判据与操作手册见 §十。
 
 ---
 
@@ -185,4 +186,44 @@ H1/H2/H3/L4 崩溃层修复本体；L10/L12 已闭环项；§八-3/-6/-7/-8 残�
 | F2 | `settings.h:17` 注释误导 | 注释称"候选上限（1..9）"，实测拼音路径不消费（`pipeserver.cpp:570`），仅英文补全消费 | 改注释对齐真实语义 + 设置页"补全候选数"旁加说明"拼音每页固定 9"；纯文案，可附 engine_test 断言钉死 cap 归属 |
 | F3 | 版本可判定性 | 旧件考古成本高（本次即证） | DLL/UI `--version` 已打 `__DATE__`（`main.cpp:325`）；DLL 侧 OnActivate 日志补 `__DATE__ __TIME__` 一行，低风险 |
 
-> 撞车记录：审查时工作区存在他会话未提交改动（`tools/engine_test/engine_test.cpp` +117 行 M7 fuzz，HEAD 2e44ce7 提交于 12:52:55，属并行会话活跃写入）。按纪律本会话未做任何 commit，F2/F3 待用户放行后一条一提交。
+> 撞车记录：审查时工作区存在他会话未提交改动（`tools/engine_test/engine_test.cpp` +117 行 M7 fuzz，HEAD 2e44ce7 提交于 12:52:55，属并行会话活跃写入）。按纪律本会话未做任何 commit，F2/F3 待用户放行后一条一提交。**（后记：该会话已自行提交 `5396575`，撞车解除，本会话按放行令继续。）**
+
+---
+
+## 九、重建执行与门禁读数（13:31–13:36 实测）
+
+| 件 | 重建前 | 重建后 | 判定 |
+|---|---|---|---|
+| `bin\Debug32\ImeCore.dll` | 294912B @ 11-02 22:02:51 | **310272B @ 11-03 13:31:54**，SHA256 前缀 `729EC94B`，二进制内已含 F3 格式串 `ActivateEx tid=%u build=%hs %hs` | 新件 ✅ |
+| `bin\Debug\ImeCore.dll` | 387584B @ 12:48（早于 F3） | 13:33 全解决方案重建（含 F2/F3） | 新件 ✅ |
+| `bin\Debug\LingxiUI.exe` | @ 12:48 | 3248128B @ 13:33:03；`--version` 实测"版本 1.0 构建日期 Nov  3 2026" | 新件 ✅ |
+| 运行中 UI 进程 | PID 23796 @ 13:15 | 已换 PID 24116 @ 13:35:18，路径=新 exe | 新件在跑 ✅ |
+
+- 构建方式：MSBuild 直调 `/m:1`（先按 `build.cmd` 同款把被锁输出改名 `.prev`），Debug x64 全解决方案 + Debug|Win32 ImeCore 均**零错误**。
+- **engine_test 门禁**：沙盒 APPDATA + `LINGXI_SETTINGS_NS=test`，**PASS=313 FAIL=0**（与 AGENTS.md 基线一致）。
+- **新发现（待查）**：`--probe-pinyin` 探针进程两次均在 `probe: 开始` 后静默退出（`CreatePinyinPredictor` 未返回日志、无 WER dump）。不影响本次门禁结论（engine_test 覆盖同一引擎路径），但 AGENTS.md 把该探针列为行为口径，需另行定位。已登记 §十一。
+
+## 十、"让新件真正生效"操作手册（写给不碰代码的用户）
+
+**为什么只重启一个程序不够**：输入法 DLL 是"每个程序各自加载一份"的——程序**启动那一刻**把 DLL 复制进自己的内存，之后磁盘上重建一万次都换不掉它内存里的旧副本。你天天开着的程序（文件管理器 explorer、浏览器内核的 WebView2 子进程、IDE、终端）从早上开机起就一直攥着旧 DLL；而且 explorer 管着任务栏/搜索框的输入，它不重启，这些地方的输入就永远是旧件。**注销再登录会把 explorer 和它带起来的所有子进程一次性换新，这是唯一省事的"全部刷新"按钮。**
+
+**操作步骤（按顺序）**：
+1. 保存好所有程序里未存盘的内容（下一步会关掉一切窗口）。
+2. **开始菜单 → 电源 → 注销**，等屏幕回到登录界面，再登录回来。（不嫌慢的话，直接重启更保险。）
+3. 登录后打开记事本，切到"灵犀输入法"，随便打一串拼音（如 `nihao`），让输入法真正被加载一次。
+4. **自查"我确实加载到新件了"**：
+   - 按 `Win+R`，输入 `notepad %TEMP%\lingxi-ime.log` 回车（前提：环境变量 `LINGXI_LOG=1` 已设；没设的话，先在 PowerShell 里执行 `$env:LINGXI_LOG='1'; notepad` 再打开日志）；
+   - 在日志**最底部**找这样一行：
+     `[时间][进程号][Lingxi][ime] ActivateEx tid=… build=Nov  3 2026 13:3x:xx`
+   - **判据**：`build=` 后面的日期时间就是"你正在用的这份输入法代码"的出厂时间。看到 `Nov 3 2026 13:3x` = 新件 ✅；看到更早的日期 = 那个程序还是旧件，把它关掉重开；**完全没有 ActivateEx 行 = 该程序根本没加载输入法 DLL，不算数**。
+5. 顺手验证引擎进程：PowerShell 里跑
+   `& "d:\Visual Studio Code\Something\LingxiIme\bin\Debug\LingxiUI.exe" --version`
+   输出应含"构建日期 Nov  3 2026"。
+6. 之后每次重新构建，重复第 2/4 步即可；不需要重新注册（注册表指向的路径没变）。
+
+## 十一、本轮新增待查项
+
+| # | 项 | 现象 | 建议 |
+|---|---|---|---|
+| N1 | `--probe-pinyin` 静默退出 | 两次复现：仅落 `probe: 开始`，`probe: 引擎已加载` 未出现，进程消失，无 dump | 用 `--%` 参数确认探针路径是否被单实例逻辑/控制台附着影响；engine_test 同路径正常，疑探针专属 |
+| N2 | 探针 stdout 不可重定向 | GUI 子系统 exe，`> file` 捕获 0 字节，直读乱码 | 属已知形态（日志走文件），手册已按日志口径写 |
