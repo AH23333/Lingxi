@@ -22,6 +22,7 @@
 #include <cmath>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -381,21 +382,23 @@ public:
     PinyinPredictor() { Load(); }
     ~PinyinPredictor()
     {
-        // H3 退出收敛：有界等后台落盘线程彻底离开 this（写毕回环、干净才置
-        // idle——idle=false 即安全）→同步刷残留脏位（此刻已无并发写者；写
-        // 失败 3 试后放弃记日志，非数据丢失——下次启动从文件旧态起步）。
-        // 上限 5s：本地原子写正常 <100ms，仅磁盘挂死才会触顶；超时后线程仍
-        // 在途属病态残留（析构无法阻止 delete，彻底根治需 main 侧不析构引擎）
-        for (int i = 0; i < 5000 && _persistBusy.load(); i++) Sleep(1);
+        // H3 根治：落盘线程只触 shared_ptr 持有的 PersistCtl + 自身快照副本，
+        // 永不回触 this——有界等 5s 超时后对象可安全析构，不再是"泄漏换安全"。
+        // 超时后置 ownerDead：僵尸线程写前检查（磁盘挂死等病态场景下宁可丢
+        // 在途快照，也不让旧快照覆盖下面同步刷写的最终态）。
+        // 墙钟 deadline：Sleep(1) 粒度约 13ms，按次数名义 5s 实为 ~65s。
+        ULONGLONG dtorDeadline = GetTickCount64() + 5000;
+        while (_pc->busy.load() && GetTickCount64() < dtorDeadline) Sleep(1);
+        _pc->ownerDead.store(true);
         for (int i = 0; i < 3; i++)
         {
             std::lock_guard<std::mutex> lk(_udMtx);
-            if (!_userDirty) break;
+            if (!_pc->dirty.load()) break;
             if (SaveUserDictLocked()) break;
         }
         {
             std::lock_guard<std::mutex> lk(_udMtx);
-            if (_userDirty) LX_LOG(L"py", L"退出：用户词典落盘未遂（重试后放弃）");
+            if (_pc->dirty.load()) LX_LOG(L"py", L"退出：用户词典落盘未遂（重试后放弃）");
         }
     }
 
@@ -725,10 +728,18 @@ private:
     // 用户词简拼索引：首字母串（如 "mm"）→ 用户词（含全拼键与次数）
     struct UserInitPick { std::wstring word; int count; std::string fullKey; };
     std::unordered_map<std::string, std::vector<UserInitPick>> _userByInit;
-    bool _userDirty = false;
-    // 后台落盘互斥位：磁盘 I/O 移出 _udMtx（持锁写盘+全量重建曾让 Predict
-    // 饥饿数百 ms——实测选字后下一帧候选响应 464ms，提交键超时上屏字母）。
-    std::atomic<bool> _persistBusy{false};
+    // H3 根治：落盘控制块。引擎与 detached 落盘线程共持 shared_ptr——线程
+    // 只触本块 + 按值捕获的快照/路径，永不回触 this。析构等 busy 超时后
+    // 线程仍在途也无 UAF（本块随线程引用存活）。dirty 原子位替代原
+    // _userDirty（仍只在 _udMtx 内随词典变更置位，块外轮询只读标志）。
+    // ownerDead：析构置位，僵尸线程写前检查，防旧快照覆盖退出期最终落盘。
+    struct PersistCtl
+    {
+        std::atomic<bool> busy{false};    // 有落盘线程在跑（单写者闸）
+        std::atomic<bool> dirty{false};   // 内存有未落盘变更
+        std::atomic<bool> ownerDead{false}; // 引擎已析构：在途快照放弃写盘
+    };
+    std::shared_ptr<PersistCtl> _pc = std::make_shared<PersistCtl>();
     // R2 自定义短语（GAP §8 R2）：缩写（NormalizeIn 口径小写字母串）→ 短语
     // 列表（同缩写多条按文件顺序全注入）。phrases.txt 与 userdict 同目录同锁
     // （_udMtx）——LoadUserDict 一并重载，UI 保存后经 ReloadUserDict 热生效。
@@ -1448,7 +1459,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
             if (vec.empty()) it = _userByInit.erase(it);
             else ++it;
         }
-        _userDirty = true;
+        _pc->dirty.store(true);
         LX_LOG(L"py", L"用户词典封顶淘汰: 批量=%zu 剩余键数=%zu",
                victims.size(), _userDict.size());
     }
@@ -1495,12 +1506,12 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         return content;
     }
 
-    // 落盘（调用方必须已持有 _udMtx）。失败保持 _userDirty，下次学习时重试。
+    // 落盘（调用方必须已持有 _udMtx）。失败保持脏位，下次学习时重试。
     bool SaveUserDictLocked()
     {
-        if (!_userDirty) return true;
+        if (!_pc->dirty.load()) return true;
         if (!WriteFileAtomicA(UserDictPath(), SerializeUserDictLocked())) return false;
-        _userDirty = false;
+        _pc->dirty.store(false);
         return true;
     }
 
@@ -1511,36 +1522,33 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     }
 
     // 后台落盘：Learn 跑在管道读线程，持 _udMtx 同步写盘会延迟 CTX 帧分发
-    // 并让 Predict 同锁饿数百 ms。快照→清脏→锁外原子写；_persistBusy 保证
-    // 同一时刻只有一个落盘线程（Learn 有管道读线程与 UI 拾取回调两个入口）。
+    // 并让 Predict 同锁饿数百 ms。busy CAS 保证同一时刻只有一个落盘线程
+    // （Learn 有管道读线程与 UI 拾取回调两个入口）。
+    // H3 根治：快照（持锁序列化，毫秒级 CPU 工作）在调用线程完成，线程只
+    // 拿到 content/path 的按值副本 + shared_ptr 控制块——不触 this，引擎
+    // 析构后线程仍在途也无 UAF。原"写毕回环重查脏位"改由 FlushUserDict 的
+    // 重踢循环与下次 Learn 承接（写盘期间新脏位由新线程收敛，语义等价）。
     void KickPersist()
     {
         bool idle = false;
-        if (!_persistBusy.compare_exchange_strong(idle, true))
-            return; // 已有线程在跑：它收尾时会重查脏位
-        std::thread([this]()
+        if (!_pc->busy.compare_exchange_strong(idle, true))
+            return; // 已有线程在跑：它收尾后 Flush/Learn 会再踢
+        std::string content;
+        std::string path = UserDictPath();
         {
-            for (;;)
-            {
-                std::string content;
-                {
-                    std::lock_guard<std::mutex> lk(_udMtx);
-                    if (!_userDirty) break;
-                    content = SerializeUserDictLocked();
-                    _userDirty = false; // 快照即清脏：写盘期间的新学习会重新置脏
-                }
-                if (!WriteFileAtomicA(UserDictPath(), content))
-                {
-                    std::lock_guard<std::mutex> lk(_udMtx);
-                    _userDirty = true; // 写失败恢复脏位，下次 Learn/Flush/退出时重试
-                    break;
-                }
-                // H3 收敛：写毕回环——循环顶重查脏位即原"补漏重查"（写盘期间
-                // 新到的脏位由下一轮收敛），干净才置 idle 退出。idle=false ⟹
-                // 线程已彻底离开 this，析构等 idle 即安全（原实现置 idle 后仍
-                // 回触 this 补漏重开新线程，delete 后=UAF）
-            }
-            _persistBusy.store(false);
+            std::lock_guard<std::mutex> lk(_udMtx);
+            if (!_pc->dirty.load()) { _pc->busy.store(false); return; }
+            content = SerializeUserDictLocked();
+            _pc->dirty.store(false); // 快照即清脏：写盘期间的新学习会重新置脏
+        }
+        std::thread([pc = _pc, content = std::move(content), path = std::move(path)]()
+        {
+            // ownerDead：引擎析构等 busy 超时（磁盘挂死病态场景）后放弃本次
+            // 写——宁可丢在途旧快照，也不覆盖析构同步刷写的最终态。
+            if (pc->ownerDead.load()) { pc->busy.store(false); return; }
+            if (!WriteFileAtomicA(path, content))
+                pc->dirty.store(true); // 写失败恢复脏位，下次 Learn/Flush/退出时重试
+            pc->busy.store(false);
         }).detach();
     }
 
@@ -1580,7 +1588,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 }
                 vec.push_back({ word, 1 });
             }
-            _userDirty = true;
+            _pc->dirty.store(true);
             UpdateUserInitIndexLocked(key); // 单键增量：新词即时可简拼调出
         }
         KickPersist(); // 磁盘 I/O 后台化：Predict/CTX 分发不再等写盘
@@ -1605,15 +1613,16 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     // g_hooks.flushUserDict 走到这里，在途学习落盘收敛后再读文件。
     void FlushUserDict() override
     {
-        KickPersist();
-        for (int i = 0; i < 2000; i++)
+        // 墙钟 deadline 而非"迭代次数×Sleep(1)"：Windows Sleep(1) 实际粒度
+        // 约 13ms，落盘目标不可写时脏位永不收敛，按次数会空转 ~27s（名义 2s
+        // 名不副实）。改 2s 墙钟：正常写盘 <100ms 早已收敛返回，仅病态目标
+        // 才触顶——有界返回语义真实成立。
+        ULONGLONG deadline = GetTickCount64() + 2000;
+        while (GetTickCount64() < deadline)
         {
-            if (!_persistBusy.load())
-            {
-                std::lock_guard<std::mutex> lk(_udMtx);
-                if (!_userDirty) return;
-            }
-            Sleep(1);
+            KickPersist(); // 空闲且有脏位即起新线程；在途则空转等收敛
+            if (!_pc->busy.load() && !_pc->dirty.load()) return;
+            Sleep(5);
         }
     }
 
@@ -1646,7 +1655,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 if (vec.empty()) it = _userDict.erase(it);
                 else ++it;
             }
-            if (removed) _userDirty = true;
+            if (removed) _pc->dirty.store(true);
         }
         if (removed)
         {
@@ -1663,7 +1672,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
             if (_userDict.empty()) return true;
             _userDict.clear();
             _userByInit.clear();
-            _userDirty = true;
+            _pc->dirty.store(true);
         }
         FlushUserDict();
         LX_LOG(L"py", L"词典清空");
@@ -1684,7 +1693,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
             for (auto& up : vec)
                 if (up.word == word) { up.count += gain; up.manual = true; found = true; break; }
             if (!found) vec.push_back({ word, gain, true }); // 显式添加=manual，淘汰豁免
-            _userDirty = true;
+            _pc->dirty.store(true);
             UpdateUserInitIndexLocked(kNorm); // 新词即时可简拼调出
         }
         FlushUserDict();
@@ -1717,7 +1726,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 }
                 if (hit) UpdateUserInitIndexLocked(kv.first);
             }
-            if (found) _userDirty = true;
+            if (found) _pc->dirty.store(true);
         }
         if (found) FlushUserDict();
         return found;
@@ -1741,7 +1750,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 if (!merged) vec.push_back({ e.word, e.count, true }); // 显式导入=manual，淘汰豁免
                 UpdateUserInitIndexLocked(kNorm);
             }
-            _userDirty = true;
+            _pc->dirty.store(true);
         }
         FlushUserDict();
         LX_LOG(L"py", L"词典导入合并: %zu 条", entries.size());

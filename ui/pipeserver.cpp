@@ -138,7 +138,9 @@ void PipeServer::Stop()
     // H3：四类线程全部收敛才拆锁/拆信号量；任一超时（磁盘挂死、llama 卡死
     // 等病态场景）则保留 _cs 与 _hQueueSem 交给进程退出——僵尸线程仍会进
     // _cs / ReleaseSemaphore，先拆即 UB。_hStop 刻意不关：僵尸线程还要读。
-    // 泄漏无害（进程级资源随退出回收）
+    // H3 根治：main 域已改"停机不析构"（PipeServer/CandWindow/引擎堆上生、
+    // 故意不 delete），超时僵尸线程触的本对象内存恒有效——保留锁不再是
+    // "泄漏换安全"的权宜，而是完整收敛契约的一部分。
     if (predictDone && acceptDone && detachedDone)
     {
         if (_hQueueSem) { CloseHandle(_hQueueSem); _hQueueSem = NULL; }

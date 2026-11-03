@@ -26,8 +26,12 @@
 // 仍能送达。
 constexpr wchar_t kEvtShowSymbols[] = L"Local\\LingxiUI_ShowSymbols";
 constexpr wchar_t kEvtShowSettings[] = L"Local\\LingxiUI_ShowSettings";
+// H3 工装 B：优雅退出触发口——置位即走真实停机路径（消息循环退出→Stop→
+// 停机不析构）。卸载脚本/测试台架从此可用事件停机，不再只能 taskkill /F。
+constexpr wchar_t kEvtExit[] = L"Local\\LingxiUI_Exit";
 constexpr UINT WM_NOTIFY_SYMBOLS = WM_APP + 20;
 constexpr UINT WM_NOTIFY_SETTINGS = WM_APP + 21;
+constexpr UINT WM_NOTIFY_EXIT = WM_APP + 22;
 constexpr int kHotkeySymbols = 1; // RegisterHotKey 热键 ID（Ctrl+Shift+B）
 constexpr int kHotPhraseIdBase = 100; // 快捷短语热键 ID 基址（0..23 偏移）
 
@@ -41,6 +45,7 @@ LRESULT CALLBACK NotifyWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 {
     if (msg == WM_NOTIFY_SYMBOLS) { if (g_reqSymbols) g_reqSymbols(); return 0; }
     if (msg == WM_NOTIFY_SETTINGS) { LX_LOG(L"ui", L"WM_NOTIFY_SETTINGS 到达 req=%d", (int)!!g_reqSettings); if (g_reqSettings) g_reqSettings(); return 0; }
+    if (msg == WM_NOTIFY_EXIT) { LX_LOG(L"ui", L"WM_NOTIFY_EXIT 到达：走停机路径"); PostQuitMessage(0); return 0; }
     if (msg == WM_HOTKEY)
     {
         int id = (int)wp;
@@ -506,8 +511,13 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     // e2e 等此事件替代盲等（冷启动 LLM 加载可达数秒，管道未就绪时 CTX 被丢弃）。
     HANDLE hReady = CreateEventW(NULL, TRUE, FALSE, L"Local\\LingxiUIReady");
 
-    lingxi::CandWindow wnd;
-    if (!wnd.Init(hInst))
+    // H3 根治（停机不析构）：Stop() 有界等待超时后僵尸线程仍可能触
+    // PipeServer/CandWindow/引擎内存——若这些对象随 wWinMain 返回消亡
+    // （栈对象）即是 UAF。全部堆上生、故意永不析构：进程随即退出，堆与
+    // 句柄由 OS 回收，"被碰的东西不析构"在进程生命周期内恒成立。
+    // 注意：lambda 一律按值捕获指针（[&] 捕获栈变量在返回后读取即悬垂）。
+    auto* pWnd = new lingxi::CandWindow;
+    if (!pWnd->Init(hInst))
         return 1;
 
     // 共享 LLM 实例：同时用于续写链与拼音候选重排（只加载一次模型）
@@ -520,8 +530,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     // M5 拼音引擎（zh-CN profile 组合模式下使用；数据缺失时为 null，拼音直拼兜底）
     lingxi::IPredictor* pinyinEngine = lingxi::CreatePinyinPredictor();
 
-    lingxi::PipeServer server;
-    if (!server.Start(&wnd, engine, pinyinEngine, reranker))
+    auto* pServer = new lingxi::PipeServer;
+    if (!pServer->Start(pWnd, engine, pinyinEngine, reranker))
         return 1; // 已有实例在运行（或内部错误）
 
     if (hReady) SetEvent(hReady); // 管道服务已监听；句柄随进程存活，不主动关
@@ -532,6 +542,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     // 单实例命令转发：命名事件（自动重置）+ 隐藏通知窗口 + 等待线程
     HANDLE hEvtSymbols = CreateEventW(NULL, FALSE, FALSE, kEvtShowSymbols);
     HANDLE hEvtSettings = CreateEventW(NULL, FALSE, FALSE, kEvtShowSettings);
+    HANDLE hEvtExit = CreateEventW(NULL, FALSE, FALSE, kEvtExit);
     WNDCLASSW nwc{};
     nwc.lpfnWndProc = NotifyWndProc;
     nwc.hInstance = hInst;
@@ -568,14 +579,14 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
             LX_LOG(L"ui", L"快捷短语热键 %d 个注册失败（组合键被其他程序占用）", failed);
     };
     syncHotPhrases();
-    g_insertText = [&server](const std::wstring& s) { server.SendInsertText(s); };
-    g_reqSymbols = [&] {
+    g_insertText = [pServer](const std::wstring& s) { pServer->SendInsertText(s); };
+    g_reqSymbols = [hInst, pServer] {
         lingxi::ShowSymbolPanel(hInst,
-            [&server](const std::wstring& s) { server.SendInsertText(s); });
+            [pServer](const std::wstring& s) { pServer->SendInsertText(s); });
     };
-    g_reqSettings = [&] { lingxi::ShowSettingsWindow(hInst); };
+    g_reqSettings = [hInst] { lingxi::ShowSettingsWindow(hInst); };
     // 候选窗工具条按钮（符/设）→ 与托盘/热键同入口；‹›翻页与固钉在窗口内部处理
-    wnd.SetButtonHandler([&](lingxi::CandWindow::Btn b) {
+    pWnd->SetButtonHandler([&](lingxi::CandWindow::Btn b) {
         if (b == lingxi::CandWindow::Btn::Symbols) { if (g_reqSymbols) g_reqSymbols(); }
         else if (b == lingxi::CandWindow::Btn::Settings) { if (g_reqSettings) g_reqSettings(); }
     });
@@ -585,7 +596,7 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     // 复活竞态）；R2 自定义短语与用户词典同一热载通道（同一次重载装入）。
     if (pinyinEngine)
     {
-        lingxi::g_hooks.reloadUserDict = [&] { pinyinEngine->ReloadUserDict(); };
+        lingxi::g_hooks.reloadUserDict = [pinyinEngine] { pinyinEngine->ReloadUserDict(); };
         lingxi::g_hooks.removeUserWord = [pinyinEngine](const std::wstring& w, const std::wstring& k) {
             return pinyinEngine->RemoveUserWord(w, k); };
         lingxi::g_hooks.clearUserDict = [pinyinEngine] { return pinyinEngine->ClearUserDict(); };
@@ -598,17 +609,19 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
         // L7：导出/备份前在途学习落盘收敛（settingsbackup.cpp / userdictwnd.cpp 消费）
         lingxi::g_hooks.flushUserDict = [pinyinEngine] { pinyinEngine->FlushUserDict(); };
     }
-    lingxi::g_hooks.phrasesChanged = [&] { if (pinyinEngine) pinyinEngine->ReloadUserDict(); };
+    lingxi::g_hooks.phrasesChanged = [pinyinEngine] { if (pinyinEngine) pinyinEngine->ReloadUserDict(); };
     lingxi::g_hooks.settingsChanged = syncHotkey;       // 设置保存后动态注册/注销热键
     lingxi::g_hooks.hotPhrasesChanged = syncHotPhrases; // 管理窗保存后重注册短语热键
     // 托盘菜单"符号面板"入口（复用 g_reqSymbols）；"固定候选窗位置"勾选项
     // 按窗口实际位置切换（固/拖拽同语义）。
     lingxi::g_hooks.showSymbols = [] { if (g_reqSymbols) g_reqSymbols(); };
-    lingxi::g_hooks.pinToggle = [&] { wnd.TogglePin(); };
+    lingxi::g_hooks.pinToggle = [pWnd] { pWnd->TogglePin(); };
     static NotifyThreadParam tpS{ hEvtSymbols, hNotify, WM_NOTIFY_SYMBOLS };
     static NotifyThreadParam tpE{ hEvtSettings, hNotify, WM_NOTIFY_SETTINGS };
+    static NotifyThreadParam tpX{ hEvtExit, hNotify, WM_NOTIFY_EXIT };
     CreateThread(NULL, 0, NotifyThreadProc, &tpS, 0, NULL);
     CreateThread(NULL, 0, NotifyThreadProc, &tpE, 0, NULL);
+    CreateThread(NULL, 0, NotifyThreadProc, &tpX, 0, NULL);
 
     if (wantSettings) g_reqSettings();
     if (wantSymbols) g_reqSymbols();
@@ -621,9 +634,15 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     }
 
     lingxi::StatsFlush(); // 退出：未落盘的打字统计（≤20 次）补写
-    server.Stop();
-    wnd.Shutdown();
-    delete engine;
-    delete pinyinEngine;
+    pServer->Stop();
+    pWnd->Shutdown();
+    // H3 根治：引擎不析构（见上方堆分配注释）。僵尸线程（Stop 超时未收敛的
+    // 重排/读线程、KickPersist 落盘线程）仍活着时能碰什么——PipeServer 的
+    // _cs/_clients/_queue/_wnd、CandWindow、引擎对象——这些全部永不析构，
+    // 直到进程拆台由 OS 统一回收；Stop() 超时路径保留 _cs/_hQueueSem 不拆
+    // （先拆即 UB），同属此契约。
+    // 引擎不再走析构，其"最终落盘"职责显式化：KickPersist 线程只触 shared_ptr
+    // 控制块与快照副本，这里等收敛即可，不等也不崩。
+    if (pinyinEngine) pinyinEngine->FlushUserDict();
     return 0;
 }
