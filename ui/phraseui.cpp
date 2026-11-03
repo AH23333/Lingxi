@@ -210,6 +210,28 @@ void PhAdd()
             SetDlgItemTextW(g_hPhWnd, IDC_PH_STATUS, L"该缩写和短语已存在");
             return;
         }
+    // 批7 冲突处理：同缩写已有条目（双击回填"编辑"后重加即此场景）——
+    // 是=替换（删该缩写全部旧条目，旧短语不再注入）；否=追加（并列按文件序注入）
+    int dupSame = 0;
+    for (const auto& e : entries)
+        if (e.abbrev == a) dupSame++;
+    bool replaced = false;
+    if (dupSame)
+    {
+        std::wstring q = L"缩写 " + a + L" 已有 " + std::to_wstring(dupSame) +
+                         L" 条短语。\n\n是(Y)=替换：删除该缩写全部旧短语\n"
+                         L"否(N)=追加：新旧并列（按顺序注入候选）\n取消=放弃本次保存";
+        int ans = MessageBoxW(g_hPhWnd, q.c_str(), L"自定义短语冲突",
+                              MB_YESNOCANCEL | MB_ICONQUESTION);
+        if (ans == IDCANCEL) return;
+        if (ans == IDYES)
+        {
+            for (auto it = entries.begin(); it != entries.end();)
+                if (it->abbrev == a) it = entries.erase(it);
+                else ++it;
+            replaced = true;
+        }
+    }
     entries.push_back({ a, t });
     if (!SavePhraseEntries(entries))
     {
@@ -217,10 +239,12 @@ void PhAdd()
                     L"灵犀输入法", MB_OK | MB_ICONWARNING);
         return;
     }
-    LX_LOG(L"ui", L"自定义短语添加: %ls -> %ls", a.c_str(), t.c_str());
+    LX_LOG(L"ui", L"自定义短语%s: %ls -> %ls",
+           replaced ? L"替换" : L"添加", a.c_str(), t.c_str());
     if (g_hooks.phrasesChanged) g_hooks.phrasesChanged();
     RefreshPhList();
-    SetDlgItemTextW(g_hPhWnd, IDC_PH_STATUS, L"已添加，打字时整串输入缩写即出");
+    SetDlgItemTextW(g_hPhWnd, IDC_PH_STATUS,
+                    replaced ? L"已替换该缩写旧短语并保存" : L"已添加，打字时整串输入缩写即出");
 }
 
 void PhDeleteSelected()

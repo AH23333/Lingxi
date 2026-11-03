@@ -1895,6 +1895,78 @@ int wmain(int argc, wchar_t** argv)
                 }
             }
 
+            // P12b. 批7 自定义短语边界钉：同缩写多条按文件序全注入（并列语义
+            // 已文档化于 InjectExplicitTop）+ 装载过滤口径（非法缩写/空短语/超长短语）
+            {
+                wchar_t appdata[MAX_PATH] = {0};
+                GetEnvironmentVariableW(L"APPDATA", appdata, MAX_PATH);
+                std::wstring dir = std::wstring(appdata) + L"\\LingxiIme";
+                CreateDirectoryW(dir.c_str(), NULL);
+                std::wstring ppath = dir + L"\\phrases.txt";
+                auto wToUtf8b = [](const std::wstring& w) {
+                    if (w.empty()) return std::string();
+                    int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(),
+                                                NULL, 0, NULL, NULL);
+                    std::string s(n, 0);
+                    WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(),
+                                        s.data(), n, NULL, NULL);
+                    return s;
+                };
+                auto writePh = [&](const std::wstring& body) {
+                    std::string content = "\xEF\xBB\xBF" + wToUtf8b(body);
+                    HANDLE hw = CreateFileW(ppath.c_str(), GENERIC_WRITE, 0, NULL,
+                                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                    DWORD wr = 0;
+                    WriteFile(hw, content.data(), (DWORD)content.size(), &wr, NULL);
+                    CloseHandle(hw);
+                    py->ReloadUserDict();
+                };
+                auto hasMark = [&](const lingxi::Prediction& r) {
+                    for (const auto& w : r.cands)
+                        if (w.find(L"ZZmark") != std::wstring::npos) return true;
+                    return false;
+                };
+                // PH1 同缩写 2 条 → 文件序并列注入（第一条在前）
+                writePh(L"phx\tZZ第一条短语\r\nphx\tZZ第二条短语\r\n");
+                {
+                    lingxi::Prediction r = py->Predict(L"phx");
+                    bool ok = r.cands.size() >= 2 && r.cands[0] == L"ZZ第一条短语" &&
+                              r.cands[1] == L"ZZ第二条短语";
+                    wchar_t detail[192];
+                    _snwprintf_s(detail, _TRUNCATE, L"first='%ls' second='%ls'",
+                                 r.cands.empty() ? L"<none>" : r.cands[0].c_str(),
+                                 r.cands.size() > 1 ? r.cands[1].c_str() : L"<none>");
+                    Report(ok, "PH1 same-abbrev multi-inject file order", detail);
+                }
+                // PH2 非法缩写装载过滤：带数字/单字母/17 字母/空缩写全跳过，合法条保留
+                writePh(L"ce1\tZZmarkA\r\n"
+                        L"c\tZZmarkB\r\n"
+                        L"abcdefghijklmnopq\tZZmarkC\r\n"
+                        L"\tZZmarkD\r\n"
+                        L"phok\tZZvalidOk\r\n");
+                {
+                    bool ok = !hasMark(py->Predict(L"ce1")) &&
+                              !hasMark(py->Predict(L"c")) &&
+                              !hasMark(py->Predict(L"abcdefghijklmnopq")) &&
+                              !hasMark(py->Predict(L"phok")); // ZZmarkD 空缩写行不产生候选
+                    lingxi::Prediction v = py->Predict(L"phok");
+                    ok = ok && !v.cands.empty() && v.cands[0] == L"ZZvalidOk";
+                    Report(ok, "PH2 invalid abbrev filtered, valid kept");
+                }
+                // PH3 空短语/超长短语(>200)过滤，合法条保留
+                writePh(L"phemp\t\r\n"
+                        L"phlg\tZZmarkL" + std::wstring(201, L'长') + L"\r\n"
+                        L"phg\tZZokTwo\r\n");
+                {
+                    bool ok = !hasMark(py->Predict(L"phlg")) && !hasMark(py->Predict(L"phemp"));
+                    lingxi::Prediction g = py->Predict(L"phg");
+                    ok = ok && !g.cands.empty() && g.cands[0] == L"ZZokTwo";
+                    Report(ok, "PH3 empty/oversize phrase filtered");
+                }
+                DeleteFileW(ppath.c_str());
+                py->ReloadUserDict(); // 复位，不留 P12b 短语给后续用例
+            }
+
             // P13. R5 emoji 融合：命中词后紧跟 emoji（不夺位）
             {
                 // 谢谢 → 🙏 紧随其后，谢谢仍第一
