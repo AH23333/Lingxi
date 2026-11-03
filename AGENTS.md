@@ -7,7 +7,7 @@
 ## 构建与门禁入口
 
 - 构建：`cmd /c "tools\build.cmd [Debug|Release]"`（x64 UI+ImeCore）；`cmd /c "tools\build32.cmd"`（Win32 ImeCore）
-- 全量回归：`cmd /c tools\regress.cmd`（engine_test 301 断言 / fix_readings --check / deep_test / e2e 四套件，**ALL PASS 才算过**；沙箱内 `cmd /c` 被禁时按 §PITFALLS 用 MSBuild 直调 + 逐套件手跑等效）
+- 全量回归：`cmd /c tools\regress.cmd`（engine_test 310 断言 / fix_readings --check / deep_test / e2e 四套件，**ALL PASS 才算过**；沙箱内 `cmd /c` 被禁时按 §PITFALLS 用 MSBuild 直调 + 逐套件手跑等效）
 - 真机走查：`tmp\smoke1.ps1`（16 项，含 usage.txt 播种备份/还原）+ `tmp\smoke2.ps1`（8 项）；行为探针 `LingxiUI.exe --probe-pinyin`（基线：gylg=4 候 / gylgl=供应链管理 1 候 / xian 首选西安）
 - 提交纪律：build 零错 + regress ALL PASS；涉 UI/窗口/焦点的改动加跑 smoke 双套件；重构类改动加跑 probe 基线
 

@@ -2498,6 +2498,123 @@ int wmain(int argc, wchar_t** argv)
         Report(allValid && killed == 5, "C1d dict intact across 5 random kills");
     }
 
+    // ===== M7. 畸形词典 fuzz（audit §三 M7 取证：zh_pinyin.txt 毒行 + userdict.txt 畸形行）=====
+    // M7 修复=BuildIndexes badSyll 守卫（ui/engine/pinyin.cpp:873-879：任一心节为空→整词跳过）。
+    // 取证：向运行词典副本注入畸形行→重载引擎→断言不崩（修复前 sy[0]/(*sylls[0])[0] 为 UB 读）、
+    // 正常候选不变、毒词永不浮出；userdict 畸形行同口径优雅跳过（LoadUserDict 守卫链）。
+    // 词典副本用后恢复/沙盒词典复位，不留污染给后续运行。
+    {
+        std::wstring pyData = ExeDir() + L"\\data\\zh_pinyin.txt";
+        std::string orig; bool got = readBytes(pyData, orig);
+        Report(got && !orig.empty(), "M7 baseline: staged zh_pinyin.txt readable");
+        if (got && !orig.empty())
+        {
+            auto writeFile = [](const std::wstring& p, const std::string& data) -> bool {
+                HANDLE h = CreateFileW(p.c_str(), GENERIC_WRITE, 0, NULL,
+                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                if (h == INVALID_HANDLE_VALUE) return false;
+                DWORD g = 0;
+                bool ok = WriteFile(h, data.data(), (DWORD)data.size(), &g, NULL) != FALSE &&
+                          g == (DWORD)data.size();
+                CloseHandle(h);
+                return ok;
+            };
+            // 动态基线首选（不硬编码词表假设）
+            std::wstring baseFirst;
+            {
+                lingxi::IPredictor* py0 = lingxi::CreatePinyinPredictor();
+                if (py0) {
+                    lingxi::Prediction r0 = py0->Predict(L"jintian");
+                    if (!r0.cands.empty()) baseFirst = r0.cands[0];
+                    delete py0;
+                }
+            }
+            // 毒行：前/双/尾空格（空音节）/空 py 字段/空词/缺 tab/64KB 超长音节/无尾换行
+            std::string poison;
+            poison += u8(L"毒甲") + "\t jin tian\n";
+            poison += u8(L"毒乙") + "\tjin  tian\n";
+            poison += u8(L"毒丙") + "\tjin tian \n";
+            poison += u8(L"毒丁") + "\t\n";
+            poison += std::string("\tjin tian\n");
+            poison += u8(L"毒戊") + " no_tab_here\n";
+            poison += u8(L"毒己") + "\t" + std::string(65536, 'a') + "\n";
+            poison += u8(L"毒庚") + "\tjin  tian";   // 双空格 + 无尾换行
+            static const wchar_t* kPoison[] = { L"毒甲", L"毒乙", L"毒丙", L"毒丁",
+                L"毒戊", L"毒己", L"毒庚" };
+            bool reloadOk = false, candsIntact = false, poisonGone = false, restoredStable = false;
+            if (writeFile(pyData, orig + "\n" + poison))
+            {
+                lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
+                reloadOk = py != NULL;
+                if (py)
+                {
+                    lingxi::Prediction r = py->Predict(L"jintian");
+                    candsIntact = !baseFirst.empty() && !r.cands.empty() && r.cands[0] == baseFirst;
+                    poisonGone = true;
+                    for (const wchar_t* q : { L"jintian", L"jin", L"tian" })
+                    {
+                        lingxi::Prediction rr = py->Predict(q);
+                        for (const auto& c : rr.cands)
+                            for (const wchar_t* pw : kPoison)
+                                if (c == pw) poisonGone = false;
+                    }
+                    delete py;
+                }
+            }
+            if (writeFile(pyData, orig))   // 恢复原字节，不给后续运行留毒
+            {
+                lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
+                if (py)
+                {
+                    lingxi::Prediction r = py->Predict(L"jintian");
+                    restoredStable = !baseFirst.empty() && !r.cands.empty() && r.cands[0] == baseFirst;
+                    delete py;
+                }
+            }
+            Report(reloadOk, "M7 malformed zh_pinyin reload: no crash");
+            Report(candsIntact, "M7 normal candidates unchanged under poison dict");
+            Report(poisonGone, "M7 poison entries never surface in candidates");
+            Report(restoredStable, "M7 restored dict reload stable");
+
+            // userdict.txt 畸形行（word\tkey\tcount 格式，LoadUserDict 守卫链）
+            std::string ud;
+            ud += u8(L"畸甲") + " no_tab\n";
+            ud += std::string("\tnihao\t3\n");
+            ud += u8(L"畸乙") + "\t\tnihao\t3\n";
+            ud += u8(L"畸丙") + "\tnihao\tabc\n";
+            ud += u8(L"畸丁") + "\tnihao\t0\n";
+            ud += std::string(65536, 'x') + " no_tab_tail\n";
+            ud += u8(L"畸戊") + "\tnihao\t5";          // 唯一合法行：无尾换行
+            bool udNoCrash = false, udGraceful = false, udLastLineLoaded = false, udUntouched = false;
+            std::string udBytes;
+            if (writeFile(udPath, ud) && readBytes(udPath, udBytes))
+            {
+                lingxi::IPredictor* pyUd = lingxi::CreatePinyinPredictor();
+                udNoCrash = pyUd != NULL;
+                if (pyUd)
+                {
+                    lingxi::Prediction r = pyUd->Predict(L"nihao");
+                    bool badPresent = false, lastPresent = false;
+                    for (const auto& c : r.cands)
+                    {
+                        if (c == L"畸甲" || c == L"畸乙" || c == L"畸丙" || c == L"畸丁") badPresent = true;
+                        if (c == L"畸戊") lastPresent = true;
+                    }
+                    udGraceful = !r.cands.empty() && !badPresent;
+                    udLastLineLoaded = lastPresent;
+                    std::string after;
+                    udUntouched = readBytes(udPath, after) && after == udBytes;
+                    pyUd->ClearUserDict();            // 复位沙盒词典
+                    delete pyUd;
+                }
+            }
+            Report(udNoCrash, "M7 malformed userdict reload: no crash");
+            Report(udGraceful, "M7 malformed userdict: bad lines skipped, cands still out");
+            Report(udLastLineLoaded, "M7 userdict valid last line w/o newline loaded");
+            Report(udUntouched, "M7 userdict load does not rewrite file");
+        }
+    }
+
     wprintf(L"=== 结果: PASS=%d FAIL=%d ===\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }
