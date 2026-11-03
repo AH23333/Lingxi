@@ -268,3 +268,27 @@ H1/H2/H3/L4 崩溃层修复本体；L10/L12 已闭环项；§八-3/-6/-7/-8 残�
 2. 登录后在设置→时间和语言→中文（中国）→添加键盘，选"灵犀 AI 输入法"；若已列出则 Win+Space 切到它。
 3. **一行自查判据**：打开 `%TEMP%\lingxi-ime.log`（需设置页开日志或环境变量 `LINGXI_LOG=1`），看到 `ActivateEx … build=Nov  3 2026 13:5…` 即证明当前宿主加载的是本轮新件；出现 11-02 及以前的 build 时间则该宿主还是旧镜像，重启它即可。
 4. 备用判据：`bin\Debug\LingxiUI.exe --version`（新窗口里跑）输出"构建于 Nov  3 2026"。
+
+## 十三、产物冻结快照与隔离构建（14:16 起，用户不能注销期间的硬约束）
+
+背景：用户暂时无法注销重登，`bin\Debug`/`bin\Debug32` 即下次开机加载件。约束：①已验证件按字节冻结；②中间构建一律走 `bin\work`/`bin\work32`，只有批次收工+engine_test 绿才**有意**替换目标目录，替换后立刻重跑 imecheck+探针并记录新哈希。
+
+### 13.1 冻结快照 `tmp\snapshot-20261103-141621\`（§十二 重装实证过的件）
+
+| 文件 | 字节 | SHA256 |
+|---|---|---|
+| ImeCore.dll（x64，= 当时 bin\Debug） | 391168 | `537C27C7F7A542D974DC710F9011EB4921F7BB8F8F241FAB00CDBBD857F66055` |
+| ImeCore-x86.dll（= 当时 bin\Debug32） | 310272 | `EC940FE16AE9B5726781E2F2617D9F6C52AB94F1B3C18BE6C49565F7BAE83822` |
+| LingxiUI.exe | 3249152 | `A8D1DB037C1D67833C264E5C5E06FF5ADBA00B3414457FECE5FB738ED3B32190` |
+
+x64/x86 两份哈希与 §12.3 InprocServer32 记录逐字一致（快照即被双位数实证加载过的那两件）。回退方式：把快照文件拷回目标目录即可逐字节还原。
+
+### 13.2 隔离构建产物（阶段二 ①③ 改动，尚未替换目标目录）
+
+| 文件 | 字节 | SHA256 |
+|---|---|---|
+| bin\work\ImeCore.dll（x64） | 391680 | `0C3E7CB5B3FBBE88DFB772ECF0B24989C0823AFFABB97943FFA97BDFFD2EEA40` |
+| bin\work\LingxiUI.exe | 3253760 | `9CDE080382B4AE24E4588D34813BEDA61727966EC9D2E752171E4F9A9DC35193` |
+| bin\work32\ImeCore.dll（Win32） | 314368 | `B09F2EB3707943EE8E0656B7C048EAE4CB2943CDA69DC553073D88455B8B97F7` |
+
+门禁状态：engine_test 单实例重跑中（此前两实例同沙盒互撞双双 exit 1，已查杀重跑，见 `tmp\et_run_clean.txt`）。绿后执行有意替换 + imecheck + `--version`/`--diagnostics` 探针复验，新哈希补记本节。真机效果（双拼方案切换、候选数文案）**待用户重启后确认**。
