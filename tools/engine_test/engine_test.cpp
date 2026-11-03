@@ -3423,6 +3423,53 @@ int wmain(int argc, wchar_t** argv)
                "TR5 empty/short passthrough");
     }
 
+    // ===== PN/FW. 批10 输入模式纯函数口径钉：中英标点映射表 + 全角字母数字 =====
+    // MapChinesePunct/ToFullWidthStr 是单一事实源（DLL 直出与原文上屏共用消费），
+    // 此前零钉——表义/翻转/边界全靠走查记忆。本块钉既有已文档化口径，不改行为。
+    {
+        bool dq = false, sq = false; // 与 service.h _cnDqOpen/_cnSqOpen 初始态一致
+        wchar_t o[3];
+        auto mp = [&](WPARAM vk, bool sh) -> std::wstring {
+            int n = lingxi::MapChinesePunct(vk, sh, dq, sq, o);
+            return std::wstring(o, n > 0 ? n : 0);
+        };
+        Report(mp(VK_OEM_PERIOD, false) == L"。" && mp(VK_OEM_PERIOD, true) == L"》" &&
+               mp(VK_OEM_COMMA, false) == L"，" && mp(VK_OEM_COMMA, true) == L"《" &&
+               mp(VK_OEM_2, false) == L"、" && mp(VK_OEM_2, true) == L"？" &&
+               mp(VK_OEM_5, false) == L"、",
+               "PN1 punct core: 。《》，、？");
+        Report(mp(VK_OEM_1, false) == L"；" && mp(VK_OEM_1, true) == L"：" &&
+               mp(VK_OEM_3, false) == L"·" && mp(VK_OEM_3, true) == L"～" &&
+               mp(VK_OEM_4, false) == L"【" && mp(VK_OEM_6, false) == L"】" &&
+               mp(VK_OEM_4, true) == L"｛" && mp(VK_OEM_6, true) == L"｝",
+               "PN2 punct brackets: ；：·～【】｛｝");
+        // 引号开合翻转：false=开→出“，再按=闭→出”；单引号独立状态
+        dq = false; sq = false;
+        Report(mp(VK_OEM_7, true) == L"\u201C" && mp(VK_OEM_7, true) == L"\u201D" &&
+               mp(VK_OEM_7, true) == L"\u201C" &&
+               mp(VK_OEM_7, false) == L"\u2018" && mp(VK_OEM_7, false) == L"\u2019",
+               "PN3 quote flip open/close alternating");
+        Report(mp(L'1', true) == L"！" && mp(L'2', true) == L"·" &&
+               mp(L'4', true) == L"￥" && mp(L'6', true) == L"……" &&
+               mp(L'8', true) == L"×" && mp(L'9', true) == L"（" &&
+               mp(L'0', true) == L"）",
+               "PN4 shift digits specials: ！·￥……×（）");
+        Report(mp(L'1', false).empty() && mp(VK_OEM_MINUS, false).empty() &&
+               mp(VK_OEM_MINUS, true) == L"——" && mp(VK_OEM_PLUS, true) == L"＋" &&
+               mp(L'A', false).empty(),
+               "PN5 non-mapped keys passthrough (选词/翻页)");
+        // 全角字母数字：0x21..0x7E→FF01..FF5E、空格→U+3000、范围外原样
+        Report(lingxi::ToFullWidthStr(L"aZ0!~ ") == L"\uFF41\uFF3A\uFF10\uFF01\uFF5E\u3000",
+               "FW1 fullwidth ascii bounds");
+        std::wstring gong = L"\xD842\xDF7D"; // 𠮷（代理对）
+        std::wstring fw1 = lingxi::ToFullWidthStr(L"汉Ｂ9");
+        Report(lingxi::ToFullWidthStr(L"汉，！") == L"汉，！" && // CJK/已全角原样（幂等）
+               lingxi::ToFullWidthStr(fw1) == fw1 &&
+               lingxi::ToFullWidthStr(gong) == gong &&          // 代理对两单元各自出界→整对原样
+               lingxi::ToFullWidthStr(L"\n\t") == L"\n\t",
+               "FW2 passthrough: CJK/idempotent/surrogate/control");
+    }
+
     // ===== C1. 停机三时序：正常收敛 / 落盘失败快回 / ownerDead 后僵尸不覆盖 =====
     // 注：真·2s 超时分支需磁盘挂死级 IO 停顿，台架不可构造；这里以"写失败
     // 快速返回"验证有界等待契约的两侧（耗时有上界、失败不污染），超时分支
