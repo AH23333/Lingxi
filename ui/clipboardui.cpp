@@ -122,7 +122,12 @@ bool WriteBytesAtomic(const std::wstring& path, const std::string& bytes)
         DeleteFileW(tmp.c_str());
         return false;
     }
-    return MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
+    if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
+    {
+        DeleteFileW(tmp.c_str()); // 审查缺陷④：rename 失败不留 .tmp 残留（与其余写者同款）
+        return false;
+    }
+    return true;
 }
 
 void LoadLocked()

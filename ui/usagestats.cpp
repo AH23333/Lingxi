@@ -53,13 +53,19 @@ bool WriteTextFile(const std::wstring& path, const std::string& text)
     DWORD written = 0;
     bool ok = WriteFile(h, text.data(), (DWORD)text.size(), &written, NULL) &&
               written == text.size();
+    if (ok) ok = FlushFileBuffers(h) != FALSE; // 审查缺陷④：补齐刷盘（批8 口径，断电下未刷盘的 .tmp 不算落盘）
     CloseHandle(h);
     if (!ok)
     {
         DeleteFileW(tmp.c_str());
         return false;
     }
-    return MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING) != FALSE;
+    if (!MoveFileExW(tmp.c_str(), path.c_str(), MOVEFILE_REPLACE_EXISTING))
+    {
+        DeleteFileW(tmp.c_str()); // 审查缺陷④：rename 失败不留 .tmp 残留（与其余写者同款）
+        return false;
+    }
+    return true;
 }
 
 // YYYYMMDD → 前一天（纯日期回退：闰年二月/跨月/跨年）
