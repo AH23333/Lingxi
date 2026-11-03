@@ -201,6 +201,8 @@ Settings LoadSettings()
     if (GetDword(hKey, L"CandidateCount", v) && v >= 1 && v <= 9) s.candidateCount = v;
     if (GetDword(hKey, L"CandidateFontSize", v) && v >= 12 && v <= 32) s.candidateFontSize = v;
     if (GetDword(hKey, L"CandOrientation", v) && v <= 1) s.candOrientation = v;
+    if (GetDword(hKey, L"DecayEnabled", v) && v <= 1) s.decayEnabled = v;
+    if (GetDword(hKey, L"HalfLifeDays", v) && v >= 7 && v <= 365) s.decayHalfLifeDays = v;
     if (GetDword(hKey, L"DarkMode", v) && v <= 2) s.darkMode = v;
     if (GetDword(hKey, L"EnCompletion", v)) s.enCompletion = v != 0;
     if (GetDword(hKey, L"Paused", v)) s.paused = v != 0;
@@ -279,6 +281,8 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"CandidateCount", s.candidateCount);
     SetDword(hKey, L"CandidateFontSize", s.candidateFontSize);
     SetDword(hKey, L"CandOrientation", s.candOrientation);
+    SetDword(hKey, L"DecayEnabled", s.decayEnabled);
+    SetDword(hKey, L"HalfLifeDays", s.decayHalfLifeDays);
     SetDword(hKey, L"DarkMode", s.darkMode);
     SetDword(hKey, L"EnCompletion", s.enCompletion ? 1 : 0);
     SetDword(hKey, L"Paused", s.paused ? 1 : 0);
@@ -349,6 +353,8 @@ void SaveSettingsDiff(const Settings& s)
     PutDwordDiff(hKey, L"CandidateCount", s.candidateCount);
     PutDwordDiff(hKey, L"CandidateFontSize", s.candidateFontSize);
     PutDwordDiff(hKey, L"CandOrientation", s.candOrientation);
+    PutDwordDiff(hKey, L"DecayEnabled", s.decayEnabled);
+    PutDwordDiff(hKey, L"HalfLifeDays", s.decayHalfLifeDays);
     PutDwordDiff(hKey, L"DarkMode", s.darkMode);
     PutDwordDiff(hKey, L"EnCompletion", s.enCompletion ? 1 : 0);
     PutDwordDiff(hKey, L"Paused", s.paused ? 1 : 0);

@@ -59,6 +59,11 @@ struct Settings
                                      // 与历史逐像素一致） 1 横排单行条；横排放不下
                                      // （超工作区宽）本次渲染回退竖排（裁决 2026-11-03③）。
                                      // 非法值 clamp 回 0（照 CandidateCount clamp 先例）
+    uint32_t decayEnabled = 1;       // B 词频衰减开关：0=score 恒等于 count（行为与
+                                     // 衰减引入前一致），1=启用（裁决 2026-11-03①）
+    uint32_t decayHalfLifeDays = 60; // B 半衰期天数（clamp [7,365]，缺省 60）：
+                                     // score = count × 2^(−age/H)，查询时计算，
+                                     // 原始 count 永不改写
                                    // 皮肤 0..6：1 青碧 2 橙 3 红 4 金 5 茶棕 6 玫粉
                                    // ——全 UI 统一换肤
     uint32_t candidatePinned = 0;  // 候选窗位置固定：0 跟随光标（默认） 1 固定在

@@ -29,6 +29,7 @@
 #include <algorithm>
 #include <io.h>
 #include <fcntl.h>
+#include <ctime>
 
 static int g_pass = 0;
 static int g_fail = 0;
@@ -2245,7 +2246,8 @@ int wmain(int argc, wchar_t** argv)
                     }
                     return out;
                 };
-                // 行格式严格校验：word\tkey\tcount[\t1]；第 4 列仅 manual 写"1"
+                // 行格式严格校验：word\tkey\tcount[\t1 | \t0\tlast_used]；
+                // 第 4 列 manual 写"1"（行尾），学习词写"0"+第 5 列 unix 秒（B 衰减）
                 auto lineOk = [](const std::wstring& s) -> bool {
                     size_t t1 = s.find(L'\t');
                     if (t1 == std::wstring::npos || t1 == 0) return false;
@@ -2256,8 +2258,14 @@ int wmain(int argc, wchar_t** argv)
                     if (cEnd == t2 + 1) return false;
                     for (size_t i = t2 + 1; i < cEnd; i++)
                         if (s[i] < L'0' || s[i] > L'9') return false;
-                    if (t3 != std::wstring::npos &&
-                        (s.size() != t3 + 2 || s[t3 + 1] != L'1')) return false;
+                    if (t3 == std::wstring::npos) return true;
+                    if (s.size() <= t3 + 1) return false;
+                    if (s[t3 + 1] == L'1') return s.size() == t3 + 2; // manual：行尾
+                    if (s[t3 + 1] != L'0') return false;               // 第 4 列只许 0/1
+                    size_t t4 = s.find(L'\t', t3 + 1);                  // "0"须跟第 5 列数字
+                    if (t4 == std::wstring::npos || t4 + 1 >= s.size()) return false;
+                    for (size_t i = t4 + 1; i < s.size(); i++)
+                        if (s[i] < L'0' || s[i] > L'9') return false;
                     return true;
                 };
                 auto keyOf = [](const std::wstring& s) -> std::wstring {
@@ -2362,6 +2370,134 @@ int wmain(int argc, wchar_t** argv)
                 delete py;
                 }
             }
+        }
+    }
+
+    // ===== B5. 词频衰减（裁决 2026-11-03①：查询时 score=count×2^(−age/H)，
+    // manual 完全豁免，原始 count 永不改写；淘汰 Σscore 与排序同源）=====
+    {
+        std::wstring udPath5 = ExeDir() + L"\\userdata\\LingxiIme\\userdict.txt";
+        auto writeUd5 = [&](const std::string& utf8) -> bool {
+            HANDLE h = CreateFileW(udPath5.c_str(), GENERIC_WRITE, 0, NULL,
+                                   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (h == INVALID_HANDLE_VALUE) return false;
+            DWORD w = 0;
+            BOOL ok = WriteFile(h, utf8.data(), (DWORD)utf8.size(), &w, NULL);
+            CloseHandle(h);
+            return ok && w == (DWORD)utf8.size();
+        };
+        auto readUd5 = [&]() -> std::string {
+            HANDLE h = CreateFileW(udPath5.c_str(), GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (h == INVALID_HANDLE_VALUE) return std::string();
+            DWORD sz = GetFileSize(h, NULL), got = 0;
+            std::string s;
+            if (sz != INVALID_FILE_SIZE && sz > 0)
+            {
+                s.resize(sz);
+                if (!ReadFile(h, &s[0], sz, &got, NULL)) s.clear();
+                else s.resize(got);
+            }
+            CloseHandle(h);
+            return s;
+        };
+        const long long DAY = 86400LL;
+        const long long now5 = (long long)std::time(nullptr);
+
+        // B5-1 半衰期边界：旧热(10, age=H)→score 5 < 新温(6, age=0)→6 置顶；
+        // decayEnabled=0 回到原始 count → 旧热置顶（可逆性）
+        {
+            std::string f = "oldhot\tgj\t10\t0\t" + std::to_string(now5 - 60 * DAY) +
+                            "\nnewwarm\tgj\t6\t0\t" + std::to_string(now5) + "\n";
+            bool ok = writeUd5(f);
+            lingxi::IPredictor* py = ok ? lingxi::CreatePinyinPredictor() : nullptr;
+            bool decayTop = false, offTop = false;
+            if (py)
+            {
+                lingxi::Prediction r = py->Predict(L"gj");
+                decayTop = !r.cands.empty() && r.cands[0] == L"newwarm";
+                lingxi::Settings ss = lingxi::LoadSettings();
+                ss.decayEnabled = 0;
+                lingxi::SaveSettings(ss);
+                r = py->Predict(L"gj");
+                offTop = !r.cands.empty() && r.cands[0] == L"oldhot";
+                ss = lingxi::LoadSettings();
+                ss.decayEnabled = 1;
+                lingxi::SaveSettings(ss);
+                delete py;
+            }
+            Report(ok && decayTop && offTop, "B5-1 decay halflife: score-top, count-top when off");
+        }
+
+        // B5-2 时钟回拨：last_used 在未来 → age 钳 0（score=count），不得放大霸屏
+        {
+            std::string f = "futu10\tgj2\t10\t0\t" + std::to_string(now5 + 30 * DAY) +
+                            "\nnorm100\tgj2\t100\t0\t" + std::to_string(now5) + "\n";
+            bool ok = writeUd5(f);
+            lingxi::IPredictor* py = ok ? lingxi::CreatePinyinPredictor() : nullptr;
+            bool top = false;
+            if (py)
+            {
+                lingxi::Prediction r = py->Predict(L"gj2");
+                top = !r.cands.empty() && r.cands[0] == L"norm100";
+                delete py;
+            }
+            Report(ok && top, "B5-2 clock rollback: future ts clamped, no inflation");
+        }
+
+        // B5-3 manual 豁免：手工(5, manual 不衰减) > 学习(6, age=2H→1.5) → 手工置顶
+        {
+            std::string f = "manuald\tmj\t5\t1\nlearned6\tmj\t6\t0\t" +
+                            std::to_string(now5 - 120 * DAY) + "\n";
+            bool ok = writeUd5(f);
+            lingxi::IPredictor* py = ok ? lingxi::CreatePinyinPredictor() : nullptr;
+            bool top = false;
+            if (py)
+            {
+                lingxi::Prediction r = py->Predict(L"mj");
+                top = !r.cands.empty() && r.cands[0] == L"manuald";
+                delete py;
+            }
+            Report(ok && top, "B5-3 manual exempt: un-decayed 5 beats decayed 6");
+        }
+
+        // B5-4 淘汰 Σscore：20000 键（X=count2 极旧 score≈0.002，其余 count1 新鲜
+        // score=1）→ Learn 新键触发封顶淘汰 1000 → X 必逐、新键在、总数 19001
+        {
+            std::string f;
+            f.reserve((size_t)20000 * 30);
+            f += "xword\taaaaaa\t2\t0\t" + std::to_string(now5 - 600 * DAY) + "\n";
+            for (int i = 1; i < 20000; i++)
+            {
+                char k[7] = "aaaaaa";
+                k[2] = (char)('a' + (i / 17576) % 26);
+                k[3] = (char)('a' + (i / 676) % 26);
+                k[4] = (char)('a' + (i / 26) % 26);
+                k[5] = (char)('a' + i % 26);
+                std::string key(k, 6);
+                f += "kw" + key + "\t" + key + "\t1\t0\t" + std::to_string(now5) + "\n";
+            }
+            bool ok = writeUd5(f);
+            lingxi::IPredictor* py = ok ? lingxi::CreatePinyinPredictor() : nullptr;
+            bool evicted = false, countOk = false;
+            if (py)
+            {
+                py->Learn(L"zzzzzz", L"newword");
+                py->FlushUserDict();
+                std::string s = readUd5();
+                evicted = s.find("\taaaaaa\t") == std::string::npos &&
+                          s.find("zzzzzz") != std::string::npos;
+                int nl = 0;
+                for (char c : s) if (c == '\n') nl++;
+                countOk = nl == 20000 - 1000 + 1;
+                delete py;
+            }
+            Report(ok && evicted && countOk, "B5-4 evict by sum-score: oldest-low evicted");
+        }
+        {
+            lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
+            if (py) { py->ClearUserDict(); delete py; } // 复位沙盒，不留 2 万测试键
         }
     }
 
@@ -2516,7 +2652,21 @@ int wmain(int argc, wchar_t** argv)
             size_t t1 = line.find('\t'); if (t1 == std::string::npos || t1 == 0) return -1;
             size_t t2 = line.find('\t', t1 + 1); if (t2 == std::string::npos || t2 == t1 + 1) return -1;
             size_t t3 = line.find('\t', t2 + 1);
-            if (t3 != std::string::npos && line.find('\t', t3 + 1) != std::string::npos) return -1; // 第5列
+            if (t3 != std::string::npos)
+            {
+                // B 衰减：第 4 列只许 0/1——manual"1"行尾；学习"0"须跟第 5 列 unix 秒
+                if (line.size() <= t3 + 1) return -1;
+                char c4 = line[t3 + 1];
+                if (c4 == '1') { if (line.size() != t3 + 2) return -1; }
+                else if (c4 == '0')
+                {
+                    size_t t4 = line.find('\t', t3 + 1);
+                    if (t4 == std::string::npos || t4 + 1 >= line.size()) return -1;
+                    for (size_t i = t4 + 1; i < line.size(); i++)
+                        if (line[i] < '0' || line[i] > '9') return -1;
+                }
+                else return -1;
+            }
             std::string cnt = (t3 == std::string::npos) ? line.substr(t2 + 1) : line.substr(t2 + 1, t3 - t2 - 1);
             if (cnt.empty()) return -1;
             for (char ch : cnt) if (ch < '0' || ch > '9') return -1;
