@@ -3470,6 +3470,57 @@ int wmain(int argc, wchar_t** argv)
                "FW2 passthrough: CJK/idempotent/surrogate/control");
     }
 
+    // ===== ST. 批12 简繁转换边界：st2t 一对多口径 / 代理对 / 透传幂等 / 开关门控 =====
+    // 端到端钉：ToTraditional 是 impl 私有成员，只能经 Predict+traditionalOutput 测。
+    // 口径说明：st2t.txt 为一对一表（干→幹、发→發），"乾淨/頭髮"才是正字——
+    // 表无上下文消歧，此处钉的是**表口径的确定性**（防回归），非语义正确性。
+    {
+        std::wstring dict =
+            L"\u5E72\u51C0\tganjing\t99999\t1\n"   // 干净→幹淨（表口径）
+            L"\u5934\u53D1\ttoufa\t99999\t1\n"     // 头发→頭發（表口径，非頭髮）
+            L"\u4EE5\u540E\tyihou\t99999\t1\n"     // 以后→以後（以非键透传）
+            L"\u91CC\u9762\tlimian\t99999\t1\n"    // 里面→裏面（面恒等映射）
+            L"\u34C6\tce\t99999\t1\n"              // 㓆→𠗣：BMP 键→代理对目标
+            L"\xD842\xDF7D\tji\t99999\t1\n"        // 𠮷 U+20BB7 非键→整对透传（\u 拒代理对码点，用 \x）
+            L"\u6D4Ba1\uFF0C\tce\t99999\t1\n"      // 测a1，→測a1，（ASCII/全角标点透传）
+            L"\u96FB\u8166\tdiannao\t99999\t1\n";  // 電腦：已是繁体且非键→幂等
+        bool seeded = lingxi::WriteFileBytes(udPath, u8(dict.c_str()));
+        lingxi::Settings s0 = lingxi::LoadSettings();
+        lingxi::Settings sT = s0; sT.traditionalOutput = true;
+        lingxi::SaveSettings(sT);
+        lingxi::IPredictor* pySt = lingxi::CreatePinyinPredictor();
+        auto hasC = [](const lingxi::Prediction& p, const wchar_t* w) {
+            for (const auto& c : p.cands) if (c == w) return true;
+            return false; };
+        if (pySt && seeded)
+        {
+            lingxi::Prediction rCe = pySt->Predict(L"ce");
+            Report(hasC(pySt->Predict(L"ganjing"), L"\u5E79\u6DE8") &&
+                   hasC(pySt->Predict(L"toufa"), L"\u982D\u767C") &&
+                   hasC(pySt->Predict(L"yihou"), L"\u4EE5\u5F8C") &&
+                   hasC(pySt->Predict(L"limian"), L"\u88CF\u9762"),
+                   "ST1 s2t one-to-many table caliber: ganjing/toufa/yihou/limian");
+            Report(hasC(rCe, L"\xD841\xDDE3") &&
+                   hasC(pySt->Predict(L"ji"), L"\xD842\xDF7D"),
+                   "ST2 surrogate pairs: mapped pair out whole + unmapped pair passthrough");
+            Report(hasC(rCe, L"\u6E2Ca1\uFF0C") &&
+                   hasC(pySt->Predict(L"diannao"), L"\u96FB\u8166"),
+                   "ST3 ASCII/punct passthrough + already-traditional idempotent");
+            lingxi::Settings sF = sT; sF.traditionalOutput = false;
+            lingxi::SaveSettings(sF);
+            Report(hasC(pySt->Predict(L"ganjing"), L"\u5E72\u51C0"),
+                   "ST4 gate off: candidates stay simplified");
+            pySt->ClearUserDict();
+            delete pySt;
+        }
+        else
+        {
+            if (pySt) delete pySt;
+            Report(false, "ST setup (seed/create predictor)");
+        }
+        lingxi::SaveSettings(s0); // 恢复，避免污染后续测试
+    }
+
     // ===== C1. 停机三时序：正常收敛 / 落盘失败快回 / ownerDead 后僵尸不覆盖 =====
     // 注：真·2s 超时分支需磁盘挂死级 IO 停顿，台架不可构造；这里以"写失败
     // 快速返回"验证有界等待契约的两侧（耗时有上界、失败不污染），超时分支
