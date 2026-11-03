@@ -428,6 +428,12 @@ public:
         // 超时后置 ownerDead：僵尸线程写前检查（磁盘挂死等病态场景下宁可丢
         // 在途快照，也不让旧快照覆盖下面同步刷写的最终态）。
         // 墙钟 deadline：Sleep(1) 粒度约 13ms，按次数名义 5s 实为 ~65s。
+        // 审查缺陷③：置位前记录在途写者——它可能已越过写前检查、正卡在
+        // WriteFile，rename 前复查会命中 ownerDead 而放弃并恢复脏位；
+        // 等它出清后重写最终态（二次 rename 判定）接管收敛。
+        // 有意取舍：不用互斥串行化——磁盘挂死时等锁会拖退出无限期；
+        // 残余窗口=僵尸恰在 rename 复查与 rename 之间被抢占的 µs 级调度窗，接受。
+        bool zombieWasBusy = _pc->busy.load();
         ULONGLONG dtorDeadline = GetTickCount64() + 5000;
         while (_pc->busy.load() && GetTickCount64() < dtorDeadline) Sleep(1);
         _pc->ownerDead.store(true);
@@ -435,7 +441,15 @@ public:
         {
             std::lock_guard<std::mutex> lk(_udMtx);
             if (!_pc->dirty.load()) break;
-            if (SaveUserDictLocked()) break;
+            if (SaveUserDictLocked(".dtor.tmp")) break; // 独立临时名：不与僵尸 .tmp 交错
+        }
+        if (zombieWasBusy)
+        {
+            // 有界等僵尸完成 rename 复查并恢复脏位（挂死则放弃，退出优先）
+            ULONGLONG settleDeadline = GetTickCount64() + 2000;
+            while (_pc->busy.load() && GetTickCount64() < settleDeadline) Sleep(1);
+            std::lock_guard<std::mutex> lk(_udMtx);
+            if (_pc->dirty.load()) SaveUserDictLocked(".dtor.tmp");
         }
         {
             std::lock_guard<std::mutex> lk(_udMtx);
@@ -1685,9 +1699,14 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
 
     // 原子落盘：先写 .tmp 再 MoveFileEx 替换。引擎（管道线程）与设置界面
     // （UI 线程）是同一文件的两个写者，任何一方都不允许让对方读到半截文件。
-    static bool WriteFileAtomicA(const std::string& path, const std::string& content)
+    // 审查缺陷③：tmpSuffix/abortBeforeRename——析构最终写走独立 .dtor.tmp
+    //（防与僵尸线程同 .tmp 交错）；后台线程 rename 前复查 ownerDead，
+    // 命中则删自己的 .tmp 放弃（由 dtor 的循环补写最终态）。
+    static bool WriteFileAtomicA(const std::string& path, const std::string& content,
+                                 const char* tmpSuffix = ".tmp",
+                                 const std::atomic<bool>* abortBeforeRename = nullptr)
     {
-        std::string tmp = path + ".tmp";
+        std::string tmp = path + tmpSuffix;
         HANDLE h = CreateFileA(tmp.c_str(), GENERIC_WRITE, 0, NULL,
                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
         if (h == INVALID_HANDLE_VALUE) return false;
@@ -1697,6 +1716,11 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         if (ok && written == (DWORD)content.size()) ok = FlushFileBuffers(h);
         CloseHandle(h);
         if (!ok || written != (DWORD)content.size())
+        {
+            DeleteFileA(tmp.c_str());
+            return false;
+        }
+        if (abortBeforeRename && abortBeforeRename->load())
         {
             DeleteFileA(tmp.c_str());
             return false;
@@ -1733,10 +1757,10 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     }
 
     // 落盘（调用方必须已持有 _udMtx）。失败保持脏位，下次学习时重试。
-    bool SaveUserDictLocked()
+    bool SaveUserDictLocked(const char* tmpSuffix = ".tmp")
     {
         if (!_pc->dirty.load()) return true;
-        if (!WriteFileAtomicA(UserDictPath(), SerializeUserDictLocked())) return false;
+        if (!WriteFileAtomicA(UserDictPath(), SerializeUserDictLocked(), tmpSuffix)) return false;
         _pc->dirty.store(false);
         return true;
     }
@@ -1771,9 +1795,11 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         {
             // ownerDead：引擎析构等 busy 超时（磁盘挂死病态场景）后放弃本次
             // 写——宁可丢在途旧快照，也不覆盖析构同步刷写的最终态。
+            // 审查缺陷③：rename 前复查（abortBeforeRename）——写盘挂死期间
+            // dtor 已完成最终写时，旧快照的 rename 不再落地，置脏由 dtor 补写。
             if (pc->ownerDead.load()) { pc->busy.store(false); return; }
-            if (!WriteFileAtomicA(path, content))
-                pc->dirty.store(true); // 写失败恢复脏位，下次 Learn/Flush/退出时重试
+            if (!WriteFileAtomicA(path, content, ".tmp", &pc->ownerDead))
+                pc->dirty.store(true); // 写失败/放弃恢复脏位，下次 Learn/Flush/退出时重试
             pc->busy.store(false);
         }).detach();
     }
