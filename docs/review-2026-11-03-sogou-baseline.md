@@ -226,4 +226,45 @@ H1/H2/H3/L4 崩溃层修复本体；L10/L12 已闭环项；§八-3/-6/-7/-8 残�
 | # | 项 | 现象 | 建议 |
 |---|---|---|---|
 | N1 | `--probe-pinyin` 静默退出 | 两次复现：仅落 `probe: 开始`，`probe: 引擎已加载` 未出现，进程消失，无 dump | 用 `--%` 参数确认探针路径是否被单实例逻辑/控制台附着影响；engine_test 同路径正常，疑探针专属 |
-| N2 | 探针 stdout 不可重定向 | GUI 子系统 exe，`> file` 捕获 0 字节，直读乱码 | 属已知形态（日志走文件），手册已按日志口径写 |
+| N2 | ~~探针 stdout 不可重定向~~ **已销账（14:05）** | 实为调用方式问题：`Start-Process -RedirectStandardOutput` 可捕获（EmitCliText 对重定向句柄写 UTF-16LE，`Get-Content -Encoding Unicode` 读即正常中文）；此前 0 字节系 shell 内联重定向未把管道句柄传给 GUI 进程 | §十二 重装验证即用此法拿到 `--version` 明文 |
+
+## 十二、卸载/重装洁净度实测（13:59–14:10，本轮最高优先级）
+
+回退留底：`tmp\backup-20261103-135926\`（clsid_x64.reg / clsid_x86_wow.reg / ctf_tip_hklm.reg / hkcu_lingxi.reg / hkcu_run.reg / langlist.txt / bin 与 APPDATA 清单 / uninstall-run.log / register-run.log）。回退安全判据：语言列表始终含微软拼音+英文+日文，卸载全程不致盲。
+
+### 12.1 卸载前发现并修复的脚本缺陷（commit `9e3f5dc`）
+
+- **缺陷（确证）**：旧 uninstall.ps1 无条件删除 `%APPDATA%\LingxiIme`（用户词典）与 `HKCU\Software\LingxiIme`（设置），且残留校验断言二者"不存在"——删干净反而显示 SUCCESS，数据丢失被伪装成功。卸载一个输入法不该丢用户词库。
+- **修复**：两处删除收进 `-PurgeUserData` 开关，默认保留；校验翻转为"默认必须还在，丢了就报 FAIL"。修复后才执行本轮卸载，避免测试本身毁数据。
+- **疑点排除（实证）**：脚本删 `HKLM\SOFTWARE\Classes\WOW6432Node\CLSID`，而真实注册落在 `HKLM\SOFTWARE\WOW6432Node\Classes\CLSID`——疑为路径写错。**卸载后实测两条 WOW 路径同时 GONE**：二者是 64 位注册表别名，脚本路径有效，非缺陷。
+
+### 12.2 卸载残留核查表（脚本自报 + 独立复核双口径）
+
+| 项 | 判定 | 证据 |
+|---|---|---|
+| HKLM CLSID x64 | 清 | 独立 Test-Path GONE |
+| HKLM CLSID x86（WOW 双路径） | 清 | 两条路径均 GONE（别名实证） |
+| HKLM CTF\TIP 树（含 Category/LanguageProfile） | 清 | GONE |
+| HKCU CTF\TIP 树 | 设计如此 | 卸载前本就不存在 |
+| HKCU 设置键 | **保留**（修复后行为） | EXISTS；重装后 diagnostics 读回原设置 |
+| APPDATA 用户数据 | **保留** | 14 文件 61629B 与卸载前逐字节口径一致；词典 716 条完好 |
+| HKCU Run 自启 | 清 | 值空 |
+| SortOrder AssemblyItem | 设计如此 | 本无 Lingxi 条目 |
+| 语言列表 | 设计如此 | Lingxi 从不在 cmdlet 可见列表（TIP 经 CTF Category 生效）；微软拼音/英文/日文前后一致 |
+| bin 文件（含 .prev/.locked） | 设计如此（脚本不碰 bin） | `bin\Debug` 7×`.prev`+1×`.stale1`、`bin\Debug32` 1×`.locked` 为构建热换出副产物，清单已留底；整目录可随源码树删除 |
+| 运行态 | 清 | 卸载时全部宿主（explorer/Trae CN/WindowsTerminal/WebView2）模块枚举 0 攥 ImeCore；ctfmon 14:03:30 重启 |
+
+### 12.3 重装验证（register.cmd 提权 + 独立探针）
+
+- imecheck 自检 PASSED：CLSID/CTF TIP HKLM=True，profiles 0x409/0x804。
+- InprocServer32：x64→`bin\Debug\ImeCore.dll`（13:50:05，SHA256 `537C27C7F7A542D9…`）；WOW→`bin\Debug32\ImeCore.dll`（13:50:48，SHA256 `EC940FE16AE9B572…`）。
+- **32 位侧实证**：SysWOW64 PowerShell（bitness=False）对 TIP CLSID `LoadLibrary` 成功 + `CoCreateInstance` 成功；x64 同法通过。两份新件在对应位数宿主里可加载可激活。
+- 探针明文（UTF-16LE 捕获）：`灵犀输入法 1.0（构建于 Nov  3 2026）`；diagnostics：`构建日期：Nov  3 2026`、`用户词典：716 条`。
+- 小观察（登记不修）：LanguageProfile 的 `IconFile` 指向 Debug32 DLL——x64 侧取图标也走 32 位件，图标能显示则无碍，属注册细节。
+
+### 12.4 用户侧生效步骤·最终版（重装后）
+
+1. **重启电脑或注销重登**（唯一省事的刷新；只重启单个程序不够——explorer 与各 WebView2 宿主各自攥着旧 DLL 内存镜像，重建/重装只改磁盘与注册表，不改变已映射进内存的旧件）。
+2. 登录后在设置→时间和语言→中文（中国）→添加键盘，选"灵犀 AI 输入法"；若已列出则 Win+Space 切到它。
+3. **一行自查判据**：打开 `%TEMP%\lingxi-ime.log`（需设置页开日志或环境变量 `LINGXI_LOG=1`），看到 `ActivateEx … build=Nov  3 2026 13:5…` 即证明当前宿主加载的是本轮新件；出现 11-02 及以前的 build 时间则该宿主还是旧镜像，重启它即可。
+4. 备用判据：`bin\Debug\LingxiUI.exe --version`（新窗口里跑）输出"构建于 Nov  3 2026"。
