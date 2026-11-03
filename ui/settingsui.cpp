@@ -7,7 +7,7 @@
 //
 // 设置存 HKCU\Software\LingxiIme（common/settings），DLL 与 UI 每次读取实时生效：
 // - 拼音组合模式：DLL 在模式检测（焦点/激活/语言变化）时读取
-// - 候选数量 / 界面明暗 / 英文逐键补全：UI 在每次预测请求时读取
+// - 补全候选数（仅英文补全）/ 界面明暗 / 英文逐键补全：UI 在每次预测请求时读取
 //
 #include "settingsui.h"
 #include "uiinternal.h"
@@ -1162,7 +1162,7 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_hChkEn = mkToggle(IDC_CHK_EN);
     mkRow(L"英文逐键补全", L"词中自动补全英文单词", g_hChkEn, CK_TOGGLE, 44);
     g_hEdtCount = mkEdit(IDC_EDT_COUNT);
-    mkRow(L"补全候选数", L"英文补全显示的候选数量（1-9）", g_hEdtCount, CK_EDIT, 64);
+    mkRow(L"补全候选数", L"英文补全显示的候选数量（1-9）；拼音候选每页固定 9 个，不受此项影响", g_hEdtCount, CK_EDIT, 64);
 
     // ---- 页 3：外观 ----
     addPage(L"外观");
