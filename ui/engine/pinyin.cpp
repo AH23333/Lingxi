@@ -112,6 +112,106 @@ std::wstring CnUppercaseDate(const SYSTEMTIME& st)
     return y + L"年" + cn2(st.wMonth) + L"月" + cn2(st.wDay) + L"日";
 }
 
+} // namespace（匿名段暂闭：下列两函数导出给 engine_test P5d 直接单测）
+
+// ---------------------------------------------------------------------------
+// Tier1-5 农历转换（纯本地表查，无 OS 日历依赖）。表值=1900-2100 各农历年的
+// 月长/闰月事实数据（源：jjonline/calendar.js src/constant/Lunar.js，其数据
+// 对照港天文台换算表；数字表为历法事实，非版权表达）。
+// 编码：低 4 位=闰几月（0=无闰）；bit16=1 闰月大（30 天）否则 29；
+// bit15..4 依次=1..12 月，1 大月 30 天、0 小月 29 天。锚点回归见 engine_test P5d。
+// ---------------------------------------------------------------------------
+std::wstring LunarDateStr(int sy, int sm, int sd)
+{
+    static const uint32_t kInfo[] = {
+        0x04bd8,0x04ae0,0x0a570,0x054d5,0x0d260,0x0d950,0x16554,0x056a0,0x09ad0,0x055d2, // 1900-1909
+        0x04ae0,0x0a5b6,0x0a4d0,0x0d250,0x1d255,0x0b540,0x0d6a0,0x0ada2,0x095b0,0x14977, // 1910-1919
+        0x04970,0x0a4b0,0x0b4b5,0x06a50,0x06d40,0x1ab54,0x02b60,0x09570,0x052f2,0x04970, // 1920-1929
+        0x06566,0x0d4a0,0x0ea50,0x16a95,0x05ad0,0x02b60,0x186e3,0x092e0,0x1c8d7,0x0c950, // 1930-1939
+        0x0d4a0,0x1d8a6,0x0b550,0x056a0,0x1a5b4,0x025d0,0x092d0,0x0d2b2,0x0a950,0x0b557, // 1940-1949
+        0x06ca0,0x0b550,0x15355,0x04da0,0x0a5b0,0x14573,0x052b0,0x0a9a8,0x0e950,0x06aa0, // 1950-1959
+        0x0aea6,0x0ab50,0x04b60,0x0aae4,0x0a570,0x05260,0x0f263,0x0d950,0x05b57,0x056a0, // 1960-1969
+        0x096d0,0x04dd5,0x04ad0,0x0a4d0,0x0d4d4,0x0d250,0x0d558,0x0b540,0x0b6a0,0x195a6, // 1970-1979
+        0x095b0,0x049b0,0x0a974,0x0a4b0,0x0b27a,0x06a50,0x06d40,0x0af46,0x0ab60,0x09570, // 1980-1989
+        0x04af5,0x04970,0x064b0,0x074a3,0x0ea50,0x06b58,0x05ac0,0x0ab60,0x096d5,0x092e0, // 1990-1999
+        0x0c960,0x0d954,0x0d4a0,0x0da50,0x07552,0x056a0,0x0abb7,0x025d0,0x092d0,0x0cab5, // 2000-2009
+        0x0a950,0x0b4a0,0x0baa4,0x0ad50,0x055d9,0x04ba0,0x0a5b0,0x15176,0x052b0,0x0a930, // 2010-2019
+        0x07954,0x06aa0,0x0ad50,0x05b52,0x04b60,0x0a6e6,0x0a4e0,0x0d260,0x0ea65,0x0d530, // 2020-2029
+        0x05aa0,0x076a3,0x096d0,0x04afb,0x04ad0,0x0a4d0,0x1d0b6,0x0d250,0x0d520,0x0dd45, // 2030-2039
+        0x0b5a0,0x056d0,0x055b2,0x049b0,0x0a577,0x0a4b0,0x0aa50,0x1b255,0x06d20,0x0ada0, // 2040-2049
+        0x14b63,0x09370,0x049f8,0x04970,0x064b0,0x168a6,0x0ea50,0x06aa0,0x1a6c4,0x0aae0, // 2050-2059
+        0x092e0,0x0d2e3,0x0c960,0x0d557,0x0d4a0,0x0da50,0x05d55,0x056a0,0x0a6d0,0x055d4, // 2060-2069
+        0x052d0,0x0a9b8,0x0a950,0x0b4a0,0x0b6a6,0x0ad50,0x055a0,0x0aba4,0x0a5b0,0x052b0, // 2070-2079
+        0x0b273,0x06930,0x07337,0x06aa0,0x0ad50,0x14b55,0x04b60,0x0a570,0x054e4,0x0d160, // 2080-2089
+        0x0e968,0x0d520,0x0daa0,0x16aa6,0x056d0,0x04ae0,0x0a9d4,0x0a2d0,0x0d150,0x0f252, // 2090-2099
+        0x0d520, // 2100
+    };
+    if (sy < 1900 || sy > 2100) return L"";
+    static const wchar_t* kCn[] = { L"〇",L"一",L"二",L"三",L"四",L"五",L"六",L"七",L"八",L"九" };
+    // 距 1900-01-31（农历 1900 正月初一）的天数（正午时基，避开夏令/边界）
+    SYSTEMTIME base{ 1900, 1, 4, 31, 12, 0, 0, 0 };
+    SYSTEMTIME now{ (WORD)sy, (WORD)sm, 1, (WORD)sd, 12, 0, 0, 0 };
+    FILETIME fb{}, fn{};
+    if (!SystemTimeToFileTime(&base, &fb) || !SystemTimeToFileTime(&now, &fn)) return L"";
+    LONGLONG ub = ((LONGLONG)fb.dwHighDateTime << 32) | fb.dwLowDateTime;
+    LONGLONG un = ((LONGLONG)fn.dwHighDateTime << 32) | fn.dwLowDateTime;
+    LONGLONG off = (un - ub) / 864000000000LL;
+    if (off < 0) return L"";
+    // 逐年推进
+    int y = 1900;
+    for (; y <= 2100; y++)
+    {
+        uint32_t info = kInfo[y - 1900];
+        int leap = (int)(info & 0xf);
+        LONGLONG days = 348; // 12×29
+        for (uint32_t bit = 0x8000; bit > 0x8; bit >>= 1) if (info & bit) days++;
+        if (leap) days += (info & 0x10000) ? 30 : 29;
+        if (off < days) break;
+        off -= days;
+    }
+    if (y > 2100) return L"";
+    uint32_t info = kInfo[y - 1900];
+    int leap = (int)(info & 0xf);
+    int month = 1;
+    bool isLeap = false;
+    for (; month <= 12; month++)
+    {
+        int md = (info & (0x10000 >> month)) ? 30 : 29;
+        if (off < md) break;
+        off -= md;
+        if (month == leap)
+        {
+            int ld = (info & 0x10000) ? 30 : 29;
+            if (off < ld) { isLeap = true; break; }
+            off -= ld;
+        }
+    }
+    if (month > 12) return L"";
+    int day = (int)off + 1;
+    static const wchar_t* kMon[] = { L"正月",L"二月",L"三月",L"四月",L"五月",L"六月",
+                                     L"七月",L"八月",L"九月",L"十月",L"冬月",L"腊月" };
+    std::wstring ds;
+    if (day == 10) ds = L"初十";
+    else if (day < 10) ds = std::wstring(L"初") + kCn[day];
+    else if (day < 20) ds = std::wstring(L"十") + kCn[day - 10];
+    else if (day == 20) ds = L"二十";
+    else if (day < 30) ds = std::wstring(L"廿") + kCn[day - 20];
+    else if (day == 30) ds = L"三十";
+    else return L"";
+    return std::wstring(isLeap ? L"闰" : L"") + kMon[month - 1] + ds;
+}
+
+// 干支纪年（农历年口径：以立春/春节近似——此处按春节年份=农历年，表内一致）
+std::wstring LunarGanzhiYear(int lunarYear)
+{
+    static const wchar_t* kStem[] = { L"甲",L"乙",L"丙",L"丁",L"戊",L"己",L"庚",L"辛",L"壬",L"癸" };
+    static const wchar_t* kBranch[] = { L"子",L"丑",L"寅",L"卯",L"辰",L"巳",L"午",L"未",L"申",L"酉",L"戌",L"亥" };
+    if (lunarYear < 4) return L"";
+    return std::wstring(kStem[(lunarYear - 4) % 10]) + kBranch[(lunarYear - 4) % 12];
+}
+
+namespace {
+
 std::vector<std::wstring> BuildDateTimeCands(const std::string& in)
 {
     std::vector<std::wstring> out;
@@ -139,6 +239,40 @@ std::vector<std::wstring> BuildDateTimeCands(const std::string& in)
         out.push_back(b);
         _snwprintf_s(b, _TRUNCATE, L"%u年%u月%u日", st.wYear, st.wMonth, st.wDay);
         out.push_back(b); // 无补零：2026年5月3日（单数字月/日场景）
+        _snwprintf_s(b, _TRUNCATE, L"%u月%u日", st.wMonth, st.wDay);
+        out.push_back(b); // Tier1-5 无年份：11月3日
+    }
+    else if (in == "mt" || in == "ht")
+    {
+        // Tier1-5 明天/后天：FileTime +1/+2 天，星期按偏移取模（跨月/跨年安全）
+        FILETIME ft{};
+        SystemTimeToFileTime(&st, &ft);
+        ULONGLONG u = ((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
+        const int add = (in == "mt") ? 1 : 2;
+        u += (ULONGLONG)add * 864000000000ULL;
+        ft.dwLowDateTime = (DWORD)u;
+        ft.dwHighDateTime = (DWORD)(u >> 32);
+        SYSTEMTIME n{};
+        FileTimeToSystemTime(&ft, &n);
+        int dow = (st.wDayOfWeek + add) % 7;
+        _snwprintf_s(b, _TRUNCATE, L"%u年%02u月%02u日", n.wYear, n.wMonth, n.wDay);
+        out.push_back(b);
+        _snwprintf_s(b, _TRUNCATE, L"%u月%u日", n.wMonth, n.wDay);
+        out.push_back(b);
+        _snwprintf_s(b, _TRUNCATE, L"%u-%02u-%02u", n.wYear, n.wMonth, n.wDay);
+        out.push_back(b);
+        _snwprintf_s(b, _TRUNCATE, L"星期%ls", kDay[dow]);
+        out.push_back(b);
+    }
+    else if (in == "nl")
+    {
+        // Tier1-5 农历：表查转换（1900-2100，见 LunarDateStr），表外不注入
+        std::wstring l = LunarDateStr(st.wYear, st.wMonth, st.wDay);
+        if (!l.empty())
+        {
+            out.push_back(L"农历" + l);
+            out.push_back(L"农历" + LunarGanzhiYear(st.wYear) + L"年" + l);
+        }
     }
     else if (in == "sj")
     {

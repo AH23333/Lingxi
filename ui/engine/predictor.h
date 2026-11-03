@@ -127,4 +127,9 @@ void StageAssocCands(Prediction& pred);
 // chain 各元素所有权归返回的 predictor（析构时逐一 delete）。
 IPredictor* CreateChainPredictor(std::vector<IPredictor*>&& chain);
 
+// 农历表查转换与干支纪年（Tier1-5，实现于 pinyin.cpp，engine_test P5d 直接单测）：
+// 公历日期（1900-01-31..2100 表内）→ "正月初一/闰六月初一"式农历串，越界返回空。
+std::wstring LunarDateStr(int sy, int sm, int sd);
+std::wstring LunarGanzhiYear(int lunarYear);
+
 } // namespace lingxi

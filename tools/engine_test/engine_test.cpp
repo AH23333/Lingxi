@@ -1561,6 +1561,115 @@ int wmain(int argc, wchar_t** argv)
                 }
             }
 
+            // P5d. Tier1-5：农历表查锚点回归 + rq 无年份形态 + mt/ht/nl 触发注入
+            {
+                struct LAnchor { int y, m, d; const wchar_t* expect; };
+                const LAnchor kLunar[] = {
+                    { 1900,  1, 31, L"正月初一" },   // 表锚点（农历 1900 年首日）
+                    { 2023,  1, 22, L"正月初一" },   // 2023 春节
+                    { 2024,  2, 10, L"正月初一" },   // 2024 春节
+                    { 2025,  1, 29, L"正月初一" },   // 2025 春节
+                    { 2025,  7, 25, L"闰六月初一" }, // 2025 闰六月起
+                    { 2026,  2, 17, L"正月初一" },   // 2026 春节
+                    { 2027,  2,  6, L"正月初一" },   // 2027 春节
+                    { 2024,  9, 17, L"八月十五" },   // 2024 中秋
+                    { 2026,  9, 25, L"八月十五" },   // 2026 中秋
+                };
+                for (const auto& a : kLunar)
+                {
+                    std::wstring got = lingxi::LunarDateStr(a.y, a.m, a.d);
+                    bool ok = got == a.expect;
+                    wchar_t detail[160];
+                    _snwprintf_s(detail, _TRUNCATE, L"%d-%02d-%02d got='%ls' want='%ls'",
+                                 a.y, a.m, a.d, got.c_str(), a.expect);
+                    Report(ok, "P5d lunar anchor", detail);
+                }
+                Report(lingxi::LunarDateStr(1899, 12, 31).empty() &&
+                       lingxi::LunarDateStr(2101, 1, 1).empty(),
+                       "P5d lunar range guard", L"");
+                {
+                    struct GAnchor { int y; const wchar_t* gz; };
+                    const GAnchor kG[] = { { 2024, L"甲辰" }, { 2025, L"乙巳" },
+                                           { 2026, L"丙午" }, { 2027, L"丁未" } };
+                    for (const auto& g : kG)
+                    {
+                        std::wstring got = lingxi::LunarGanzhiYear(g.y);
+                        bool ok = got == g.gz;
+                        wchar_t detail[120];
+                        _snwprintf_s(detail, _TRUNCATE, L"%d got='%ls' want='%ls'",
+                                     g.y, got.c_str(), g.gz);
+                        Report(ok, "P5d ganzhi anchor", detail);
+                    }
+                }
+                // 触发注入（期望值以本地时间动态计算，避免硬编码随日失效）
+                SYSTEMTIME st5{};
+                GetLocalTime(&st5);
+                {
+                    lingxi::Prediction r = py->Predict(L"rq");
+                    wchar_t want[48];
+                    _snwprintf_s(want, _TRUNCATE, L"%u月%u日", st5.wMonth, st5.wDay);
+                    bool hit = false;
+                    for (const auto& w : r.cands)
+                        if (w == want) { hit = true; break; }
+                    Report(hit, "P5d rq yearless form", want);
+                }
+                {
+                    FILETIME ft5{};
+                    SYSTEMTIME n5{};
+                    SystemTimeToFileTime(&st5, &ft5);
+                    ULONGLONG u5 = ((ULONGLONG)ft5.dwHighDateTime << 32) | ft5.dwLowDateTime;
+                    u5 += 864000000000ULL;
+                    ft5.dwLowDateTime = (DWORD)u5;
+                    ft5.dwHighDateTime = (DWORD)(u5 >> 32);
+                    FileTimeToSystemTime(&ft5, &n5);
+                    lingxi::Prediction r = py->Predict(L"mt");
+                    wchar_t want[48];
+                    _snwprintf_s(want, _TRUNCATE, L"%u年%02u月%02u日",
+                                 n5.wYear, n5.wMonth, n5.wDay);
+                    bool hit = false;
+                    for (const auto& w : r.cands)
+                        if (w == want) { hit = true; break; }
+                    Report(hit, "P5d mt tomorrow date", want);
+                }
+                {
+                    FILETIME ft5{};
+                    SYSTEMTIME n5{};
+                    SystemTimeToFileTime(&st5, &ft5);
+                    ULONGLONG u5 = ((ULONGLONG)ft5.dwHighDateTime << 32) | ft5.dwLowDateTime;
+                    u5 += 2ULL * 864000000000ULL;
+                    ft5.dwLowDateTime = (DWORD)u5;
+                    ft5.dwHighDateTime = (DWORD)(u5 >> 32);
+                    FileTimeToSystemTime(&ft5, &n5);
+                    lingxi::Prediction r = py->Predict(L"ht");
+                    wchar_t want[48];
+                    _snwprintf_s(want, _TRUNCATE, L"%u年%02u月%02u日",
+                                 n5.wYear, n5.wMonth, n5.wDay);
+                    bool hit = false;
+                    for (const auto& w : r.cands)
+                        if (w == want) { hit = true; break; }
+                    Report(hit, "P5d ht day-after date", want);
+                }
+                {
+                    lingxi::Prediction r = py->Predict(L"nl");
+                    std::wstring wantS = L"农历" +
+                        lingxi::LunarDateStr(st5.wYear, st5.wMonth, st5.wDay);
+                    bool hit = false;
+                    for (const auto& w : r.cands)
+                        if (w == wantS) { hit = true; break; }
+                    wchar_t detail[160];
+                    _snwprintf_s(detail, _TRUNCATE, L"want='%ls'", wantS.c_str());
+                    Report(hit, "P5d nl lunar today", detail);
+                }
+                // 非触发不误伤：mtt 不注入日期（首选不含"年"）
+                {
+                    lingxi::Prediction r = py->Predict(L"mtt");
+                    bool ok = r.cands.empty() ||
+                              r.cands[0].find(L"年") == std::wstring::npos;
+                    Report(ok, "P5d mt no hijack",
+                           r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                }
+            }
+
             // P12. R2 自定义短语：缩写整串命中注入置顶，热载增删生效
             {
                 wchar_t appdata[MAX_PATH] = {0};
