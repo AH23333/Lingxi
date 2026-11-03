@@ -766,6 +766,18 @@ int wmain(int argc, wchar_t** argv)
                        "symsearch empty query -> empty");
                 Report(has(lingxi::SymbolSearch(L"jindutiao"), L"█"),
                        "symsearch jindutiao -> progress block");
+                // P5s-6. 分类可检索性（Tier1-4）：每类有类关键词，按类查询命中数不低于阈值
+                {
+                    auto cnt = [](const wchar_t* q) { return lingxi::SymbolSearch(q).size(); };
+                    Report(cnt(L"shuxue") >= 30,     "symsearch cat math: shuxue>=30");
+                    Report(cnt(L"huobi") >= 16,      "symsearch cat currency: huobi>=16");
+                    Report(cnt(L"xvhao") >= 20,      "symsearch cat index: xvhao>=20");
+                    Report(cnt(L"zhuyin") >= 30,     "symsearch cat zhuyin: zhuyin>=30");
+                    Report(cnt(L"shengdiao") >= 24,  "symsearch cat tone: shengdiao>=24");
+                    Report(cnt(L"daxie") >= 24,      "symsearch cat greek: daxie>=24");
+                    Report(cnt(L"jiantou") >= 15,    "symsearch cat arrow: jiantou>=15");
+                    Report(cnt(L"danwei") >= 28,     "symsearch cat unit: danwei>=28");
+                }
             }
 
             // P6. 候选翻页数据有效性：长串应给出第二页且候选唯一、页边界正确

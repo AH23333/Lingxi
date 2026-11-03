@@ -100,7 +100,11 @@ const wchar_t* const kSymKaomoji[] = {
     L"(>3<)", L"(;-;)", L"(X_X)", L"(O_O)", L"(o_o)", L"(Q_Q)", L"(^_~)", L"(^_-)",
 };
 
-const wchar_t* const kSymZhuyin[] = { // 拼音声调字母（注音/教学场景）
+const wchar_t* const kSymZhuyin[] = { // 注音符号 + 拼音声调字母（注音/教学场景）
+    L"ㄅ", L"ㄆ", L"ㄇ", L"ㄈ", L"ㄉ", L"ㄊ", L"ㄋ", L"ㄌ", L"ㄍ", L"ㄎ", L"ㄏ",
+    L"ㄐ", L"ㄑ", L"ㄒ", L"ㄓ", L"ㄔ", L"ㄕ", L"ㄖ", L"ㄗ", L"ㄘ", L"ㄙ",
+    L"ㄚ", L"ㄛ", L"ㄜ", L"ㄝ", L"ㄞ", L"ㄟ", L"ㄠ", L"ㄡ", L"ㄢ", L"ㄣ", L"ㄤ",
+    L"ㄥ", L"ㄦ", L"ˊ", L"ˇ", L"ˋ", L"˙",
     L"ā", L"á", L"ǎ", L"à", L"ē", L"é", L"ě", L"è", L"ī", L"í", L"ǐ", L"ì",
     L"ō", L"ó", L"ǒ", L"ò", L"ū", L"ú", L"ǔ", L"ù", L"ǖ", L"ǘ", L"ǚ", L"ǜ",
     L"ü", L"ń", L"ň", L"ê", L"À", L"É", L"Ò",
@@ -126,6 +130,17 @@ const wchar_t* const kSymIndex[] = { // 序号（列表编号/章节号场景）
     L"⑶", L"⑷", L"⑸", L"⑹", L"⑺", L"⑻", L"⑼", L"⑽",
 };
 
+const wchar_t* const kSymUnit[] = { // 计量单位（长度/质量/面积/体积/容量/压强/电流/频率/能量/数据）
+    L"㎜", L"㎝", L"㎞", L"㎛", L"㎚", L"Å",
+    L"㎎", L"㎏", L"㎍",
+    L"㎟", L"㎠", L"㎡", L"㎢", L"㎥", L"㏄", L"㏊",
+    L"㎖", L"㎘", L"ℓ",
+    L"㎩", L"㎪", L"㎫", L"㏃",
+    L"㎃", L"㎄",
+    L"㎐", L"㎑", L"㎒", L"㎓", L"㏈",
+    L"㎅", L"㎆", L"㎇", L"㎈",
+};
+
 const Category kCats[] = {
     { L"常用",   kSymCommon,   (int)(sizeof(kSymCommon) / sizeof(kSymCommon[0])),   38, 12 },
     { L"数学",   kSymMath,     (int)(sizeof(kSymMath) / sizeof(kSymMath[0])),      38, 12 },
@@ -141,6 +156,8 @@ const Category kCats[] = {
     { L"框线",   kSymBox,      (int)(sizeof(kSymBox) / sizeof(kSymBox[0])),         38, 12 },
     { L"序号",   kSymIndex,    (int)(sizeof(kSymIndex) / sizeof(kSymIndex[0])),     38, 12 },
     { L"^_^",   kSymKaomoji,  (int)(sizeof(kSymKaomoji) / sizeof(kSymKaomoji[0])), 104, 4 },
+    // "单位"追加在表尾：注册表 lastSymbolCat 存 kCats 1 基序，中间插类会移位旧值，追加免迁移
+    { L"单位",  kSymUnit,     (int)(sizeof(kSymUnit) / sizeof(kSymUnit[0])),       38, 12 },
 };
 
 constexpr int kCell = 38;      // 单元格高（宽随分类：普通 38 / 颜文字 104）
