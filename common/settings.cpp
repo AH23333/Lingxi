@@ -76,6 +76,20 @@ void SetDword(HKEY hKey, const wchar_t* name, DWORD v)
     RegSetValueExW(hKey, name, 0, REG_DWORD, (const BYTE*)&v, sizeof(v));
 }
 
+bool GetQword(HKEY hKey, const wchar_t* name, unsigned long long& out)
+{
+    unsigned long long v = 0;
+    DWORD cb = sizeof(v), type = 0;
+    if (RegGetValueW(hKey, NULL, name, RRF_RT_REG_QWORD, &type, &v, &cb) == ERROR_SUCCESS &&
+        type == REG_QWORD) { out = v; return true; }
+    return false;
+}
+
+void SetQword(HKEY hKey, const wchar_t* name, unsigned long long v)
+{
+    RegSetValueExW(hKey, name, 0, REG_QWORD, (const BYTE*)&v, sizeof(v));
+}
+
 // M5：设置版本号 bump——SaveSettings/SaveSettingsDiff 落盘尾部调用；读侧
 // （LoadSettings）版本不变且未超 TTL 才用缓存。键删除（ResetToDefaults）
 // 连版本号一起消失 → 下次读必 miss。并发双写最坏 seq 相同但值已变：读侧
@@ -223,6 +237,9 @@ Settings LoadSettings()
     if (GetDword(hKey, L"SetWinY", v)) s.setWinY = (int)v;
     if (GetDword(hKey, L"SetWinW", v)) s.setWinW = (int)v;
     if (GetDword(hKey, L"SetWinH", v)) s.setWinH = (int)v;
+    GetString(hKey, L"UpdateRepo", s.updateRepo);
+    if (GetDword(hKey, L"UpdateAutoCheck", v)) s.updateAutoCheck = v ? 1u : 0u;
+    GetQword(hKey, L"UpdateLastCheck", s.updateLastCheck);
 
     RegCloseKey(hKey);
     AcquireSRWLockExclusive(&g_setCacheLock);
@@ -294,6 +311,9 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"SetWinY", (DWORD)(uint32_t)s.setWinY);
     SetDword(hKey, L"SetWinW", (DWORD)(uint32_t)s.setWinW);
     SetDword(hKey, L"SetWinH", (DWORD)(uint32_t)s.setWinH);
+    SetString(hKey, L"UpdateRepo", s.updateRepo);
+    SetDword(hKey, L"UpdateAutoCheck", s.updateAutoCheck);
+    SetQword(hKey, L"UpdateLastCheck", s.updateLastCheck);
 
     BumpSettingsSeq(hKey); // M5：版本 bump，读侧缓存即时失效
     RegCloseKey(hKey);
@@ -358,6 +378,9 @@ void SaveSettingsDiff(const Settings& s)
     PutDwordDiff(hKey, L"SetWinY", (DWORD)(uint32_t)s.setWinY);
     PutDwordDiff(hKey, L"SetWinW", (DWORD)(uint32_t)s.setWinW);
     PutDwordDiff(hKey, L"SetWinH", (DWORD)(uint32_t)s.setWinH);
+    PutStringDiff(hKey, L"UpdateRepo", s.updateRepo);
+    PutDwordDiff(hKey, L"UpdateAutoCheck", s.updateAutoCheck);
+    SetQword(hKey, L"UpdateLastCheck", s.updateLastCheck);
     BumpSettingsSeq(hKey); // M5：版本 bump，读侧缓存即时失效
     RegCloseKey(hKey);
 }

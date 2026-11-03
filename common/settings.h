@@ -71,6 +71,11 @@ struct Settings
     int setWinY = -1;
     int setWinW = 0;
     int setWinH = 0;
+
+    // ===== 自助更新（docs/update-design-2026-11-03.md §1/§8）=====
+    std::wstring updateRepo;                 // "owner/repo"；空=未配置更新源（正常态）
+    uint32_t updateAutoCheck = 0;            // 1=启动后台检查（每天至多一次）；默认 0
+    unsigned long long updateLastCheck = 0;  // 上次检查 Unix 秒（REG_QWORD）
 };
 
 Settings LoadSettings();

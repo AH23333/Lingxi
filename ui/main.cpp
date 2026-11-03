@@ -16,6 +16,8 @@
 #include "autobackup.h"
 #include "clipboardui.h"
 #include "symbolpanel.h"
+#include "updateui.h"                       // 设置页"更新"区接线（批次 5）
+#include "../common/update_apply.h"          // --update-apply 提权侧（T10/T12）
 #include "engine/predictor.h"
 #include "../common/log.h"
 #include "../common/settings.h"
@@ -316,6 +318,7 @@ const wchar_t* kHelpText =
     L"  --settings     打开设置页（已运行实例则转发后退出）\n"
     L"  --symbols      打开符号面板（已运行实例则转发后退出）\n"
     L"  --probe-pinyin / --probe-llm / --probe-chain / --probe-typing\n"
+    L"  --update-apply <staging>  提权侧执行替换（内部：设置页一键更新经 UAC 拉起）\n"
     L"                 内部探针（回归脚本用）\n";
 
 // --diagnostics：OS/构建/DPI/设置/数据文件统计（排障一屏汇总）
@@ -481,6 +484,51 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
         LocalFree(argv);
         return rc;
     }
+    if (argv && argc >= 2 && wcscmp(argv[1], L"--update-apply") == 0)
+    {
+        // 提权侧（T10）：只接受 bin\work\staging\<合法版本>；结果写 apply-result.txt
+        // 供 UI 侧 worker 轮询（T12：UI 不猜结果，独立读文件）。不走单例/消息循环。
+        std::wstring staging = argc >= 3 ? argv[2] : L"";
+        std::wstring binRoot, workRoot, err, log;
+        lingxi::updater::SemVer ver;
+        bool ok = false;
+        if (lingxi::updater::ComputeBinRootsFromModule(&binRoot, &workRoot) &&
+            lingxi::updater::ValidateStagingPath(staging, workRoot, &ver, &err))
+        {
+            wchar_t vs[32];
+            _snwprintf_s(vs, _TRUNCATE, L"%u.%u.%u", (unsigned)ver.major, (unsigned)ver.minor,
+                         (unsigned)ver.patch);
+            lingxi::updater::ApplyRequest req;
+            req.binRoot = binRoot;
+            req.stagingDir = staging;
+            req.versionStr = vs;
+            req.imecheckScript = binRoot + L"\\..\\tools\\imecheck.ps1";
+            if (GetFileAttributesW(req.imecheckScript.c_str()) == INVALID_FILE_ATTRIBUTES)
+                req.imecheckScript.clear(); // 发布机外工具缺失则跳过（探针+哈希仍必查）
+            req.doRegister = true;
+            lingxi::updater::ApplyHooks hk;
+            ok = lingxi::updater::ApplyUpdate(req, hk, &err, &log);
+        }
+        std::wstring result = ok ? (L"OK " + err) : (L"FAIL " + err);
+        std::string u8;
+        int n = WideCharToMultiByte(CP_UTF8, 0, result.c_str(), -1, NULL, 0, NULL, NULL);
+        if (n > 1) { u8.resize((size_t)n - 1); WideCharToMultiByte(CP_UTF8, 0, result.c_str(), -1, &u8[0], n, NULL, NULL); }
+        CreateDirectoryW(workRoot.c_str(), NULL);
+        HANDLE hRes = CreateFileW((workRoot + L"\\apply-result.txt").c_str(), GENERIC_WRITE,
+                                  FILE_SHARE_READ, NULL, CREATE_ALWAYS, 0, NULL);
+        if (hRes != INVALID_HANDLE_VALUE) {
+            DWORD w = 0;
+            WriteFile(hRes, u8.data(), (DWORD)u8.size(), &w, NULL);
+            CloseHandle(hRes);
+        }
+        std::wstring box = result + L"\n\n" + log +
+            (ok ? L"\n提示：需重启宿主程序或注销重登后新 DLL 才生效（设计 §7）。"
+                : L"\n已尝试整体回滚；详见上方原因。");
+        MessageBoxW(NULL, box.c_str(), ok ? L"灵犀输入法 - 更新完成" : L"灵犀输入法 - 更新失败",
+                    MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONERROR));
+        LocalFree(argv);
+        return ok ? 0 : 1;
+    }
     if (argv) LocalFree(argv);
 
     // 生产实例拒绝设置沙箱：LINGXI_SETTINGS_NS 是 deep_test/e2e/engine_test 的
@@ -511,6 +559,9 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
         if (wantSettings) SignalNamedEvent(kEvtShowSettings);
         return 0;
     }
+
+    // 自助更新：自动检查（默认关；开则距上次检查满 24h 才后台查一次，设计 §1/§8）
+    lingxi::UpdateUiAutoCheckOnStartup();
 
     // 就绪信号：进程启动即创建未触发事件，管道服务监听后置信号。
     // e2e 等此事件替代盲等（冷启动 LLM 加载可达数秒，管道未就绪时 CTX 被丢弃）。

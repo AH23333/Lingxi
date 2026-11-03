@@ -13,6 +13,7 @@
 #include "uiinternal.h"
 #include "hotphraseui.h"
 #include "phraseui.h"
+#include "updateui.h"
 
 #include <windows.h>
 #include <windowsx.h>
@@ -123,6 +124,10 @@ constexpr int IDC_CMB_UIFONT = 131;     // 界面字体族（候选窗/浮层共
 constexpr int IDC_BTN_STATS = 132;      // 打字统计入口（词典页"词典与工具"卡）
 constexpr int IDC_CHK_FWALNUM = 133;    // 全角字母数字（搜狗 F4 对标）
 constexpr int IDC_CMB_SPSCH = 134;      // 双拼方案：0 小鹤 1 自然码 2 微软
+constexpr int IDC_EDT_UPDREPO = 140;    // 更新：仓库 owner/repo 输入框（批次 5）
+constexpr int IDC_CHK_UPDAUTO = 141;    // 更新：自动检查开关（默认关）
+constexpr int IDC_BTN_UPDCHECK = 142;   // 更新：手动检查按钮
+constexpr int IDC_BTN_UPDAPPLY = 143;   // 更新：下载并更新按钮（仅发现新版可用）
 
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
 HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
@@ -192,6 +197,7 @@ void LoadToControls()
     ComboBox_SetCurSel(g_hCmbSkin, (int)s.skinIndex);
     ComboBox_SetCurSel(g_hCmbDark, (int)s.darkMode);
     ComboBox_SetCurSel(g_hCmbUiFont, (int)(s.uiFont <= 3 ? s.uiFont : 0));
+    lingxi::UpdateUiSyncFromSettings(s);
     g_controlsLoaded = true;
     g_updating = false;
 }
@@ -235,6 +241,7 @@ void SaveFromControls()
     if (fontSel >= 0 && fontSel <= 3) s.uiFont = (uint32_t)fontSel;
     int sel = ComboBox_GetCurSel(g_hCmbDark);
     if (sel >= 0) s.darkMode = (uint32_t)sel;
+    lingxi::UpdateUiApplyToSettings(s);
     SaveSettingsDiff(s);
     if (g_hooks.settingsChanged) g_hooks.settingsChanged();
     if (g_hSettings) InvalidateRect(g_hSettings, NULL, TRUE); // 换肤等即时重绘自绘控件
@@ -667,6 +674,22 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CMB_SPSCH:
             if (HIWORD(wParam) == CBN_SELCHANGE) SaveFromControls();
             return 0;
+        case IDC_CHK_UPDAUTO: // 更新：自动检查开关（药丸同规格：翻状态→保存）
+            if (HIWORD(wParam) == BN_CLICKED)
+            {
+                SetToggle((HWND)lParam, !ToggleOn((HWND)lParam));
+                SaveFromControls();
+            }
+            return 0;
+        case IDC_EDT_UPDREPO: // 更新：仓库地址失焦即存（避免 EN_CHANGE 高频写）
+            if (HIWORD(wParam) == EN_KILLFOCUS) SaveFromControls();
+            return 0;
+        case IDC_BTN_UPDCHECK:
+            lingxi::UpdateUiOnCheckButton();
+            return 0;
+        case IDC_BTN_UPDAPPLY:
+            lingxi::UpdateUiOnApplyButton();
+            return 0;
         case IDC_BTN_USERDICT:
             CreateUserDictWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
             return 0;
@@ -890,7 +913,12 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         SaveSettingsWindowRect();
         ShowWindow(hwnd, SW_HIDE); // 关闭=隐藏，保留控件状态
         return 0;
+    case lingxi::WM_UPD_STATE: // 更新 worker 回投（updateui.cpp）
+    case lingxi::WM_UPD_PROGRESS:
+        lingxi::UpdateUiHandleMsg(hwnd, msg, wParam, lParam);
+        return 0;
     case WM_DESTROY:
+        lingxi::UpdateUiShutdown(); // 置取消并短等 worker，防悬挂线程访问已毁窗口
         SaveSettingsWindowRect(); // 进程退出兜底（隐藏路径已存则 diff 零写）
         return 0;
     }
@@ -1247,6 +1275,41 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_hChkAssocPick = mkToggle(IDC_CHK_ASSOCPICK);
     mkRow(L"选词联想", L"中文上屏后自动弹出联想候选，可点选或空格连续输出；其他按键即撤销",
           g_hChkAssocPick, CK_TOGGLE, 44);
+
+    // ---- 页 6：更新（批次 5；状态机/线程全在 updateui.cpp，这里只建行、交句柄、转按钮）----
+    addPage(L"更新");
+    addCard(L"检查更新");
+    {
+        lingxi::UpdateCtl uc;
+        mkRow(L"当前版本", L"", nullptr, CK_NONE, 0);
+        uc.verLab = g_pages.back().cards.back().rows.back().desc;
+        mkRow(L"上次检查", L"", nullptr, CK_NONE, 0);
+        uc.lastLab = g_pages.back().cards.back().rows.back().desc;
+        mkRow(L"状态", L"未检查", nullptr, CK_NONE, 0);
+        uc.statusLab = g_pages.back().cards.back().rows.back().desc;
+        HWND hRepo = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+            WS_CHILD | WS_TABSTOP | ES_AUTOHSCROLL, 0, 0, 10, 30, g_hSettings,
+            (HMENU)IDC_EDT_UPDREPO, (HINSTANCE)GetWindowLongPtrW(g_hSettings, GWLP_HINSTANCE), NULL);
+        mkRow(L"更新源仓库", L"GitHub 仓库 owner/repo；留空=未配置更新源（正常态，非错误）",
+              hRepo, CK_EDIT, 240);
+        uc.repoEdit = hRepo;
+        HWND hUpdAuto = mkToggle(IDC_CHK_UPDAUTO);
+        mkRow(L"自动检查", L"开启后启动时距上次检查满 24 小时才后台检查一次（默认关）",
+              hUpdAuto, CK_TOGGLE, 44);
+        uc.autoChk = hUpdAuto;
+        uc.getToggle = ToggleOn;
+        uc.setToggle = SetToggle;
+        HWND hBtn = mkBtn(L"检查更新", IDC_BTN_UPDCHECK);
+        mkRow(L"手动检查", L"读取 GitHub Releases 最新版并与本机版本比较", hBtn, CK_BUTTON, 130);
+        uc.btnCheck = hBtn;
+        hBtn = mkBtn(L"下载并更新", IDC_BTN_UPDAPPLY);
+        mkRow(L"一键更新", L"下载→SHA256 校验→暂存→一次 UAC 提权替换；生效需重启宿主或注销",
+              hBtn, CK_BUTTON, 130);
+        EnableWindow(hBtn, FALSE); // 仅"发现新版"状态可用（updateui 统一管控）
+        uc.btnApply = hBtn;
+        uc.ownerWnd = g_hSettings;
+        lingxi::UpdateUiAttach(uc);
+    }
 
     EnumChildWindows(g_hSettings, [](HWND h, LPARAM lp) -> BOOL {
         SendMessageW(h, WM_SETFONT, (WPARAM)lp, TRUE);

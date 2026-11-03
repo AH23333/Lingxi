@@ -1,6 +1,6 @@
 # 检查更新 + 一键自助更新 —— 设计文档
 
-日期：2026-11-03 ｜ 状态：批次 1-4 已落地（检查/下载校验解压/替换自验回滚完成），实现批次见 §10 台账
+日期：2026-11-03 ｜ 状态：批次 1-5 已落地（检查/下载校验解压/替换自验回滚/UI 接线完成），实现批次见 §10 台账
 
 ## 0. 目标与非目标
 
@@ -162,7 +162,7 @@ TSF 的 DLL 由宿主进程（explorer、微信、编辑器、各 WebView2 宿�
 | 2 | `common/update*.h/.cpp`：GitHub API 客户端 + 版本比较 + 资产选择 + 状态机 + 单测 | 已完成（update_test 69/0；工装抓到并修掉 ParseSemVer 4 段越界写） |
 | 3 | 下载/校验/解压（zip-slip、上限、可取消）+ 单测 | 已完成（update_test 114/0；§2 契约修订：允许相对子目录） |
 | 4 | 替换/自验/回滚（rename-aside、双位替换、UAC 一次性提权）+ 集成测试 | 已完成（update_test 163/0；假 bin 树全流程含 5 类回滚路径；工装发现并修掉同秒重跑 `.prev-<ts>` 撞名破坏幂等的缺陷——快照名加序号） |
-| 5 | 设置页 UI 接线 + 自动检查 | 未开始 |
+| 5 | 设置页 UI 接线 + 自动检查 | 已完成（`ui/updateui.h/.cpp` 新文件承载全部逻辑；共享文件最小追加：settings 三键 `UpdateRepo/UpdateAutoCheck/UpdateLastCheck`、settingsui 页6"更新"卡 + 四控件接线、main.cpp `--update-apply` 提权侧分支 + 空闲自动检查、LingxiUI.vcxproj 编译项与 winhttp/bcrypt；构建产物隔离 `bin\work\ui\` 零污染 bin\Debug（时间戳独立复核）；update_test 重建 163/0、engine_test 333/1（唯一失败为并行会话 CPU 争抢的延迟假红）） |
 | 6 | 端到端演练脚本（本地假服务） | 未开始 |
 
 ## 11. 硬约束备忘（实现时逐条对照）

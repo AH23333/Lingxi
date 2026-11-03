@@ -47,7 +47,7 @@
     </ClCompile>
     <Link>
       <SubSystem>Windows</SubSystem>
-      <AdditionalDependencies>user32.lib;gdi32.lib;advapi32.lib;ole32.lib;uuid.lib;shell32.lib;kernel32.lib;imm32.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalDependencies>user32.lib;gdi32.lib;advapi32.lib;ole32.lib;uuid.lib;shell32.lib;kernel32.lib;imm32.lib;winhttp.lib;bcrypt.lib;%(AdditionalDependencies)</AdditionalDependencies>
     </Link>
     <Manifest>
       <AdditionalManifestFiles>app.manifest</AdditionalManifestFiles>
@@ -79,6 +79,10 @@
     <ClCompile Include="clipboardui.cpp" />
     <ClCompile Include="symbolpanel.cpp" />
     <ClCompile Include="symsearch.cpp" />
+    <ClCompile Include="updateui.cpp" />
+    <ClCompile Include="..\common\update.cpp" />
+    <ClCompile Include="..\common\update_fetch.cpp" />
+    <ClCompile Include="..\common\update_apply.cpp" />
     <ClCompile Include="engine\ngram.cpp" />
     <ClCompile Include="engine\llm.cpp" />
     <ClCompile Include="engine\pinyin.cpp" />

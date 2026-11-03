@@ -30,6 +30,10 @@ namespace updater {
 bool ValidateStagingPath(const std::wstring& stagingDir, const std::wstring& binWorkRoot,
                          SemVer* ver, std::wstring* err);
 
+// 由本进程模块路径推导：<bin>\<任意子目录>\<exe> → binRoot=<bin>、workRoot=<bin>\work。
+// UI 侧（批次 5 下载/暂存）与提权侧（--update-apply）必须同口径，防止两侧算出不同根。
+bool ComputeBinRootsFromModule(std::wstring* binRoot, std::wstring* workRoot);
+
 // ===== 替换计划（纯函数，可单测）=====
 struct FileOp {
     std::wstring rel; // 相对子树路径（正斜杠已归一反斜杠）

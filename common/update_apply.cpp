@@ -151,6 +151,21 @@ static std::wstring SysDir()
 }
 
 // ---------- staging 路径校验（T10）----------
+bool ComputeBinRootsFromModule(std::wstring* binRoot, std::wstring* workRoot)
+{
+    wchar_t buf[MAX_PATH * 2] = {};
+    if (GetModuleFileNameW(NULL, buf, (DWORD)ARRAYSIZE(buf)) == 0) return false;
+    std::wstring p = buf;
+    size_t s1 = p.find_last_of(L'\\'); // 去 exe 名 → <bin>\<子目录>
+    if (s1 == std::wstring::npos) return false;
+    p = p.substr(0, s1);
+    size_t s2 = p.find_last_of(L'\\'); // 去子目录（Debug/Debug32/任意）→ <bin>
+    if (s2 == std::wstring::npos || s2 == 0) return false;
+    *binRoot = p.substr(0, s2);
+    *workRoot = *binRoot + L"\\work";
+    return true;
+}
+
 bool ValidateStagingPath(const std::wstring& stagingDir, const std::wstring& binWorkRoot,
                          SemVer* ver, std::wstring* err)
 {
