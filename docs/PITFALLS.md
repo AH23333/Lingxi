@@ -563,3 +563,9 @@
 - **规约**：**凡拿 Sleep 做有界等待/超时，一律墙钟 deadline**——`GetTickCount64()` 起点+预算，循环内小步长 Sleep(5~10) 只为让出 CPU，绝不用"次数×Sleep(1)"推算时长。`b8d1d8d` 已把 pinyin 两处等待改墙钟（ui/engine/pinyin.cpp:390/:1620）；pipeserver Stop 的 `400×Sleep(10)` 计数等待只能按"约 4s 量级"理解，新增等待别再用计数法。
 - **关联**：审计 §7.5（H3 根治 ③）、§八-7；docs/audit-2026-11-02-bug-audit.md。
 
+### 95. 手搓 regress runner 两处环境偏差坑：LINGXI_PINYIN 空串≠0、e2e 就绪探针被"外部实例"骗 ⭐⭐（2026-11-03 run5 实测）
+- **症状**：① PowerShell 等效 runner 设 `LINGXI_PINYIN=""` 以为对齐了关拼音段——实际 e2e.cpp:1078 判据是 `pf[0]=='0'`，空串=拼音段照跑，多出的 `pinyin mode settle (zh-CN)` 属规范门禁之外的自加步骤；② run5 批内 e2e 外层 3 连败（7/9 内部尝试 `LingxiUI NOT ready`），但同窗 deep_test attempt1 40/0——就绪探针 `LingxiUI ready` 只验管道/窗口存在，taskkill 后被宿主 DLL 重生的**生产实例**（非本次 spawn 的沙盒实例）能让探针假绿/真绿错位，前台再被用户活跃窗口（实测 Zed `Zed::Window`，Electron 同族 `Chrome_WidgetWin_1` 也曾占前台）抢占时 `direct mode settle` 系统性红。
+- **根因**：runner 复刻 regress.cmd 时逐变量核对不充分；#70/#86 族（用户活跃会话的焦点/输入法全局态竞争）在用户在线时段必然抬升 settle 类断言失败率——run4 同二进制 attempt1 干净过可作对照。
+- **规约**：① 手搓 runner 的每个环境变量都要对照 regress.cmd 原文核语义（`0` 与空串在 `GetEnvironmentVariableW` 判据下完全不同）；② e2e 批内红而 deep 同窗绿=基建步竞争签名，先查前台窗口类与 LingxiUI 实例来源（StartTime/Path），再单跑复测定性，勿动产品代码；③ e2e 出现 `[WARN] user IME restore failed` 时立刻探针 `GetKeyboardLayout(前台线程)` 确认用户会话未被卡在测试 TIP 上。
+- **关联**：#70、#86、#66；docs/DEVLOG.md 1256 行留案；tmp\regress-run5-411806557\。
+
