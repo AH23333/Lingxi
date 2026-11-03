@@ -2501,6 +2501,191 @@ int wmain(int argc, wchar_t** argv)
         }
     }
 
+    // ===== CELLa. A 细胞词库：.lxcell 解析纯函数格式矩阵（设计稿 §7.1-2）=====
+    {
+        std::unordered_set<std::string> sy = { "ce", "shi", "xi", "bao", "ci",
+                                               "gang", "hao" };
+        auto fatalOf = [&](const std::string& f) -> bool {
+            return lingxi::ParseLxcell(f, sy, 200000).fatal;
+        };
+        // 合法最小包 + 第 3 列词频忽略 + 注释/空行
+        {
+            std::string f = "; 注释行\nLXCELL 1\nname=测试\nid=t1\n\n"
+                            "细胞词\txi bao ci\t100\n测诗\tce shi\n";
+            lingxi::LxcellParseResult r = lingxi::ParseLxcell(f, sy, 200000);
+            Report(!r.fatal && r.words.size() == 2 && r.skipped == 0 &&
+                       r.id == "t1" && r.name == "测试" && r.weight == 2,
+                   "CELLa-0 valid pack: 2 words, weight default 2");
+        }
+        Report(fatalOf("name=x\nid=x\n细胞词\txi bao ci\n"), "CELLa-1 missing magic -> fatal");
+        Report(fatalOf("LXCELL 2\nname=x\nid=x\n细胞词\txi bao ci\n"), "CELLa-2 version 2 -> fatal");
+        Report(fatalOf("LXCELL 1\nid=x\n细胞词\txi bao ci\n"), "CELLa-3 missing name -> fatal");
+        Report(fatalOf("LXCELL 1\nname=x\nBad_ID\t细胞词\txi bao ci\n"), "CELLa-4 bad id -> fatal");
+        Report(fatalOf("LXCELL 1\nname=x\nid=t\n细胞词\txi bao zzz\n"), "CELLa-5 bad syll -> fatal(100% skip)");
+        Report(fatalOf(std::string("LXCELL 1\nname=\xFF\xFE\nid=t\n")), "CELLa-6 non-UTF8 -> fatal");
+        // weight clamp：15→9、-3→0
+        {
+            lingxi::LxcellParseResult a = lingxi::ParseLxcell(
+                "LXCELL 1\nname=x\nid=t\nweight=15\n细胞词\txi bao ci\n", sy, 200000);
+            lingxi::LxcellParseResult b = lingxi::ParseLxcell(
+                "LXCELL 1\nname=x\nid=t\nweight=-3\n细胞词\txi bao ci\n", sy, 200000);
+            Report(!a.fatal && a.weight == 9 && !b.fatal && b.weight == 0,
+                   "CELLa-7 weight clamp 15->9, -3->0");
+        }
+        // BOM + CRLF + 跳过计数与行号（1/11 ≤10% 不整包拒）
+        {
+            std::string f = "LXCELL 1\r\nname=x\r\nid=t\r\n";
+            f += "\xEF\xBB\xBF"; // 测试 BOM 不在头部场景（BOM 只允许文件首），此处验证 CRLF 兼容
+            for (int i = 0; i < 10; i++) f += "细胞词" + std::to_string(i) + "\txi bao ci\r\n";
+            f += "坏行\txi bao zzz\r\n";
+            lingxi::LxcellParseResult r = lingxi::ParseLxcell(f, sy, 200000);
+            Report(!r.fatal && r.words.size() == 10 && r.skipped == 1 &&
+                       r.skippedLines.size() == 1 && r.skippedLines[0] == 14,
+                   "CELLa-8 CRLF ok, skip counted with line number");
+        }
+        {
+            std::string f = "\xEF\xBB\xBFLXCELL 1\nname=x\nid=t\n细胞词\txi bao ci\n";
+            lingxi::LxcellParseResult r = lingxi::ParseLxcell(f, sy, 200000);
+            Report(!r.fatal && r.words.size() == 1, "CELLa-9 BOM allowed at head");
+        }
+        // 跳过率 >10% 整包拒绝（1/9：10>9）
+        {
+            std::string f = "LXCELL 1\nname=x\nid=t\n";
+            for (int i = 0; i < 8; i++) f += "细胞词" + std::to_string(i) + "\txi bao ci\n";
+            f += "坏行\txi bao zzz\n";
+            Report(fatalOf(f), "CELLa-10 skip-rate >10% -> whole pack rejected");
+        }
+        // 单包限额边界（注入小限额）：恰好 N 收、N+1 拒
+        {
+            std::string f = "LXCELL 1\nname=x\nid=t\n";
+            for (int i = 0; i < 3; i++) f += "细胞词" + std::to_string(i) + "\txi bao ci\n";
+            lingxi::LxcellParseResult ok3 = lingxi::ParseLxcell(f, sy, 3);
+            f += "细胞词3\txi bao ci\n";
+            lingxi::LxcellParseResult r4 = lingxi::ParseLxcell(f, sy, 3);
+            Report(!ok3.fatal && ok3.words.size() == 3 && r4.fatal && r4.overLimit,
+                   "CELLa-11 per-pack limit: exactly N ok, N+1 rejected");
+        }
+        // 真实 200k/200001 边界（裁决④限额数值钉死）
+        {
+            std::string f = "LXCELL 1\nname=x\nid=t\n";
+            f.reserve((size_t)200001 * 18);
+            for (int i = 0; i < 200000; i++) f += "w" + std::to_string(i) + "\txi bao ci\n";
+            lingxi::LxcellParseResult ok = lingxi::ParseLxcell(f, sy, 200000);
+            f += "w200000\txi bao ci\n";
+            lingxi::LxcellParseResult rej = lingxi::ParseLxcell(f, sy, 200000);
+            Report(!ok.fatal && ok.words.size() == 200000 && rej.fatal && rej.overLimit,
+                   "CELLa-12 real 200k boundary: accept 200000, reject 200001");
+        }
+    }
+
+    // ===== CELLb. A 细胞词库：引擎并入/启停/独立配额/无目录 no-op =====
+    {
+        std::wstring cellDir = ExeDir() + L"\\userdata\\LingxiIme\\cell";
+        CreateDirectoryW((ExeDir() + L"\\userdata\\LingxiIme").c_str(), NULL);
+        CreateDirectoryW(cellDir.c_str(), NULL);
+        auto writeCell = [&](const std::wstring& name, const std::string& content) -> bool {
+            HANDLE h = CreateFileW((cellDir + L"\\" + name).c_str(), GENERIC_WRITE, 0, NULL,
+                                   CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (h == INVALID_HANDLE_VALUE) return false;
+            DWORD w = 0;
+            BOOL ok = WriteFile(h, content.data(), (DWORD)content.size(), &w, NULL);
+            CloseHandle(h);
+            return ok && w == (DWORD)content.size();
+        };
+        auto has = [](const lingxi::Prediction& p, const wchar_t* word) -> int {
+            for (size_t i = 0; i < p.cands.size(); i++)
+                if (p.cands[i] == word) return (int)i;
+            return -1;
+        };
+        bool okA = writeCell(L"celtest.lxcell",
+                             "LXCELL 1\nname=测试包\nid=celtest\n"
+                             "细胞词\txi bao ci\n测诗\tce shi\n");
+        lingxi::IPredictor* py = okA ? lingxi::CreatePinyinPredictor() : nullptr;
+        bool merged = false, ordered = false;
+        if (py)
+        {
+            lingxi::Prediction p1 = py->Predict(L"xibaoci");
+            merged = has(p1, L"细胞词") >= 0;
+            lingxi::Prediction p2 = py->Predict(L"ceshi");
+            int iCell = has(p2, L"测诗"), iBase = has(p2, L"测试");
+            ordered = iCell >= 0 && iBase >= 0 && iBase < iCell; // 段起点在基础库后
+        }
+        Report(okA && merged && ordered, "CELLb-1 pack merged, base ranks first on same key");
+
+        // 停用→启用：settings 变更即 Predict 入口重建（裁决⑤线程模型）
+        bool off = false, on = false;
+        if (py)
+        {
+            lingxi::Settings st = lingxi::LoadSettings();
+            st.cellDisabled = L"celtest";
+            lingxi::SaveSettings(st);
+            off = has(py->Predict(L"xibaoci"), L"细胞词") < 0;
+            st = lingxi::LoadSettings();
+            st.cellDisabled = L"";
+            lingxi::SaveSettings(st);
+            on = has(py->Predict(L"xibaoci"), L"细胞词") >= 0;
+        }
+        Report(py && off && on, "CELLb-2 disable via Cell.disabled, re-enable restores");
+
+        // 装包重扫：新文件不经重启，ReloadCellPacks→下一 Predict 生效
+        bool before = true, after = false;
+        if (py)
+        {
+            bool okB = writeCell(L"cel2.lxcell",
+                                 "LXCELL 1\nname=二号包\nid=cel2\n钢耗\tgang hao\n");
+            before = has(py->Predict(L"ganghao"), L"钢耗") < 0; // 未重扫不可见
+            if (okB)
+            {
+                py->ReloadCellPacks();
+                after = has(py->Predict(L"ganghao"), L"钢耗") >= 0;
+            }
+        }
+        Report(py && before && after, "CELLb-3 ReloadCellPacks rescans new pack file");
+
+        // 独立配额：细胞词条绝不进 userdict.txt（裁决①）
+        bool udClean = false;
+        if (py)
+        {
+            py->ClearUserDict();
+            py->FlushUserDict();
+            std::wstring ud = ExeDir() + L"\\userdata\\LingxiIme\\userdict.txt";
+            HANDLE h = CreateFileW(ud.c_str(), GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+            std::string s;
+            if (h != INVALID_HANDLE_VALUE)
+            {
+                DWORD sz = GetFileSize(h, NULL), got = 0;
+                if (sz && sz != INVALID_FILE_SIZE)
+                {
+                    s.resize(sz);
+                    if (!ReadFile(h, &s[0], sz, &got, NULL)) s.clear(); else s.resize(got);
+                }
+                CloseHandle(h);
+            }
+            else { s = ""; } // 空文件=无词条，同样视为干净
+            udClean = s.find("\xe7\xbb\x86\xe8\x83\x9e\xe8\xaf\x8d") == std::string::npos &&
+                      s.find("\xe6\xb5\x8b\xe8\xaf\x97") == std::string::npos;
+        }
+        Report(py && udClean, "CELLb-4 quota isolation: cell words never in userdict.txt");
+        if (py) delete py;
+
+        // 无 cell 目录 = 严格 no-op：引擎不建目录、既有行为不变（§3.1 兼容项）
+        DeleteFileW((cellDir + L"\\celtest.lxcell").c_str());
+        DeleteFileW((cellDir + L"\\cel2.lxcell").c_str());
+        RemoveDirectoryW(cellDir.c_str());
+        bool noop = false;
+        {
+            lingxi::IPredictor* q = lingxi::CreatePinyinPredictor();
+            bool ok = q && !q->Predict(L"jintian").cands.empty();
+            DWORD a = GetFileAttributesW(cellDir.c_str());
+            noop = ok && (a == INVALID_FILE_ATTRIBUTES ||
+                          !(a & FILE_ATTRIBUTE_DIRECTORY)); // 目录未被引擎创建
+            if (q) delete q;
+        }
+        Report(noop, "CELLb-5 no cell dir: strict no-op, dir not created by engine");
+    }
+
     // ===== C2. 管道帧层：往返/半帧+对端消失/写向已消失对端/超时取消(H1路径) =====
     // 断言面：坏端点必须"有界返回 false"，不许挂死；H1 取消路径等取消落定后
     // 栈上 OVERLAPPED 才析构——本进程后续用例继续跑即栈未坏的行为证据。

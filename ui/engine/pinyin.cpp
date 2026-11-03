@@ -460,6 +460,14 @@ public:
             _fuzzyGroups = st.fuzzyGroups;
             BuildFuzzyIndex();
         }
+        // A 细胞词库：停用表变更或装/删包请求 → 在预测线程原地重建
+        // （裁决⑤红线：_entries/索引仅本线程可动；重建含磁盘扫包，低频，
+        // 变更后的首个 Predict 变慢属预期——之后即恢复正常延迟）。
+        if (_cellRescanPending.exchange(false) || st.cellDisabled != _cellDisabledApplied)
+        {
+            _cellDisabledApplied = st.cellDisabled;
+            RebuildCellPacks();
+        }
         // U 模式拆字（GAP §1）：'u'+部件读音 → 不会读的字。确定性表查，拦截
         // 在拼音词典处理前；表无前缀命中落回正常拼音（B3 零声母简写兜底保活）。
         // 双拼下 'u' 是键位不接管；cover=整串消耗，Learn 侧拒收 IsRadicalQuery 键。
@@ -797,6 +805,136 @@ private:
     std::unordered_map<uint32_t, uint32_t> _st2t;
 
     // -----------------------------------------------------------------------
+    // A 细胞词库（design-cell-dict-2026-11-03 裁决①④⑤）：独立配额——词条
+    // 绝不进 _userDict、不占 20000 封顶、不进淘汰池；并入 _entries 尾部、
+    // 每包连续 rank 段（段起点按 id 字典序），复用同键 rank 升序排序。
+    // 红线：_entries/五套索引无锁，仅预测线程可动——ReloadCellPacks 只置原子
+    // 标志，重建在 Predict 入口（照 fuzzyGroups 变更重建先例 L457-461）。
+    // -----------------------------------------------------------------------
+    static constexpr size_t kMaxCellPackEntries = 200000;  // 单包词条上限（裁决④）
+    static constexpr size_t kMaxCellTotalEntries = 500000; // 启用合计上限（裁决④）
+    struct CellPack { std::string id, name; int weight = 2; size_t segStart = 0, segCount = 0; };
+    std::vector<CellPack> _cellPacks;      // 预测线程私有（与 _entries 同生命周期域）
+    size_t _baseEntryCount = 0;            // 基础词库词条数（细胞段截断锚点）
+    std::wstring _cellDisabledApplied;     // 已生效的 Cell.disabled 原文（变更即重建）
+    std::atomic<bool> _cellRescanPending{ false }; // ReloadCellPacks 跨线程请求
+    std::unordered_set<std::string> _cellSeenIds;  // 同 id 多文件去重（保留先加载者）
+
+    // %APPDATA%\LingxiIme\cell（与 userdict 同根，不进 exe\data 避开升级覆盖）。
+    // 只读定位：加载路径绝不建目录（无目录=严格 no-op，既有重载用例零影响）。
+    static std::string CellDir()
+    {
+        char buf[MAX_PATH] = {};
+        DWORD n = GetEnvironmentVariableA("APPDATA", buf, MAX_PATH);
+        if (n > 0 && n < MAX_PATH) return std::string(buf) + "\\LingxiIme\\cell";
+        return ExeDir() + "\\cell";
+    }
+
+    // 扫目录→解析→按 id 字典序并入 _entries 尾部（调用方保证 _entries 已截回
+    // 基础段、_syllables 已就绪）。停用表来自 _cellDisabledApplied。
+    void LoadCellPacks()
+    {
+        _cellPacks.clear();
+        _cellSeenIds.clear();
+        _entries.resize(_baseEntryCount);
+
+        std::string dir = CellDir();
+        WIN32_FIND_DATAA fd{};
+        HANDLE h = FindFirstFileA((dir + "\\*.lxcell").c_str(), &fd);
+        if (h == INVALID_HANDLE_VALUE) return; // 目录不存在/无包：严格 no-op
+        std::vector<std::string> files;
+        do
+        {
+            if (!(fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY))
+                files.push_back(fd.cFileName);
+        } while (FindNextFileA(h, &fd));
+        FindClose(h);
+
+        std::unordered_set<std::string> disabled;
+        {
+            std::string u8 = ToUtf8(_cellDisabledApplied);
+            size_t pos = 0;
+            while (pos <= u8.size())
+            {
+                size_t c = u8.find(',', pos);
+                std::string seg = u8.substr(pos, c == std::string::npos ? c : c - pos);
+                // trim 空白并小写化比较（id 格式本身即小写）
+                while (!seg.empty() && (seg.front() == ' ' || seg.front() == '\t')) seg.erase(seg.begin());
+                while (!seg.empty() && (seg.back() == ' ' || seg.back() == '\t')) seg.pop_back();
+                for (auto& ch : seg) ch = Lower(ch);
+                if (!seg.empty()) disabled.insert(seg);
+                if (c == std::string::npos) break;
+                pos = c + 1;
+            }
+        }
+
+        struct Parsed { LxcellParseResult r; };
+        std::vector<Parsed> packs;
+        for (const auto& f : files)
+        {
+            std::string raw = ReadAll(dir + "\\" + f);
+            if (raw.empty()) continue;
+            LxcellParseResult r = ParseLxcell(raw, _syllables, kMaxCellPackEntries);
+            if (r.fatal)
+            {
+                std::wstring m = L"词库包拒绝: " + FromUtf8(f) + L" - " + r.reason;
+                LX_LOG(L"cell", L"%s", m.c_str()); // reason 含 % 字符，必须走 %s 参数
+                continue;
+            }
+            if (disabled.count(r.id)) continue; // 停用：整包跳过
+            if (_cellSeenIds.count(r.id))       // 同 id 多文件：先到者胜（id 字典序稳定）
+            {
+                LX_LOG(L"cell", L"重复 id 忽略: %s", FromUtf8(r.id).c_str());
+                continue;
+            }
+            _cellSeenIds.insert(r.id);
+            packs.push_back({ std::move(r) });
+        }
+        std::sort(packs.begin(), packs.end(),
+                  [](const Parsed& a, const Parsed& b) { return a.r.id < b.r.id; });
+
+        size_t total = 0;
+        for (auto& pp : packs)
+        {
+            if (total + pp.r.words.size() > kMaxCellTotalEntries)
+            {
+                LX_LOG(L"cell", L"启用合计超 500000 行限额，跳过后续包");
+                break;
+            }
+            CellPack cp;
+            cp.id = pp.r.id;
+            cp.name = pp.r.name;
+            cp.weight = pp.r.weight;
+            cp.segStart = _entries.size();
+            for (auto& w : pp.r.words)
+            {
+                PyEntry e;
+                e.word = w.word;
+                e.rank = (int)_entries.size();
+                e.sylls.reserve(w.sylls.size());
+                for (const auto& s : w.sylls) e.sylls.push_back(InternSyll(s));
+                _entries.push_back(std::move(e));
+            }
+            cp.segCount = _entries.size() - cp.segStart;
+            total += cp.segCount;
+            _cellPacks.push_back(std::move(cp));
+        }
+    }
+
+    // 预测线程重建：截回基础段→清五套索引→重扫并入→全量重建索引。
+    // _syllables/_fuzzyOf 不动（细胞音节已校验为音节表子集，集合不变）。
+    void RebuildCellPacks()
+    {
+        _byCompact.clear();
+        _byPattern.clear();
+        _byFirstSyll.clear();
+        _byFirstInit.clear();
+        _charBySyll.clear();
+        LoadCellPacks();
+        BuildIndexes();
+    }
+
+    // -----------------------------------------------------------------------
     // 加载
     // -----------------------------------------------------------------------
     void Load()
@@ -826,9 +964,18 @@ private:
             for (const auto& s : sylls) e.sylls.push_back(InternSyll(s));
             _entries.push_back(std::move(e));
         }
+        _baseEntryCount = _entries.size();
+
+        // 细胞词库：音节表须先就绪（词条校验用），并入须在索引构建前（一次建全）。
+        // 无 cell 目录时 LoadCellPacks 严格 no-op → 与历史逐字节一致（§3.1 兼容项）。
+        BuildSyllableSet();
+        {
+            Settings st = LoadSettings();
+            _cellDisabledApplied = st.cellDisabled;
+        }
+        LoadCellPacks();
 
         BuildIndexes();
-        BuildSyllableSet();
         BuildFuzzyIndex();
         LoadUserDict();
         LoadTraditionalMap();
@@ -1677,6 +1824,14 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     // 管理界面清空/导入后重新加载用户词典，立即生效。先等在途落盘收敛再读
     // 文件：否则后台旧快照回写后重载，会把引擎内存整体回退到旧文件内容。
     void ReloadUserDict() override { FlushUserDict(); LoadUserDict(); }
+    // A 细胞词库：只置原子标志（任何线程可调，安全）；真正重建在 Predict 入口。
+    void ReloadCellPacks() override { _cellRescanPending.store(true); }
+    // 音节表快照（导入适配层后台校验用；_syllables 构造后只读，拷贝安全）。
+    bool GetSyllableSet(std::vector<std::string>& out) const override
+    {
+        out.assign(_syllables.begin(), _syllables.end());
+        return true;
+    }
 
     // ---- 用户词典管理操作（2026-11-01"删除词条复活"根治）----
     // 旧模型：UI 直接改 userdict.txt + ReloadUserDict，与后台落盘竞态——
@@ -2522,6 +2677,226 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
 };
 
 } // namespace
+
+// ---------------------------------------------------------------------------
+// A1 .lxcell 词库包解析（纯函数，接口声明见 predictor.h；自含助手，不依赖类）
+// ---------------------------------------------------------------------------
+namespace {
+
+std::vector<std::string> LxSplit(const std::string& s, char sep)
+{
+    std::vector<std::string> out;
+    size_t pos = 0;
+    while (pos <= s.size())
+    {
+        size_t f = s.find(sep, pos);
+        if (f == std::string::npos) { out.push_back(s.substr(pos)); break; }
+        out.push_back(s.substr(pos, f - pos));
+        pos = f + 1;
+    }
+    return out;
+}
+
+char LxLower(char c) { return c >= 'A' && c <= 'Z' ? char(c + 32) : c; }
+
+std::wstring LxToW(const std::string& s)
+{
+    if (s.empty()) return {};
+    int n = MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), NULL, 0);
+    std::wstring w(n, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.c_str(), (int)s.size(), w.data(), n);
+    return w;
+}
+
+// 严格 UTF-8 校验（设计稿 §5：词库包是外来文件，解码失败整包拒绝、不做逐字节
+// 容错）：拒延续字节开头/截断序列/过长式（overlong）/代理区码点/越出 U+10FFFF。
+bool LxValidUtf8(const std::string& s)
+{
+    for (size_t i = 0; i < s.size();)
+    {
+        unsigned char c = (unsigned char)s[i];
+        int len;
+        if (c < 0x80) len = 1;
+        else if (c >= 0xC2 && c <= 0xDF) len = 2;
+        else if (c >= 0xE0 && c <= 0xEF) len = 3;
+        else if (c >= 0xF0 && c <= 0xF4) len = 4;
+        else return false;
+        if (i + (size_t)len > s.size()) return false;
+        for (int k = 1; k < len; k++)
+            if (((unsigned char)s[i + k] & 0xC0) != 0x80) return false;
+        if (len == 3)
+        {
+            uint32_t cp = ((uint32_t)(c & 0x0F) << 12) |
+                          ((uint32_t)((unsigned char)s[i + 1] & 0x3F) << 6) |
+                          (uint32_t)((unsigned char)s[i + 2] & 0x3F);
+            if (cp < 0x800) return false;               // overlong
+            if (cp >= 0xD800 && cp <= 0xDFFF) return false; // 代理区
+        }
+        if (len == 4)
+        {
+            uint32_t cp = ((uint32_t)(c & 0x07) << 18) |
+                          ((uint32_t)((unsigned char)s[i + 1] & 0x3F) << 12) |
+                          ((uint32_t)((unsigned char)s[i + 2] & 0x3F) << 6) |
+                          (uint32_t)((unsigned char)s[i + 3] & 0x3F);
+            if (cp < 0x10000 || cp > 0x10FFFF) return false;
+        }
+        i += (size_t)len;
+    }
+    return true;
+}
+
+} // namespace
+
+LxcellParseResult ParseLxcell(const std::string& raw,
+                              const std::unordered_set<std::string>& validSylls,
+                              size_t maxEntries)
+{
+    LxcellParseResult r;
+    if (!LxValidUtf8(raw))
+    {
+        r.fatal = true;
+        r.reason = L"非 UTF-8 编码，整包拒绝";
+        return r;
+    }
+    std::string body = raw;
+    if (body.size() >= 3 && (unsigned char)body[0] == 0xEF &&
+        (unsigned char)body[1] == 0xBB && (unsigned char)body[2] == 0xBF)
+        body = body.substr(3); // BOM 允许（§3.1）
+
+    std::vector<std::string> lines = LxSplit(body, '\n');
+    size_t i = 0;
+    for (; i < lines.size(); i++)
+    {
+        std::string& l = lines[i];
+        if (!l.empty() && l.back() == '\r') l.pop_back();
+        if (!l.empty() && l[0] != ';') break; // 首个非注释行必须是魔数
+    }
+    if (i >= lines.size() || LxSplit(lines[i], ' ')[0] != "LXCELL")
+    {
+        r.fatal = true;
+        r.reason = L"缺少 LXCELL 魔数头";
+        return r;
+    }
+    std::vector<std::string> mh = LxSplit(lines[i], ' ');
+    if (mh.size() < 2 || mh[1] != "1")
+    {
+        r.fatal = true;
+        r.reason = L"格式版本不支持（读到 " + (mh.size() >= 2 ? LxToW(mh[1]) : L"无") +
+                   L"，支持 1）";
+        return r;
+    }
+    i++;
+
+    bool gotName = false, gotId = false, inHeader = true;
+    for (; i < lines.size(); i++)
+    {
+        std::string l = lines[i];
+        if (!l.empty() && l.back() == '\r') l.pop_back();
+        if (l.empty() || l[0] == ';') continue;
+        size_t lineNo = i + 1; // 1 起，按原始行计
+
+        if (inHeader)
+        {
+            if (l.rfind("name=", 0) == 0) { r.name = l.substr(5); gotName = true; continue; }
+            if (l.rfind("id=", 0) == 0) { r.id = l.substr(3); gotId = true; continue; }
+            if (l.rfind("weight=", 0) == 0)
+            {
+                std::string w = l.substr(7);
+                if (w.empty() || w.size() > 18)
+                {
+                    r.fatal = true;
+                    r.reason = L"weight 非法（第 " + std::to_wstring(lineNo) + L" 行）";
+                    return r;
+                }
+                bool neg = (w[0] == '-');
+                size_t d0 = neg ? 1 : 0;
+                if (d0 >= w.size())
+                {
+                    r.fatal = true;
+                    r.reason = L"weight 非法（第 " + std::to_wstring(lineNo) + L" 行）";
+                    return r;
+                }
+                for (size_t k = d0; k < w.size(); k++)
+                    if (w[k] < '0' || w[k] > '9')
+                    {
+                        r.fatal = true;
+                        r.reason = L"weight 非法（第 " + std::to_wstring(lineNo) + L" 行）";
+                        return r;
+                    }
+                int v = atoi(w.c_str());
+                if (v < 0) v = 0;
+                if (v > 9) v = 9; // 越界 clamp（§7.1）
+                r.weight = v;
+                continue;
+            }
+            inHeader = false; // 首个非头行起进入词条区
+        }
+
+        // 词条行：词\t音节1 音节2 [\t词频(忽略)]
+        size_t tab = l.find('\t');
+        bool bad = (tab == std::string::npos || tab == 0);
+        std::vector<std::string> norm;
+        if (!bad)
+        {
+            std::string word = l.substr(0, tab);
+            std::string rest = l.substr(tab + 1);
+            size_t tab2 = rest.find('\t');
+            if (tab2 != std::string::npos) rest = rest.substr(0, tab2); // 第3列忽略
+            bad = word.empty() || rest.empty();
+            if (!bad)
+            {
+                for (const auto& sy : LxSplit(rest, ' '))
+                {
+                    if (sy.empty()) { bad = true; break; }
+                    std::string ns;
+                    ns.reserve(sy.size());
+                    for (char ch : sy) ns.push_back(LxLower(ch));
+                    if (!validSylls.count(ns)) { bad = true; break; }
+                    norm.push_back(std::move(ns));
+                }
+            }
+            if (!bad)
+            {
+                if (maxEntries > 0 && r.words.size() >= maxEntries)
+                {
+                    r.fatal = true;
+                    r.overLimit = true;
+                    r.reason = L"超过单包词条上限（" + std::to_wstring(maxEntries) + L"）";
+                    return r;
+                }
+                LxcellWord w;
+                w.word = LxToW(word);
+                w.sylls = std::move(norm);
+                r.words.push_back(std::move(w));
+            }
+        }
+        if (bad)
+        {
+            r.skipped++;
+            if (r.skippedLines.size() < 5) r.skippedLines.push_back(lineNo);
+        }
+    }
+
+    if (!gotName) { r.fatal = true; r.reason = L"缺少 name= 头"; return r; }
+    if (!gotId || r.id.empty()) { r.fatal = true; r.reason = L"缺少 id= 头"; return r; }
+    for (char ch : r.id)
+        if (!((ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') || ch == '-'))
+        {
+            r.fatal = true;
+            r.reason = L"id 非法（仅小写字母/数字/-）：" + LxToW(r.id);
+            return r;
+        }
+    // 跳过率 >10% 整包拒绝（§5；0 词条 0 跳过=合法空包）
+    size_t entryLines = r.words.size() + r.skipped;
+    if (entryLines > 0 && r.skipped * 10 > entryLines)
+    {
+        r.fatal = true;
+        r.reason = L"跳过率超过 10%（" + std::to_wstring(r.skipped) + L"/" +
+                   std::to_wstring(entryLines) + L"）";
+        return r;
+    }
+    return r;
+}
 
 IPredictor* CreatePinyinPredictor()
 {

@@ -4,6 +4,7 @@
 // 引擎在 LingxiUI.exe 进程内运行，绝不接触宿主应用内存。
 //
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 namespace lingxi {
@@ -56,7 +57,46 @@ public:
     virtual bool AddUserWord(const std::wstring& /*word*/, const std::wstring& /*key*/, int /*gain*/) { return false; }
     virtual bool NudgeUserWord(const std::wstring& /*word*/, const std::wstring& /*key*/, int /*delta*/) { return false; }
     virtual bool MergeUserDict(const std::vector<UserDictEntry>& /*entries*/) { return false; }
+    // A 细胞词库（设计稿 design-cell-dict-2026-11-03）：装包/删包后请求重扫
+    // %APPDATA%\LingxiIme\cell\（裁决⑤红线：本方法只置原子标志，真正的
+    // _entries/索引重建发生在预测线程 Predict 入口——与模糊音组变更同先例，
+    // 工作线程/UI 线程严禁直接触碰 _entries）。默认空实现（非拼音引擎无所谓）。
+    virtual void ReloadCellPacks() {}
+    // 音节表快照拷贝（导入适配层用：后台线程校验 .lxcell 词条合法性）。
+    // _syllables 构造后只读，任意线程取副本安全。默认 false=不支持。
+    virtual bool GetSyllableSet(std::vector<std::string>& /*out*/) const { return false; }
 };
+
+// ---------------------------------------------------------------------------
+// A1 .lxcell 词库包解析（纯函数，实现于 pinyin.cpp，engine_test 直接单测）
+// 格式（设计稿 §3.1）：首行魔数 "LXCELL 1"；头区 name=/id=/weight=（id 必填，
+// 仅小写字母数字-；weight 可选 0..9 越界 clamp，缺省 2；';' 开头为注释行）；
+// 词条区每行 "词\t音节1 音节2"（可带第 3 列词频，忽略）。UTF-8（允许 BOM），
+// CRLF/LF 均可。非法 UTF-8/缺魔数/版本≠1/缺 name|id/id 非法/weight 非数字
+// → fatal 整包拒绝；单行词条非法（音节不在 validSylls/列数错）→ 跳过计数，
+// 跳过率 >10% fatal；接受词条数超 maxEntries → fatal（单包限额，裁决④）。
+// ---------------------------------------------------------------------------
+struct LxcellWord
+{
+    std::wstring word;
+    std::vector<std::string> sylls; // 小写规范音节
+};
+
+struct LxcellParseResult
+{
+    bool fatal = false;
+    std::wstring reason;                 // fatal 时的人读原因（UI 直接展示）
+    std::string id, name;
+    int weight = 2;
+    std::vector<LxcellWord> words;
+    size_t skipped = 0;                  // 非法词条行数
+    std::vector<size_t> skippedLines;    // 前 5 条行号（1 起，含头区后行）
+    bool overLimit = false;              // 超单包限额（fatal 的一种）
+};
+
+LxcellParseResult ParseLxcell(const std::string& raw,
+                              const std::unordered_set<std::string>& validSylls,
+                              size_t maxEntries);
 
 // 词表引擎（永远可用）
 IPredictor* CreateDefaultPredictor();

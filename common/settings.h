@@ -61,6 +61,8 @@ struct Settings
                                      // 非法值 clamp 回 0（照 CandidateCount clamp 先例）
     uint32_t decayEnabled = 1;       // B 词频衰减开关：0=score 恒等于 count（行为与
                                      // 衰减引入前一致），1=启用（裁决 2026-11-03①）
+    std::wstring cellDisabled;       // A 细胞词库停用表（设计稿 §3.2）：逗号分隔包 id，
+                                     // 缺省空=全部启用。启用表只存停用项（安装即生效）。
     uint32_t decayHalfLifeDays = 60; // B 半衰期天数（clamp [7,365]，缺省 60）：
                                      // score = count × 2^(−age/H)，查询时计算，
                                      // 原始 count 永不改写

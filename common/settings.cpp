@@ -231,6 +231,7 @@ Settings LoadSettings()
     if (GetDword(hKey, L"CandidatePinned", v)) s.candidatePinned = (v != 0 ? 1u : 0u);
     if (GetDword(hKey, L"CandidatePinX", v)) s.candidatePinX = (int)v; // 负值经 DWORD 往返
     if (GetDword(hKey, L"CandidatePinY", v)) s.candidatePinY = (int)v;
+    GetString(hKey, L"CellDisabled", s.cellDisabled); // A 细胞词库停用表；缺键=空=全启用
     GetString(hKey, L"RecentSymbols", s.recentSymbols); // 缺键=空（"最近"页空态）
     GetString(hKey, L"FavoriteSymbols", s.favoriteSymbols); // 缺键=空（"收藏"页空态）
     if (GetDword(hKey, L"DailyCharGoal", v) && v <= 100000) s.dailyCharGoal = v;
@@ -308,6 +309,7 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"CandidatePinned", s.candidatePinned);
     SetDword(hKey, L"CandidatePinX", (DWORD)(uint32_t)s.candidatePinX);
     SetDword(hKey, L"CandidatePinY", (DWORD)(uint32_t)s.candidatePinY);
+    SetString(hKey, L"CellDisabled", s.cellDisabled);
     SetString(hKey, L"RecentSymbols", s.recentSymbols);
     SetString(hKey, L"FavoriteSymbols", s.favoriteSymbols);
     SetDword(hKey, L"DailyCharGoal", s.dailyCharGoal);
@@ -378,6 +380,7 @@ void SaveSettingsDiff(const Settings& s)
     PutDwordDiff(hKey, L"CandidatePinned", s.candidatePinned);
     PutDwordDiff(hKey, L"CandidatePinX", (DWORD)(uint32_t)s.candidatePinX);
     PutDwordDiff(hKey, L"CandidatePinY", (DWORD)(uint32_t)s.candidatePinY);
+    PutStringDiff(hKey, L"CellDisabled", s.cellDisabled);
     PutStringDiff(hKey, L"RecentSymbols", s.recentSymbols);
     PutStringDiff(hKey, L"FavoriteSymbols", s.favoriteSymbols);
     PutDwordDiff(hKey, L"DailyCharGoal", s.dailyCharGoal);
