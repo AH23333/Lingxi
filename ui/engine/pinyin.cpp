@@ -84,7 +84,8 @@ bool CorrectSyllableTypo(const std::string& s, std::string& out)
 }
 
 // ---------------------------------------------------------------------------
-// R3 日期时间直出（GAP-VS-MSFT §8 R3）：整串触发 rq/sj/xq/rqsj（NormalizeIn
+// R3 日期时间直出（GAP-VS-MSFT §8 R3）：整串触发 rq/sj/xq/rqsj + Tier1-5
+// mt/ht/nl + 批4 yt（NormalizeIn
 // 口径，双拼转换前计算——双拼键序 rq/sj 本无解，触发是纯增益）。候选按
 // 本地时间实时生成注入置顶；数字为主，年/月/日/星期 简繁同形，走通用
 // 繁化链无害。学习/Boost 均不作用于注入候选（确定性便民，不参与调频）。
@@ -238,24 +239,27 @@ std::vector<std::wstring> BuildDateTimeCands(const std::string& in)
         out.push_back(b);
         _snwprintf_s(b, _TRUNCATE, L"%u/%02u/%02u", st.wYear, st.wMonth, st.wDay);
         out.push_back(b);
+        _snwprintf_s(b, _TRUNCATE, L"%u.%02u.%02u", st.wYear, st.wMonth, st.wDay);
+        out.push_back(b); // 批4 点分：合同/落款常用 2026.11.03
         _snwprintf_s(b, _TRUNCATE, L"%u年%u月%u日", st.wYear, st.wMonth, st.wDay);
         out.push_back(b); // 无补零：2026年5月3日（单数字月/日场景）
         _snwprintf_s(b, _TRUNCATE, L"%u月%u日", st.wMonth, st.wDay);
         out.push_back(b); // Tier1-5 无年份：11月3日
     }
-    else if (in == "mt" || in == "ht")
+    else if (in == "yt" || in == "mt" || in == "ht")
     {
-        // Tier1-5 明天/后天：FileTime +1/+2 天，星期按偏移取模（跨月/跨年安全）
+        // Tier1-5 明天/后天 + 批4 昨天：FileTime -1/+1/+2 天，星期按偏移取模
+        // （跨月/跨年安全；dow 双模防 add=-1 且周日时 C++ % 出负下标）
         FILETIME ft{};
         SystemTimeToFileTime(&st, &ft);
         ULONGLONG u = ((ULONGLONG)ft.dwHighDateTime << 32) | ft.dwLowDateTime;
-        const int add = (in == "mt") ? 1 : 2;
-        u += (ULONGLONG)add * 864000000000ULL;
+        const long long add = (in == "yt") ? -1 : (in == "mt") ? 1 : 2;
+        u += (ULONGLONG)(add * 864000000000LL);
         ft.dwLowDateTime = (DWORD)u;
         ft.dwHighDateTime = (DWORD)(u >> 32);
         SYSTEMTIME n{};
         FileTimeToSystemTime(&ft, &n);
-        int dow = (st.wDayOfWeek + add) % 7;
+        int dow = (int)(((st.wDayOfWeek + add) % 7 + 7) % 7);
         _snwprintf_s(b, _TRUNCATE, L"%u年%02u月%02u日", n.wYear, n.wMonth, n.wDay);
         out.push_back(b);
         _snwprintf_s(b, _TRUNCATE, L"%u月%u日", n.wMonth, n.wDay);

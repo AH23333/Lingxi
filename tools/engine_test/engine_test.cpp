@@ -1701,6 +1701,17 @@ int wmain(int argc, wchar_t** argv)
                     Report(hit, "P5d rq yearless form", want);
                 }
                 {
+                    // 批4：rq 点分格式（合同/落款常用 2026.11.03）
+                    lingxi::Prediction r = py->Predict(L"rq");
+                    wchar_t want[48];
+                    _snwprintf_s(want, _TRUNCATE, L"%u.%02u.%02u",
+                                 st5.wYear, st5.wMonth, st5.wDay);
+                    bool hit = false;
+                    for (const auto& w : r.cands)
+                        if (w == want) { hit = true; break; }
+                    Report(hit, "P5d rq dotted form", want);
+                }
+                {
                     FILETIME ft5{};
                     SYSTEMTIME n5{};
                     SystemTimeToFileTime(&st5, &ft5);
@@ -1737,6 +1748,25 @@ int wmain(int argc, wchar_t** argv)
                     Report(hit, "P5d ht day-after date", want);
                 }
                 {
+                    // 批4：昨天 yt（与 mt/ht 对称，FileTime -1 天动态期望）
+                    FILETIME ft5{};
+                    SYSTEMTIME n5{};
+                    SystemTimeToFileTime(&st5, &ft5);
+                    ULONGLONG u5 = ((ULONGLONG)ft5.dwHighDateTime << 32) | ft5.dwLowDateTime;
+                    u5 -= 864000000000ULL;
+                    ft5.dwLowDateTime = (DWORD)u5;
+                    ft5.dwHighDateTime = (DWORD)(u5 >> 32);
+                    FileTimeToSystemTime(&ft5, &n5);
+                    lingxi::Prediction r = py->Predict(L"yt");
+                    wchar_t want[48];
+                    _snwprintf_s(want, _TRUNCATE, L"%u年%02u月%02u日",
+                                 n5.wYear, n5.wMonth, n5.wDay);
+                    bool hit = false;
+                    for (const auto& w : r.cands)
+                        if (w == want) { hit = true; break; }
+                    Report(hit, "P5d yt yesterday date", want);
+                }
+                {
                     lingxi::Prediction r = py->Predict(L"nl");
                     std::wstring wantS = L"农历" +
                         lingxi::LunarDateStr(st5.wYear, st5.wMonth, st5.wDay);
@@ -1753,6 +1783,14 @@ int wmain(int argc, wchar_t** argv)
                     bool ok = r.cands.empty() ||
                               r.cands[0].find(L"年") == std::wstring::npos;
                     Report(ok, "P5d mt no hijack",
+                           r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                }
+                // 批4：ytt 不触发昨天（整串精确闸，与 mt/mtt 同口径）
+                {
+                    lingxi::Prediction r = py->Predict(L"ytt");
+                    bool ok = r.cands.empty() ||
+                              r.cands[0].find(L"年") == std::wstring::npos;
+                    Report(ok, "P5d yt no hijack",
                            r.cands.empty() ? L"<none>" : r.cands[0].c_str());
                 }
             }
