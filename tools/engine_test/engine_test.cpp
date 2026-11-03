@@ -2047,6 +2047,173 @@ int wmain()
                 okArr = okArr && pred2.cands.size() == 2 && pred2.cover.empty() && pred2.anno.empty();
                 Report(okArr, "stage: parallel arrays synced", L"cover/anno 平行不变量");
             }
+
+            // ===== P10. L10 用户词典封顶淘汰边界（audit §七 L10 / 剧本 7c）=====
+            // 规则（pinyin.cpp EvictUserDictKeysLocked）：kMaxUserDictKeys=20000、
+            // batch=5%（1000 键）；仅"新键插入前"触发；候选=不含任何 manual 条目
+            // 的键，按键内 count 总和最小优先淘汰；manual 键整体豁免；全 manual
+            // 越限不淘汰。断言面：正好 20000 不触发 / 20001 触发 -1000+1 /
+            // manual 豁免 / count 最小优先 / 并发落盘×淘汰收敛 / 逐行严格校验。
+            // 本段在 B4 作用域，独立创建拼音引擎实例（M5 的 py 已随作用域结束）。
+            {
+                lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
+                if (!py) Report(false, "L10 CreatePinyinPredictor");
+                else
+                {
+                std::wstring udPath = ExeDir() + L"\\userdata\\LingxiIme\\userdict.txt";
+                // 整读 userdict（落盘为原子写：任意时刻读到完整快照）→ 有效行数组
+                auto readUdLines = [&]() -> std::vector<std::wstring> {
+                    std::vector<std::wstring> out;
+                    HANDLE h = CreateFileW(udPath.c_str(), GENERIC_READ,
+                        FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                        OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                    if (h == INVALID_HANDLE_VALUE) return out;
+                    DWORD sz = GetFileSize(h, NULL), got = 0;
+                    std::vector<char> buf;
+                    if (sz != INVALID_FILE_SIZE && sz > 0)
+                    {
+                        buf.resize(sz);
+                        if (!ReadFile(h, buf.data(), sz, &got, NULL)) got = 0;
+                    }
+                    CloseHandle(h);
+                    if (!got) return out;
+                    int w = MultiByteToWideChar(CP_UTF8, 0, buf.data(), (int)got, NULL, 0);
+                    std::wstring text;
+                    text.resize(w);
+                    MultiByteToWideChar(CP_UTF8, 0, buf.data(), (int)got, &text[0], w);
+                    size_t pos = 0;
+                    while (pos < text.size())
+                    {
+                        size_t nl = text.find(L'\n', pos);
+                        size_t end = (nl == std::wstring::npos) ? text.size() : nl;
+                        if (end > pos)
+                        {
+                            std::wstring line = text.substr(pos, end - pos);
+                            if (!line.empty() && line.back() == L'\r') line.pop_back();
+                            if (!line.empty()) out.push_back(std::move(line));
+                        }
+                        if (nl == std::wstring::npos) break;
+                        pos = nl + 1;
+                    }
+                    return out;
+                };
+                // 行格式严格校验：word\tkey\tcount[\t1]；第 4 列仅 manual 写"1"
+                auto lineOk = [](const std::wstring& s) -> bool {
+                    size_t t1 = s.find(L'\t');
+                    if (t1 == std::wstring::npos || t1 == 0) return false;
+                    size_t t2 = s.find(L'\t', t1 + 1);
+                    if (t2 == std::wstring::npos || t2 == t1 + 1) return false;
+                    size_t t3 = s.find(L'\t', t2 + 1);
+                    size_t cEnd = (t3 == std::wstring::npos) ? s.size() : t3;
+                    if (cEnd == t2 + 1) return false;
+                    for (size_t i = t2 + 1; i < cEnd; i++)
+                        if (s[i] < L'0' || s[i] > L'9') return false;
+                    if (t3 != std::wstring::npos &&
+                        (s.size() != t3 + 2 || s[t3 + 1] != L'1')) return false;
+                    return true;
+                };
+                auto keyOf = [](const std::wstring& s) -> std::wstring {
+                    size_t t1 = s.find(L'\t');
+                    size_t t2 = s.find(L'\t', t1 + 1);
+                    return (t1 == std::wstring::npos || t2 == std::wstring::npos)
+                               ? std::wstring() : s.substr(t1 + 1, t2 - t1 - 1);
+                };
+                // 学习键空间："aa"+4 位 base26（456976 槽；Learn 不校验音节合法性）
+                auto mkKey = [](int i) -> std::wstring {
+                    wchar_t k[7] = L"aaaaaa";
+                    k[2] = (wchar_t)(L'a' + (i / 17576) % 26);
+                    k[3] = (wchar_t)(L'a' + (i / 676) % 26);
+                    k[4] = (wchar_t)(L'a' + (i / 26) % 26);
+                    k[5] = (wchar_t)(L'a' + i % 26);
+                    return std::wstring(k, 6);
+                };
+                const int kCap = 20000, kBatch = 1000;
+                py->ClearUserDict();
+
+                // A1. 1 manual 键 + 19999 学习键 = 正好 20000：末次插入前 size=19999
+                // <cap，全程不触发淘汰；循环中途抽查异步落盘快照的完整性（并发写盘）
+                bool manOk = py->AddUserWord(L"手工词", L"zzzz", 1);
+                bool midSnapOk = true;
+                for (int i = 0; i < kCap - 1; i++)
+                {
+                    py->Learn(mkKey(i), L"学习词");
+                    if (i == 10000)
+                        for (const auto& l : readUdLines())
+                            if (!lineOk(l)) { midSnapOk = false; break; }
+                }
+                py->FlushUserDict(); // 收敛在途 KickPersist
+                std::vector<std::wstring> lines = readUdLines();
+                bool fmtAll = midSnapOk && manOk;
+                for (const auto& l : lines) if (!lineOk(l)) { fmtAll = false; break; }
+                {
+                    wchar_t det[128];
+                    _snwprintf_s(det, _TRUNCATE, L"lines=%zu expect=%d midSnap=%d",
+                                 lines.size(), kCap, midSnapOk ? 1 : 0);
+                    Report(fmtAll && (int)lines.size() == kCap,
+                           "L10 exactly-20000: no eviction, lines valid", det);
+                }
+
+                // A2. 前 5 键 count 抬到 101（Nudge 不触发淘汰）→ 再 Learn 第 20000
+                // 个学习键：插入前 size=20000≥cap → 淘汰 1000（count 最小优先，
+                // 高 count 键与 manual 键必存活）→ 插入 → 19001 键
+                for (int i = 0; i < 5; i++) py->NudgeUserWord(L"学习词", mkKey(i), 100);
+                py->Learn(mkKey(kCap - 1), L"学习词");
+                py->FlushUserDict();
+                lines = readUdLines();
+                {
+                    std::vector<std::wstring> keys;
+                    keys.reserve(lines.size());
+                    for (const auto& l : lines) keys.push_back(keyOf(l));
+                    auto hasKey = [&](const std::wstring& k) {
+                        return std::find(keys.begin(), keys.end(), k) != keys.end();
+                    };
+                    bool keepOk = hasKey(L"zzzz") && hasKey(mkKey(kCap - 1));
+                    for (int i = 0; i < 5; i++) if (!hasKey(mkKey(i))) keepOk = false;
+                    int learnedCnt = 0;
+                    for (const auto& k : keys) if (k != L"zzzz") learnedCnt++;
+                    wchar_t det[128];
+                    _snwprintf_s(det, _TRUNCATE, L"lines=%zu expect=%d learned=%d keep=%d",
+                                 lines.size(), kCap - kBatch + 1, learnedCnt,
+                                 keepOk ? 1 : 0);
+                    Report(fmtAll && (int)lines.size() == kCap - kBatch + 1 &&
+                           learnedCnt == kCap - kBatch && keepOk,
+                           "L10 20001st key: evict-1000, manual+high-count survive", det);
+                }
+
+                // B. 全 manual 越限：MergeUserDict 新键全 manual=true → 淘汰候选
+                // 恒空 → 20001 键整体保留（键数可越上限），且每行带第 4 列"1"
+                py->ClearUserDict();
+                std::vector<lingxi::UserDictEntry> ents;
+                ents.reserve(kCap + 1);
+                for (int i = 0; i < kCap + 1; i++)
+                {
+                    lingxi::UserDictEntry e;
+                    e.word = L"合并词";
+                    e.key = mkKey(i);
+                    e.count = 1;
+                    ents.push_back(std::move(e));
+                }
+                bool mOk = py->MergeUserDict(ents);
+                py->FlushUserDict();
+                lines = readUdLines();
+                bool allManual = mOk;
+                for (const auto& l : lines)
+                {
+                    if (!lineOk(l) || l.size() < 2 ||
+                        l[l.size() - 1] != L'1' || l[l.size() - 2] != L'\t')
+                    { allManual = false; break; }
+                }
+                {
+                    wchar_t det[128];
+                    _snwprintf_s(det, _TRUNCATE, L"lines=%zu expect=%d",
+                                 lines.size(), kCap + 1);
+                    Report(allManual && (int)lines.size() == kCap + 1,
+                           "L10 all-manual 20001: over-cap allowed, no eviction", det);
+                }
+                py->ClearUserDict(); // 复位沙盒词典，别把 2 万测试键留给后续用例
+                delete py;
+                }
+            }
         }
     }
 
