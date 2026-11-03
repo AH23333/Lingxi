@@ -122,13 +122,14 @@ constexpr int IDC_CHK_ASSOCPICK = 130;  // 选词联想开关（GAP §11)
 constexpr int IDC_CMB_UIFONT = 131;     // 界面字体族（候选窗/浮层共用）
 constexpr int IDC_BTN_STATS = 132;      // 打字统计入口（词典页"词典与工具"卡）
 constexpr int IDC_CHK_FWALNUM = 133;    // 全角字母数字（搜狗 F4 对标）
+constexpr int IDC_CMB_SPSCH = 134;      // 双拼方案：0 小鹤 1 自然码 2 微软
 
 HWND g_hSettings = nullptr; // 设置窗口（关闭=隐藏，常驻）
 HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
      g_hCmbDark = nullptr, g_hCmbFontSize = nullptr, g_hCmbSkin = nullptr,
      g_hCmbToggleMode = nullptr,
      g_hChkCnPunct = nullptr, g_hChkFuzzy = nullptr,
-     g_hChkShuangpin = nullptr, g_hChkSymbolHotkey = nullptr, g_hChkTraditional = nullptr,
+     g_hChkShuangpin = nullptr, g_hCmbSpSch = nullptr, g_hChkSymbolHotkey = nullptr, g_hChkTraditional = nullptr,
       g_hChkLlmRerank = nullptr, g_hChkLlmMultiPath = nullptr, g_hChkAssocPick = nullptr,
       g_hChkFwAlnum = nullptr;
 HWND g_hChkFz[8] = {}; // 模糊音组细分开关（8 组）
@@ -171,6 +172,7 @@ void LoadToControls()
     for (int fz = 0; fz < 8; fz++) SetToggle(g_hChkFz[fz], (s.fuzzyGroups >> fz) & 1u);
     ComboBox_SetCurSel(g_hCmbToggleMode, (int)(s.toggleMode <= 4 ? s.toggleMode : 1));
     SetToggle(g_hChkShuangpin, s.shuangpin);
+    ComboBox_SetCurSel(g_hCmbSpSch, s.shuangpinScheme <= 2 ? (int)s.shuangpinScheme : 0);
     SetToggle(g_hChkSymbolHotkey, s.symbolHotkey);
     SetToggle(g_hChkTraditional, s.traditionalOutput);
     SetToggle(g_hChkLlmRerank, s.llmRerank);
@@ -210,6 +212,7 @@ void SaveFromControls()
     int tsel = ComboBox_GetCurSel(g_hCmbToggleMode);
         if (tsel >= 0 && tsel <= 4) s.toggleMode = (uint32_t)tsel;
     s.shuangpin = ToggleOn(g_hChkShuangpin);
+    { int spsch = ComboBox_GetCurSel(g_hCmbSpSch); s.shuangpinScheme = (spsch >= 0 && spsch <= 2) ? (uint32_t)spsch : 0; }
     s.symbolHotkey = ToggleOn(g_hChkSymbolHotkey);
     s.traditionalOutput = ToggleOn(g_hChkTraditional);
     s.llmRerank = ToggleOn(g_hChkLlmRerank);
@@ -661,6 +664,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CMB_SKIN:
         case IDC_CMB_UIFONT:
         case IDC_CMB_TOGGLEMODE:
+        case IDC_CMB_SPSCH:
             if (HIWORD(wParam) == CBN_SELCHANGE) SaveFromControls();
             return 0;
         case IDC_BTN_USERDICT:
@@ -1140,8 +1144,15 @@ void CreateSettingsWindow(HINSTANCE hInst)
       for (int fz = 0; fz < 8; fz++)
       { g_hChkFz[fz] = mkToggle(fzId[fz]); mkRow(fzName[fz], L"总开关开启时按组生效", g_hChkFz[fz], CK_TOGGLE, 44); } }
     g_hChkShuangpin = mkToggle(IDC_CHK_SHUANGPIN);
-    mkRow(L"小鹤双拼", L"每音节两键：声母+韵母，零声母按韵母首字母补齐",
+    mkRow(L"双拼", L"每音节两键：声母+韵母；三方案声母一致（zh=V ch=I sh=U），方案见下行",
           g_hChkShuangpin, CK_TOGGLE, 44);
+    auto fillSpSch = [](HWND h) {
+        for (const wchar_t* s : { L"小鹤双拼", L"自然码双拼", L"微软双拼" })
+            ComboBox_AddString(h, s);
+    };
+    g_hCmbSpSch = mkCombo(IDC_CMB_SPSCH, fillSpSch);
+    mkRow(L"双拼方案", L"韵母键位差异：ing 键 小鹤K/自然码Y/微软分号；微软零声母加 o 前缀（oa=啊 oh=昂）",
+          g_hCmbSpSch, CK_COMBO, 150);
     addCard(L"输出");
     g_hChkCnPunct = mkToggle(IDC_CHK_CNPUNCT);
     mkRow(L"中文标点", L". , / ; 等自动转全角，Shift 输出 ？：》《 等",

@@ -38,7 +38,8 @@ struct Settings
                                    // （旧 bool，仍写——旧版 UI/DLL 只读它，两边语义一致）。
                                    // （v 模式设置已退役：v 临时英文现为全拼默认行为，
                                    //   v 与普通字母一致走拼音组合，空格/回车原样上屏。）
-    bool shuangpin = false;       // 小鹤双拼：每音节两键（声母键+韵母键）
+    bool shuangpin = false;       // 双拼：每音节两键（声母键+韵母键）
+    uint32_t shuangpinScheme = 0; // 双拼方案（shuangpin 开启时生效）：0 小鹤 1 自然码 2 微软
     bool symbolHotkey = false;   // 全局热键 Ctrl+Shift+B 调出符号面板（独占该组合键）。
                                   // 默认关：全局独占会占用应用自身快捷键（Edge 插件等
                                   // 实测冲突）；符号面板仍可从托盘/菜单打开。

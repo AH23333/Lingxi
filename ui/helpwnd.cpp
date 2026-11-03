@@ -102,6 +102,7 @@ std::wstring BuildHelpText()
     static const wchar_t* kToggleNames[] = { L"关闭", L"Shift", L"Shift 或 Ctrl",
                                              L"CapsLock", L"仅 Ctrl" };
     static const wchar_t* kDarkNames[] = { L"跟随系统", L"浅色", L"深色" };
+    static const wchar_t* kSpSchemeName[] = { L"小鹤", L"自然码", L"微软" };
     wchar_t cfg[4096];
     _snwprintf_s(cfg, _TRUNCATE,
         L"%s"
@@ -121,7 +122,8 @@ std::wstring BuildHelpText()
         kSkinNames[s.skinIndex], s.candidateCount, s.candidateFontSize,
         s.candidateOpacity,
         kUiFontNames[s.uiFont], kDarkNames[s.darkMode],
-        s.fuzzyPinyin ? L"开" : L"关", s.shuangpin ? L"小鹤" : L"关",
+        s.fuzzyPinyin ? L"开" : L"关",
+        s.shuangpin ? (s.shuangpinScheme <= 2 ? kSpSchemeName[s.shuangpinScheme] : L"小鹤") : L"关",
         s.traditionalOutput ? L"开" : L"关",
         s.enCompletion ? L"开" : L"关", s.cnPunct ? L"开" : L"关",
         s.assocAfterPick ? L"开" : L"关",

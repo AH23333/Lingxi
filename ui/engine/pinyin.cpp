@@ -31,6 +31,7 @@
 #include <vector>
 
 #include "../../common/log.h"
+#include "../../common/shuangpin.h"
 #include "../../common/settings.h"
 
 namespace lingxi {
@@ -38,108 +39,9 @@ namespace lingxi {
 namespace {
 
 // ---------------------------------------------------------------------------
-// 小鹤双拼 → 全拼（Predict 入口前转换，后续逻辑完全复用全拼）
-// 键位依据：shuangpin.xyz 小鹤方案（zh→V ch→I sh→U）。
+// 双拼→全拼：方案表在 common/shuangpin.h（0=小鹤 1=自然码 2=微软，声母三案
+// 一致 zh→V ch→I sh→U）。Predict 入口前转换，后续逻辑完全复用全拼。
 // ---------------------------------------------------------------------------
-std::string SpInitial(char c)
-{
-    if (c == 'v') return "zh";
-    if (c == 'i') return "ch";
-    if (c == 'u') return "sh";
-    return std::string(1, c);
-}
-
-// 韵母键 + 已解析声母 → 全拼韵母；歧义键按声母消解。
-std::string SpFinal(char c, const std::string& initial)
-{
-    auto is = [&](std::initializer_list<const char*> set)
-    {
-        for (const char* s : set)
-            if (initial == s) return true;
-        return false;
-    };
-    switch (c)
-    {
-    case 'q': return "iu";
-    case 'w': return "ei";
-    case 'e': return "e";
-    case 't': return (initial == "n" || initial == "l") ? "ve" : "ue";
-    case 'y': return "un";
-    case 'u': return "u";
-    case 'i': return "i";
-    case 'p': return "ie";
-    case 'a': return "a";
-    case 'd': return "ai";
-    case 'f': return "en";
-    case 'g': return "eng";
-    case 'h': return "ang";
-    case 'j': return "an";
-    case 'z': return "ou";
-    case 'c': return "ao";
-    case 'b': return "in";
-    case 'n': return "iao";
-    case 'm': return "ian";
-    case 'r': return "uan"; // 声母 + R 只能是 uan；er 走零声母
-    case 'o': return is({"b", "p", "m", "f"}) ? "o" : "uo";
-    case 's': return is({"j", "q", "x"}) ? "iong" : "ong";
-    case 'k': return is({"g", "k", "h", "zh", "ch", "sh"}) ? "uai" : "ing";
-    case 'l': return is({"g", "k", "h", "zh", "ch", "sh"}) ? "uang" : "iang";
-    case 'x': return is({"g", "k", "h", "zh", "ch", "sh"}) ? "ua" : "ia";
-    case 'v':
-        if (is({"j", "q", "x"})) return "u"; // ju/qu/xu
-        if (is({"n", "l"})) return "v";      // nv/lv
-        return "ui";
-    }
-    return "";
-}
-
-// 零声母音节 (c1,c2) → 全拼韵母。
-bool SpZeroFinal(char c1, char c2, std::string& out)
-{
-    if (c1 == c2 && (c1 == 'a' || c1 == 'o' || c1 == 'e'))
-    { out = std::string(1, c1); return true; } // 啊/哦/额
-    const char* pairs[][2] = {
-        {"ai", "ai"}, {"ei", "ei"}, {"ao", "ao"}, {"ou", "ou"},
-        {"an", "an"}, {"en", "en"}, {"er", "er"}, {"ah", "ang"},
-        {"eg", "eng"}};
-    std::string key(1, c1);
-    key.push_back(c2);
-    for (auto& pr : pairs)
-        if (key == pr[0]) { out = pr[1]; return true; }
-    return false;
-}
-
-// 双拼串 → 全拼串；奇数长度时末尾单字符按声母（含零声母首字母）作残段。
-std::string ShuangpinToQuanpin(const std::string& sp)
-{
-    // 输入卫生：小写化并只保留 a-z（与 NormKey 同口径）。大写对（JV）会让
-    // 韵母键查表落空、撇号/空格参与两两配对会造成音节错位（ni hao→酿奥）。
-    std::string in;
-    in.reserve(sp.size());
-    for (char ch : sp)
-    {
-        char c = (ch >= 'A' && ch <= 'Z') ? (char)(ch + 32) : ch;
-        if (c >= 'a' && c <= 'z') in.push_back(c);
-    }
-
-    std::string out;
-    size_t i = 0;
-    for (; i + 1 < in.size(); i += 2)
-    {
-        char c1 = in[i], c2 = in[i + 1];
-        std::string syll;
-        if (c1 == 'a' || c1 == 'o' || c1 == 'e')
-            SpZeroFinal(c1, c2, syll);
-        if (syll.empty())
-        {
-            std::string initial = SpInitial(c1);
-            syll = initial + SpFinal(c2, initial);
-        }
-        out += syll;
-    }
-    if (i < in.size()) out += SpInitial(in[i]); // 残段
-    return out;
-}
 
 // ---------------------------------------------------------------------------
 // R4 拼音纠错（引擎音节切分层，GAP-VS-MSFT §8 R4）：仅当子串不是合法音节时
@@ -465,7 +367,7 @@ public:
         std::string inTrig = NormalizeIn(raw);
         std::vector<std::wstring> dtCands = BuildDateTimeCands(inTrig);
         std::vector<std::wstring> phraseCands; // R2：锁内拷出（见下），锁外注入
-        if (st.shuangpin) raw = ShuangpinToQuanpin(raw); // 双拼→全拼
+        if (st.shuangpin) raw = ShuangpinToQuanpin(raw, st.shuangpinScheme); // 双拼→全拼（按方案）
         // 显式隔音判定（与 EnumeratePaths 同一归一口径，弯撇号 U+2019 同算）：
         // 有隔音时 MatchWords 紧校验音节数（拒跨边界 compact 撞键），无隔音时
         // 串级匹配是合法读法不校验（xian 的"西安"走 [xian] 路径 tier-0）。
@@ -1556,7 +1458,8 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
     void Learn(const std::wstring& rawPinyin, const std::wstring& word) override
     {
         if (rawPinyin.empty() || word.empty()) return;
-        bool sp = LoadSettings().shuangpin;
+        Settings lsp = LoadSettings();
+        bool sp = lsp.shuangpin;
         if (IsCalcQuery(rawPinyin)) return; // v 模式：确定性结果不进自学习（防词典污染）
         // U 模式拆字：表查结果不进自学习（防词典污染）；双拼下 'u' 是键位、
         // IsRadicalQuery 对键位串会误真，须全拼域判断（Predict 同门控）。
@@ -1564,7 +1467,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         std::string key = ToUtf8(rawPinyin);
         // 双拼模式下 rawPinyin 是双拼串，而 Predict 以转换后的全拼串查键——
         // 不做同一转换，学习键与查询键永不相交，双拼下学习完全失效
-        if (sp) key = ShuangpinToQuanpin(key);
+        if (sp) key = ShuangpinToQuanpin(key, lsp.shuangpinScheme);
         key = NormKey(key);
         if (key.empty()) return;
         {

@@ -202,6 +202,7 @@ Settings LoadSettings()
     else if (GetDword(hKey, L"ShiftToggle", v))
         s.toggleMode = v != 0 ? 1 : 0;
     if (GetDword(hKey, L"Shuangpin", v)) s.shuangpin = v != 0;
+    if (GetDword(hKey, L"ShuangpinScheme", v) && v <= 2) s.shuangpinScheme = v;
     if (GetDword(hKey, L"SymbolHotkey", v)) s.symbolHotkey = v != 0;
     if (GetDword(hKey, L"Traditional", v)) s.traditionalOutput = v != 0;
     if (GetDword(hKey, L"LlmRerank", v)) s.llmRerank = v != 0;
@@ -272,6 +273,7 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"ShiftToggle", s.toggleMode != 0 ? 1 : 0);
     SetDword(hKey, L"ToggleMode", s.toggleMode);
     SetDword(hKey, L"Shuangpin", s.shuangpin ? 1 : 0);
+    SetDword(hKey, L"ShuangpinScheme", s.shuangpinScheme);
     SetDword(hKey, L"SymbolHotkey", s.symbolHotkey ? 1 : 0);
     SetDword(hKey, L"Traditional", s.traditionalOutput ? 1 : 0);
     SetDword(hKey, L"LlmRerank", s.llmRerank ? 1 : 0);
@@ -335,6 +337,7 @@ void SaveSettingsDiff(const Settings& s)
     PutDwordDiff(hKey, L"ShiftToggle", s.toggleMode != 0 ? 1 : 0);
     PutDwordDiff(hKey, L"ToggleMode", s.toggleMode);
     PutDwordDiff(hKey, L"Shuangpin", s.shuangpin ? 1 : 0);
+    PutDwordDiff(hKey, L"ShuangpinScheme", s.shuangpinScheme);
     PutDwordDiff(hKey, L"SymbolHotkey", s.symbolHotkey ? 1 : 0);
     PutDwordDiff(hKey, L"Traditional", s.traditionalOutput ? 1 : 0);
     PutDwordDiff(hKey, L"LlmRerank", s.llmRerank ? 1 : 0);

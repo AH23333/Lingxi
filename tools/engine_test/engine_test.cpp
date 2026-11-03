@@ -18,6 +18,7 @@
 #include "../../common/punct.h"
 #include "../../common/log.h"
 #include "../../common/settings.h"
+#include "../../common/shuangpin.h"
 #include "../../common/pipe_util.h"
 
 #include <windows.h>
@@ -2353,6 +2354,19 @@ int wmain(int argc, wchar_t** argv)
             lingxi::Settings d;
             Report(d.candidateCount == 9, "PIN default candidateCount == 9 (English cap only)");
         }
+
+        // ③ 双拼方案表往返用例（每方案至少一条；键位依据见 common/shuangpin.h 头注）
+        Report(lingxi::ShuangpinToQuanpin("ui", 0) == "shi",   "SP xiahe ui->shi");
+        Report(lingxi::ShuangpinToQuanpin("vy", 0) == "zhun",  "SP xiahe vy->zhun");
+        Report(lingxi::ShuangpinToQuanpin("eg", 0) == "eng",   "SP xiahe eg->eng");
+        Report(lingxi::ShuangpinToQuanpin("aa", 0) == "a",     "SP xiahe aa->a");
+        Report(lingxi::ShuangpinToQuanpin("lk", 0) == "ling",  "SP xiahe lk->ling");
+        Report(lingxi::ShuangpinToQuanpin("ly", 1) == "ling",  "SP ziranma ly->ling");
+        Report(lingxi::ShuangpinToQuanpin("vy", 1) == "zhuai", "SP ziranma vy->zhuai");
+        Report(lingxi::ShuangpinToQuanpin("l;", 2) == "ling",  "SP ms l;->ling");
+        Report(lingxi::ShuangpinToQuanpin("oa", 2) == "a",     "SP ms oa->a");
+        Report(lingxi::ShuangpinToQuanpin("oh", 2) == "ang",   "SP ms oh->ang");
+        Report(lingxi::ShuangpinToQuanpin("ny", 2) == "nv",    "SP ms ny->nv");
     }
 
     // 共用：词典字节读 + 逐行严格校验（word\tkey\tcount[\t1]，count 必须纯数字）
