@@ -3,6 +3,7 @@
 > 本文档为只读审查产物，不覆盖 `audit-2026-11-02-bug-audit.md`。
 > 基线 = 搜狗拼音输入法（离线功能面）；联网类功能一律标注"不纳入本轮"。
 > 审查会话：2026-11-03 午后。HEAD 参照 = `2e44ce7`。
+> **回刷记录（2026-11-03 晚，批5）**：矩阵中双拼方案/候选数可配/竖排/词频衰减/日期变量/全角字母数字 6 行结论已被后续批次证伪或落地，逐行标注"已过期"并附 commit；详见 §十四。账面以回刷后为准，**勿照旧账重复实施**。
 > 分级：高=用户每次都感知且明显不适；中=特定场景感知；低=小众/锦上添花。
 
 ---
@@ -60,14 +61,14 @@
 | 功能项 | 搜狗行为 | 现状 | 差距 | 离线 | 级 | 代码定位 |
 |---|---|---|---|---|---|---|
 | 全拼 | 逐音节切分+整段 | 有 | — | 是 | — | `pinyin.cpp:1060 EnumeratePaths` |
-| 双拼 | 多方案（微软/自然码/小鹤/搜狗…） | 半 | **仅小鹤一案**，方案不可选 | 是 | 中 | `pinyin.cpp:41-113`；`helpwnd.cpp:124` |
+| 双拼 | 多方案（微软/自然码/小鹤/搜狗…） | 有 | ~~仅小鹤一案，方案不可选~~ **已过期（批2 `087d431` 对码核实）**：方案表全链接线——settings `ShuangpinScheme`（0小鹤/1自然码/2微软）+ settingsui 方案 combo + `ShuangpinToQuanpin(raw, scheme)` 消费 + P4c3 端到端钉；搜狗方案未含 | 是 | 低 | `pinyin.cpp:517/1793`；`settings.cpp:223`；`engine_test.cpp:467` |
 | 简拼 | 支持 | 有 | — | 是 | — | `pinyin.cpp:1030 ZeroInitialShorthand`；排序罚分 `pinyin.cpp:11` |
 | 混拼（简拼×全拼混合） | 支持 | 有 | — | 是 | — | `EnumeratePaths` 逐音节全/简两路 |
 | 模糊音 | 分组可配（z-zh 等） | 有 | 8 组位掩码可配；UI 分组勾选覆盖面**待人工核** | 是 | 低 | `pinyin.cpp:1763-1799 ComputeFuzzy`、`settings FuzzyGroups` |
 | 智能纠错 | 全句级纠错（jinten→今天） | 半 | 仅音节表内常见误拼改写，无编辑距离泛纠错；残段不纠 | 是 | 中 | `pinyin.cpp:155-183 CorrectSyllableTypo`、`:1093-1098` |
 | 整句输入 | 整段直出句子 | 有 | 词频+覆盖率整句排序在；无语法级组句 | 是 | 低 | `pinyin.cpp:11` 排序注释 |
-| 候选数可配 | 每页 3/5/6/9 可选 | 半 | **拼音每页固定 9**（`kPageSize`），`CandidateCount` 实际只作用于英文补全（UI 标签即"补全候选数"）——设置语义与 `settings.h:17` 注释"候选上限"相悖 | 是 | 中→**待裁决**（动协议） | `proto.h:30-32`、`pipeserver.cpp:570`、`settingsui.cpp:1165` |
-| 竖排候选 | F 键/设置可切 | 无 | 全库无竖排实现 | 是 | 低 | grep 无命中 |
+| 候选数可配 | 每页 3/5/6/9 可选 | 有 | ~~拼音每页固定 9~~ **已过期（批3 `8ceadf4` 落地）**：`CandPageSize` 1..9 可配（缺省 9=零行为变化），两侧活读、协议帧不变、数字键闸 off<pageSize；`CandidateCount` 注释已对齐真实语义（`settings.h:17-19`） | 是 | — | `settings.cpp:202`、`proto.h:30`、engine_test PIN 块 |
+| 竖排候选 | F 键/设置可切 | 有 | ~~全库无竖排实现~~ **判定有误（批5 对码纠正）**：现状本即竖排列表（缺省），`candOrientation=1` 切横排单行——settings 全链 + candwnd_core LayoutAndPosition 横排分支（工作区回退）+ settingsui combo | 是 | 低 | `settings.cpp:204`、`candwnd_core.cpp:190`、`settingsui.cpp:203/248` |
 
 ### 组 2 词库体系
 
@@ -75,8 +76,8 @@
 |---|---|---|---|---|---|---|
 | 本地基础词库 | 大词库 | 有 | 规模差距（zh_pinyin.txt 单表） | 是 | 中 | `data\zh_pinyin.txt` |
 | 用户词自学习+权重 | 有 | 有 | 双拼学习键已对齐全拼口径 | 是 | — | `pinyin.cpp:1559-1567 Learn` |
-| 词频衰减/遗忘 | 有（时间衰减） | 半 | 仅手动"遗忘"词条，无自动衰减曲线 | 是 | 低 | `settingsui.h:17` |
-| 细胞/专业词库 | 导入分类词库 | 无 | 无词库包概念；userdict 文本可手工灌 | 是 | 中 | — |
+| 词频衰减/遗忘 | 有（时间衰减） | 有 | ~~仅手动"遗忘"，无自动衰减曲线~~ **已过期（批5 对码纠正）**：score=count×2^(−age/H)，`DecayEnabled`/`HalfLifeDays` clamp[7,365] 缺省 60，manual 豁免，engine_test 可逆性钉（`engine_test.cpp:2533-2550`） | 是 | 低 | `pinyin.cpp:1620-1629`、`settings.cpp:205-206` |
+| 细胞/专业词库 | 导入分类词库 | 有 | ~~无词库包概念~~ **已过期（批5 对码纠正）**：细胞词库已落地——导入适配层（`c647838`：后台同步导入+深蓝回退+独立复核）+ 管理窗与托盘入口（`475563e`），engine_test 有断言钉 | 是 | 中 | `cellimport.cpp`、`cellwnd.cpp`、`tray.cpp` |
 | 新词热词（离线部分） | 本地新词榜 | 无 | 排除联网后仍可做离线统计词 | 是 | 低 | `usagestats.cpp` 已有统计雏形 |
 | 导入导出（往返一致） | 有 | 有 | 备份含 userdict/热短语/屏蔽侧车；往返有断言 | 是 | — | `settingsbackup.cpp:74-241`、engine_test C1d |
 | 词条上限与淘汰 | 静默无上限 | 有 | 2 万键/5% 批量淘汰/manual 豁免——**比搜狗更透明**，行为口径不同但合理 | 是 | — | `53f0aaf`+`485727a` 边界单测 |
@@ -87,7 +88,7 @@
 |---|---|---|---|---|---|---|
 | 自定义短语 | 缩写→候选，置顶 | 有 | 注入置顶序：短语>日期>常规 | 是 | — | `pinyin.cpp:268/591 InjectExplicitTop`、`phraseui.cpp` |
 | 缩写触发 | 支持 | 有 | 整串精确触发 | 是 | — | 同上 `NormalizeIn` 口径 |
-| 日期/时间/星期变量 | `rq/sj` 等 | 有 | rq/sj/xq/rqsj + 大写日期（合同场景） | 是 | — | `pinyin.cpp:184-263` |
+| 日期/时间/星期变量 | `rq/sj` 等 | 有 | rq/sj/xq/rqsj + 大写日期（合同场景）+ 无年份 rq 形态与 `mt/ht/nl`（`da3c0e0`）+ `yt` 昨天与点分 `2026.11.03`（批4 `bcbcd11`） | 是 | — | `pinyin.cpp` BuildDateTimeCands |
 | 命令式触发 | 少量 | 无 | 不纳入 | — | 低 | — |
 
 ### 组 4 输入模式与技巧
@@ -104,7 +105,7 @@
 | 以词定字 | `[` 首字 `]` 末字 | 有 | 候选可见才认领，与微软口径一致 | 是 | — | `composition.cpp:1137-1164` |
 | 直接上屏 | Enter 原串 | 有 | `PinyinCommitRaw` | 是 | — | `composition.cpp:1079-1083` |
 | 顿号 | `/`、`\`→、 | 有 | — | 是 | — | `punct.h:21-22` |
-| 全角/半角 | F4 全角字母数字 | 半 | 中文标点全角有；**全角字母/数字模式无** | 是 | 低 | `punct.h`（仅标点域） |
+| 全角/半角 | F4 全角字母数字 | 有 | ~~全角字母/数字模式无~~ **已过期（批5 对码纠正）**：`FullWidthAlnum` 全链——settings Load/Save/Diff + composition 三处 ToFullWidthStr（L687/847/1041）+ settingsui checkbox（L178/221） | 是 | 低 | `settings.cpp:212`、`composition.cpp:687` |
 | CapsLock 切换 | 可配 | 有 | toggleMode=3 | 是 | — | `service.cpp:727-734` |
 
 ### 组 5 按键与交互
@@ -164,7 +165,7 @@ H1/H2/H3/L4 崩溃层修复本体；L10/L12 已闭环项；§八-3/-6/-7/-8 残�
 
 ## 六、待裁决（高风险，只出方案不动手）
 
-1. **每页候选数可配**（组 1）：`kPageSize` 是 DLL/UI 协议常量（`proto.h:30`），可配化需动帧语义与翻页权威侧（`service.cpp:517` 页码步进）→ 方案：UI 侧按设置分页渲染、DLL 侧翻页步进改由 UI 回传页大小字段。动协议，待裁决。
+1. **每页候选数可配**（组 1）：`kPageSize` 是 DLL/UI 协议常量（`proto.h:30`），可配化需动帧语义与翻页权威侧（`service.cpp:517` 页码步进）→ 方案：UI 侧按设置分页渲染、DLL 侧翻页步进改由 UI 回传页大小字段。动协议，待裁决。**→ 已裁决并落地（用户 RESUME 令放行，批3 `8ceadf4`）：实际方案协议帧不变、两侧活读 `CandPageSize`（1..9 缺省 9）；勿重复实施。**
 2. **←/→ 组合内光标编辑**（组 5）：需动 TSF `ITfComposition` 区间切分，属 commit 时序域 → 待裁决（M5 尾巴既有预留）。
 3. **空格 400ms 预算回缩**：需先在真机量写盘后台化后的候选回包 P99，再决定；动按键路径时序 → 待实测后裁决。
 4. **per-monitor DPI**：`GetDpiForSystem`→`GetDpiForWindow`/`GetWindowDpiScale` 迁移，影响全部布局换算（`MulDiv` 链）→ 建议先真机混合 DPI 复现再立项。
@@ -183,7 +184,7 @@ H1/H2/H3/L4 崩溃层修复本体；L10/L12 已闭环项；§八-3/-6/-7/-8 残�
 | # | 项 | 证据 | 修法 |
 |---|---|---|---|
 | F1 | Debug32 陈旧件 | §一 哈希/时间戳 | 跑 `build32.cmd Debug` 重建（非代码改动，属操作规程；写入本文档 §一.4 即闭环） |
-| F2 | `settings.h:17` 注释误导 | 注释称"候选上限（1..9）"，实测拼音路径不消费（`pipeserver.cpp:570`），仅英文补全消费 | 改注释对齐真实语义 + 设置页"补全候选数"旁加说明"拼音每页固定 9"；纯文案，可附 engine_test 断言钉死 cap 归属 |
+| F2 | `settings.h:17` 注释误导 | 注释称"候选上限（1..9）"，实测拼音路径不消费（`pipeserver.cpp:570`），仅英文补全消费 | 改注释对齐真实语义 + 设置页"补全候选数"旁加说明"拼音每页固定 9"；纯文案，可附 engine_test 断言钉死 cap 归属。**（已落地：注释已对齐 `settings.h:17-19`；"每页固定 9"已被批3 `8ceadf4` 可配化取代，勿重复实施）** |
 | F3 | 版本可判定性 | 旧件考古成本高（本次即证） | DLL/UI `--version` 已打 `__DATE__`（`main.cpp:325`）；DLL 侧 OnActivate 日志补 `__DATE__ __TIME__` 一行，低风险 |
 
 > 撞车记录：审查时工作区存在他会话未提交改动（`tools/engine_test/engine_test.cpp` +117 行 M7 fuzz，HEAD 2e44ce7 提交于 12:52:55，属并行会话活跃写入）。按纪律本会话未做任何 commit，F2/F3 待用户放行后一条一提交。**（后记：该会话已自行提交 `5396575`，撞车解除，本会话按放行令继续。）**
@@ -318,3 +319,21 @@ x64/x86 两份哈希与 §12.3 InprocServer32 记录逐字一致（快照即被�
 - 替换：`bin\Debug\LingxiUI.exe` = 3509248B `01760F1E60B11E241799FC2A306CCA447AB6F56B7C9269D8DABA84A2C3077138`（旧件 3261440B=D0089F4C… 备份 `LingxiUI.exe.20261103182459.prev`）。
 - 复验：imecheck Self-check PASSED；`--diagnostics` 探针正常（构建日期 Nov 3 2026、路径 bin\Debug、用户词库 716 条只读加载、符号/模糊/纠错节齐）。替换时 LingxiUI 进程未在运行，新件将由 IME 下次拉起自动拾取。
 - **待用户重启后真机确认**：`rq` 第 6 形态、`mt`/`ht`/`nl` 触发注入与上屏（候选窗在 LingxiUI.exe 内，UI 进程重生即可，无需注销）。
+
+## 十四、批5 过期结论回刷台账（2026-11-03 晚，逐条对码核实）
+
+> 原则：账面骗人比缺功能更贵。以下结论在本文档成文后被证伪或已由后续批次落地，矩阵行已就地标注"已过期/判定有误"，本表为汇总台账。**接手者勿照旧账重复实施。**
+
+| 矩阵行 | 旧结论 | 现实现状 | 落地 commit | 对码证据 |
+|---|---|---|---|---|
+| 组1 双拼 | 半：仅小鹤一案，方案不可选 | 有：三方案可选（0小鹤/1自然码/2微软） | `087d431`（批2 接线核实+P4c3 钉） | `settings.cpp:223`、`pinyin.cpp:517/1793`、`settingsui.cpp:183/228`、`engine_test.cpp:467` |
+| 组1 候选数可配 | 半：拼音每页固定 9，待裁决 | 有：`CandPageSize` 1..9 缺省 9，协议帧不变 | `8ceadf4`（批3） | `settings.cpp:202`、`proto.h:30`、engine_test PIN 块往返/clamp 钉 |
+| 组1 竖排候选 | 无：全库无竖排实现 | 有：缺省即竖排，`candOrientation=1` 切横排 | 阶段二 C 项（见 `impl-handoff` C1） | `settings.cpp:204`、`candwnd_core.cpp:190`、`settingsui.cpp:203/248` |
+| 组2 词频衰减 | 半：仅手动遗忘，无自动衰减 | 有：指数衰减+开关+半衰期可配+manual 豁免+可逆性钉 | 阶段二 B 项 | `pinyin.cpp:1620-1629`、`settings.cpp:205-206`、`engine_test.cpp:2533-2550` |
+| 组2 细胞/专业词库 | 无：无词库包概念 | 有：导入适配层+管理窗+托盘入口 | `c647838`+`475563e` | `cellimport.cpp`、`cellwnd.cpp`、`tray.cpp`、engine_test 断言 |
+| 组3 日期变量 | 有（rq/sj/xq/rqsj+大写） | 增补：无年份形态+`mt/ht/nl`（`da3c0e0`）、`yt`+点分（`bcbcd11` 批4） | `da3c0e0`、`bcbcd11` | `pinyin.cpp` BuildDateTimeCands、P5d 钉 |
+| 组4 全角/半角 | 半：全角字母/数字模式无 | 有：`FullWidthAlnum` 全链 | 阶段二项 | `settings.cpp:212`、`composition.cpp:687/847/1041`、`settingsui.cpp:178/221` |
+| §六-1 待裁决 | 每页候选数可配=待裁决 | 已裁决并落地 | 用户 RESUME 令 + `8ceadf4` | 同上 |
+| §八 F2 | settings.h:17 注释误导待修 | 已落地（注释对齐+可配化取代"固定 9"） | `8ceadf4` | `settings.h:17-19` |
+
+未回刷项说明：§一~§五/§七/§九~§十三 属当时实测记录（进程/注册表/门禁读数），非功能结论账面，保留原文；"半"仍成立的行（智能纠错、笔画查字、per-monitor DPI、高 DPI 清晰度等）未动。`audit-2026-11-02-bug-audit.md` 顺检无同类功能账面滞后（纯 bug 审计域）。
