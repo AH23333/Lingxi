@@ -65,6 +65,7 @@
     <ClCompile Include="..\..\ui\engine\calcnum.cpp" />
     <ClCompile Include="..\..\ui\engine\uradical.cpp" />
     <ClCompile Include="..\..\ui\symsearch.cpp" />
+    <ClCompile Include="..\..\ui\cellimport.cpp" />
     <ClCompile Include="..\..\common\settings.cpp" />
     <ClCompile Include="..\..\common\pipe_util.cpp" />
   </ItemGroup>

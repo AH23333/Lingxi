@@ -68,6 +68,7 @@
     <ClCompile Include="uitheme.cpp" />
     <ClCompile Include="tray.cpp" />
     <ClCompile Include="userdictwnd.cpp" />
+    <ClCompile Include="cellimport.cpp" />
     <ClCompile Include="helpwnd.cpp" />
     <ClCompile Include="statswnd.cpp" />
     <ClCompile Include="settingsbackup.cpp" />

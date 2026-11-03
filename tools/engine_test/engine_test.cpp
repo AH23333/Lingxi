@@ -11,6 +11,7 @@
 // 因此首次运行若 <exe目录>\data 缺词表，自动从 <exe目录>\..\Debug\data 拷贝。
 //
 #include "predictor.h"
+#include "../../ui/cellimport.h"
 #include "calcnum.h"
 #include "uradical.h"
 #include "../../ui/symsearch.h"
@@ -2684,6 +2685,105 @@ int wmain(int argc, wchar_t** argv)
             if (q) delete q;
         }
         Report(noop, "CELLb-5 no cell dir: strict no-op, dir not created by engine");
+    }
+
+    // ===== CELLc. A2+A6 导入适配层：tmp+rename 落盘 / 覆盖回滚 / 深蓝回退 / 独立复核 =====
+    {
+        std::unordered_set<std::string> sy = { "ce", "shi", "xi", "bao", "ci", "gang", "hao" };
+        std::wstring cellDir = lingxi::CellPackDirW();
+        auto writeSrc = [&](const std::wstring& name, const std::string& content) -> std::wstring {
+            std::wstring p = ExeDir() + L"\\" + name;
+            HANDLE h = CreateFileW(p.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                                   FILE_ATTRIBUTE_NORMAL, NULL);
+            if (h != INVALID_HANDLE_VALUE)
+            {
+                DWORD w = 0;
+                WriteFile(h, content.data(), (DWORD)content.size(), &w, NULL);
+                CloseHandle(h);
+            }
+            return p;
+        };
+        auto countPattern = [&](const std::wstring& pat) -> int {
+            WIN32_FIND_DATAW fd{};
+            HANDLE h = FindFirstFileW(pat.c_str(), &fd);
+            if (h == INVALID_HANDLE_VALUE) return 0;
+            int n = 0;
+            do { n++; } while (FindNextFileW(h, &fd));
+            FindClose(h);
+            return n;
+        };
+        auto hasW = [](const lingxi::Prediction& p, const wchar_t* word) {
+            for (const auto& c : p.cands) if (c == word) return true;
+            return false;
+        };
+
+        // c-1 原生 .lxcell 导入→落盘→新引擎可见
+        std::wstring src = writeSrc(L"tmp_cimp.lxcell",
+            "LXCELL 1\nname=导入包\nid=cimp\n细胞词\txi bao ci\n测诗\tce shi\n");
+        lingxi::CellImportResult r1 = lingxi::ImportCellPackSync(src, sy, false);
+        bool landed = GetFileAttributesW((cellDir + L"\\cimp.lxcell").c_str())
+                          != INVALID_FILE_ATTRIBUTES;
+        bool seen = false;
+        if (r1.ok)
+        {
+            lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
+            seen = py && hasW(py->Predict(L"xibaoci"), L"细胞词");
+            if (py) delete py;
+        }
+        Report(r1.ok && r1.imported == 2 && landed && seen,
+               "CELLc-1 native import: lands, verify ok, engine sees pack");
+
+        // c-2 重复 id 非覆盖拒绝
+        lingxi::CellImportResult r2 = lingxi::ImportCellPackSync(src, sy, false);
+        Report(!r2.ok && r2.message.find(L"已存在") != std::wstring::npos,
+               "CELLc-2 duplicate id rejected without overwrite");
+
+        // c-3 覆盖导入（v2 内容替换）：旧词消失、新词出现、无 .prev/.tmp 残留
+        std::wstring src2 = writeSrc(L"tmp_cimp2.lxcell",
+            "LXCELL 1\nname=导入包v2\nid=cimp\n钢耗\tgang hao\n");
+        lingxi::CellImportResult r3 = lingxi::ImportCellPackSync(src2, sy, true);
+        bool swapped = false;
+        if (r3.ok)
+        {
+            lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
+            swapped = py && !hasW(py->Predict(L"xibaoci"), L"细胞词") &&
+                      hasW(py->Predict(L"ganghao"), L"钢耗");
+            if (py) delete py;
+        }
+        Report(r3.ok && swapped && countPattern(cellDir + L"\\*.prev") == 0 &&
+                   countPattern(cellDir + L"\\*.tmp") == 0,
+               "CELLc-3 overwrite import: rename-aside consumed, no residue");
+
+        // c-4 深蓝纯文本产物回退（无魔数+词频列）→ 规范化落盘（文件头=LXCELL 1）
+        std::wstring src3 = writeSrc(L"sctest.txt",
+            "\xEF\xBB\xBF细胞词\txi bao ci\t100\r\n钢耗\tgang hao\t50\r\n");
+        lingxi::CellImportResult r4 = lingxi::ImportCellPackSync(src3, sy, false);
+        bool normalized = false;
+        if (r4.ok)
+        {
+            HANDLE h = CreateFileW((cellDir + L"\\sctest.lxcell").c_str(), GENERIC_READ,
+                FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE, NULL,
+                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (h != INVALID_HANDLE_VALUE)
+            {
+                char head[16] = {};
+                DWORD got = 0;
+                ReadFile(h, head, 9, &got, NULL);
+                CloseHandle(h);
+                normalized = got == 9 && memcmp(head, "LXCELL 1\n", 9) == 0;
+            }
+        }
+        Report(r4.ok && r4.id == "sctest" && r4.imported == 2 && normalized,
+               "CELLc-4 plain-text fallback: id from stem, normalized .lxcell landed");
+
+        // c-5 复核不一致分支不可注入（磁盘故障类）——此处如实不测，见 commit 说明
+        DeleteFileW((cellDir + L"\\cimp.lxcell").c_str());
+        DeleteFileW((cellDir + L"\\sctest.lxcell").c_str());
+        DeleteFileW(src.c_str());
+        DeleteFileW(src2.c_str());
+        DeleteFileW(src3.c_str());
+        lingxi::IPredictor* reset = lingxi::CreatePinyinPredictor();
+        if (reset) delete reset; // 复位沙盒：cell 目录已空
     }
 
     // ===== C2. 管道帧层：往返/半帧+对端消失/写向已消失对端/超时取消(H1路径) =====
