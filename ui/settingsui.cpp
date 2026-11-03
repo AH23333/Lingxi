@@ -11,6 +11,7 @@
 //
 #include "settingsui.h"
 #include "uiinternal.h"
+#include "style_logic.h" // 批15 透明度下拉↔数值映射单一口径（engine_test SK3 钉）
 #include "hotphraseui.h"
 #include "phraseui.h"
 #include "updateui.h"
@@ -187,9 +188,7 @@ void LoadToControls()
     SetToggle(g_hChkSymbolHotkey, s.symbolHotkey);
     SetToggle(g_hChkTraditional, s.traditionalOutput);
     SetToggle(g_hChkLlmRerank, s.llmRerank);
-    { const uint32_t kOps[] = {100, 90, 80, 70}; int oi = 0;
-      for (int z = 0; z < 4; z++) if (s.candidateOpacity == kOps[z]) oi = z;
-      if (g_hCmbOpacity) ComboBox_SetCurSel(g_hCmbOpacity, oi); }
+    { if (g_hCmbOpacity) ComboBox_SetCurSel(g_hCmbOpacity, OpacityComboIndex(s.candidateOpacity)); }
     SetToggle(g_hChkLlmMultiPath, s.llmMultiPath);
     SetToggle(g_hChkAssocPick, s.assocAfterPick);
     wchar_t buf[16];
@@ -231,8 +230,8 @@ void SaveFromControls()
     s.symbolHotkey = ToggleOn(g_hChkSymbolHotkey);
     s.traditionalOutput = ToggleOn(g_hChkTraditional);
     s.llmRerank = ToggleOn(g_hChkLlmRerank);
-    { const uint32_t kOps[] = {100, 90, 80, 70}; int oi = g_hCmbOpacity ? ComboBox_GetCurSel(g_hCmbOpacity) : 0;
-      s.candidateOpacity = kOps[oi >= 0 && oi < 4 ? oi : 0]; }
+    { int oi = g_hCmbOpacity ? ComboBox_GetCurSel(g_hCmbOpacity) : -1;
+      s.candidateOpacity = OpacityFromComboSel(oi); }
     s.llmMultiPath = ToggleOn(g_hChkLlmMultiPath);
     s.assocAfterPick = ToggleOn(g_hChkAssocPick);
     wchar_t buf[16] = L"";

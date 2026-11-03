@@ -2,6 +2,7 @@
 
 #include "candwnd_internal.h"
 #include "cand_text.h"
+#include "style_logic.h" // 批15 透明度钳制/α 映射单一口径（engine_test SK 块直链）
 
 #include "../common/proto.h"
 #include "../common/log.h"
@@ -493,11 +494,10 @@ void CandWindow::PostCmd(int kind, ShowReq* req)
 void CandWindow::ApplyOpacity()
 {
     if (!_hwnd) return;
-    unsigned op = lingxi::LoadSettings().candidateOpacity;
-    if (op < 70) op = 70; if (op > 100) op = 100;
+    unsigned op = lingxi::ClampOpacity((int)lingxi::LoadSettings().candidateOpacity);
     if ((int)op == _opacityApplied) return;
     _opacityApplied = (int)op;
-    SetLayeredWindowAttributes(_hwnd, 0, MulDiv(op, 255, 100), LWA_ALPHA);
+    SetLayeredWindowAttributes(_hwnd, 0, (BYTE)lingxi::OpacityToAlpha(op), LWA_ALPHA);
 }
 
 void CandWindow::DoPageStep(int steps)

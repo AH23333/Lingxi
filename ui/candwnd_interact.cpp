@@ -9,6 +9,7 @@
 #include "../common/log.h"
 #include "../common/settings.h"
 #include "uistyle.h"
+#include "style_logic.h" // 批15 透明度钳制单一口径（与候选窗 ApplyOpacity 同源）
 #include "settingsui.h"
 #include "blockedui.h" // 右键"屏蔽该词"（BlockWord/UnblockWord/IsWordBlocked）
 
@@ -378,10 +379,8 @@ LRESULT CandWindow::OnMouseWheel(WPARAM wParam)
     if (GetKeyState(VK_SHIFT) & 0x8000)
     {
         Settings st = LoadSettings();
-        int op = (int)st.candidateOpacity +
-                 ((short)GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? 5 : -5);
-        if (op < 70) op = 70;
-        if (op > 100) op = 100;
+        int op = (int)ClampOpacity((int)st.candidateOpacity +
+                 ((short)GET_WHEEL_DELTA_WPARAM(wParam) > 0 ? 5 : -5));
         if ((uint32_t)op != st.candidateOpacity)
         {
             st.candidateOpacity = (uint32_t)op;

@@ -23,6 +23,8 @@
 #include "../../common/pipe_util.h"
 #include "../../ui/cand_text.h" // 批9 候选截断口径（纯函数头文件，无链接依赖）
 #include "../../ui/mgmt_logic.h" // 批14 管理窗纯逻辑层（过滤/行解析/选择集/批量启停）
+#include "../../ui/style_logic.h" // 批15 皮肤/透明度链路纯逻辑（钳制/α映射/下拉映射）
+#include "../../ui/uistyle.h"     // 批15 UiSkin 越界回退（header-only）
 
 // 批8：ui/fileio.cpp 直链——UI 侧词典文件读写与失败路径实证（ROB 块）共用同一实现
 namespace lingxi {
@@ -3911,6 +3913,72 @@ int wmain(int argc, wchar_t** argv)
             Report(ApplyBulkDisabled(L"p1,p2,p3", one, true) == L"p1,p2,p3" &&
                    ApplyBulkDisabled(L"p1,p2", one, false) == L"p1",
                    "MG8 single-id toggle == bulk(ids=1) equivalence");
+        }
+    }
+
+    // ===== SK. 批15 皮肤/透明度链路钉：下拉映射→持久化→读校验→钳制/α（ui/style_logic.h）=====
+    // 候选窗分层渲染实际观感（半透明透出桌面、皮肤色板差异）blocked 待真机；
+    // 这里钉链条三段：设置页下拉双向映射、注册表持久化往返与越界拒绝→缺省
+    // （LoadSettings 校验口径）、渲染端钳制与 α 映射（ApplyOpacity/Shift+滚轮同源）。
+    {
+        using namespace lingxi;
+        // SK1 钳制边界（渲染端双保险；持久端拒绝口径见 SK7）
+        Report(ClampOpacity(69) == 70 && ClampOpacity(70) == 70 &&
+               ClampOpacity(100) == 100 && ClampOpacity(101) == 100 &&
+               ClampOpacity(0) == 70 && ClampOpacity(255) == 100,
+               "SK1 opacity clamp bounds");
+        // SK2 %→LWA_ALPHA 映射（MulDiv 四舍五入口径钉死：70→179 非 178）
+        Report(OpacityToAlpha(100) == 255 && OpacityToAlpha(70) == 179 &&
+               OpacityToAlpha(80) == 204 && OpacityToAlpha(90) == 230 &&
+               OpacityToAlpha(70) < OpacityToAlpha(80) &&
+               OpacityToAlpha(80) < OpacityToAlpha(90) &&
+               OpacityToAlpha(90) < OpacityToAlpha(100),
+               "SK2 opacity->alpha mapping exact + monotonic");
+        // SK3 设置页下拉双向映射（显示序 不透明/90/80/70；越界选择回缺省）
+        Report(OpacityFromComboSel(-1) == 100 && OpacityFromComboSel(0) == 100 &&
+               OpacityFromComboSel(1) == 90 && OpacityFromComboSel(2) == 80 &&
+               OpacityFromComboSel(3) == 70 && OpacityFromComboSel(4) == 100 &&
+               OpacityComboIndex(85) == 0 && OpacityComboIndex(70) == 3,
+               "SK3 combo roundtrip + out-of-set fallback");
+        // SK4 UiSkin 越界回退 0（候选窗/设置页/符号面板共用取色器）
+        Report(lingxi::UiSkin(0).accent == lingxi::UiSkin(7).accent &&
+               lingxi::UiSkin(0).accent == lingxi::UiSkin(100).accent &&
+               lingxi::UiSkin(6).accent != lingxi::UiSkin(0).accent,
+               "SK4 UiSkin out-of-range falls back to skin 0");
+        // SK5/SK6/SK7 持久化链路（独立沙盒键 skop，同 M5-TTL 模式；
+        // 换 NS 即缓存 miss，判定确定性无 sleep）
+        {
+            wchar_t prevNs[64] = L"";
+            GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs, 64);
+            SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", L"skop");
+            RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_skop");
+            lingxi::Settings s; s.skinIndex = 3; s.candidateOpacity = 80;
+            lingxi::SaveSettings(s);
+            lingxi::Settings r = lingxi::LoadSettings();
+            Report(r.skinIndex == 3 && r.candidateOpacity == 80,
+                   "SK5 SaveSettings roundtrip: skin+opacity");
+            lingxi::Settings d = lingxi::LoadSettings(); d.candidateOpacity = 90;
+            lingxi::SaveSettingsDiff(d);
+            lingxi::Settings r2 = lingxi::LoadSettings();
+            Report(r2.candidateOpacity == 90 && r2.skinIndex == 3,
+                   "SK6 SaveSettingsDiff: opacity moved, skin untouched");
+            // 越界拒绝→缺省：清键后直写 SkinIndex=7 / Opacity=120（无 SettingsSeq
+            // →缓存 haveSeq 不匹配必全量重读）→ Load 见 0/100
+            RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_skop");
+            HKEY hk = nullptr;
+            if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\LingxiIme_skop", 0, NULL,
+                                0, KEY_WRITE, NULL, &hk, NULL) == ERROR_SUCCESS)
+            {
+                DWORD a = 7, b = 120;
+                RegSetValueExW(hk, L"SkinIndex", 0, REG_DWORD, (const BYTE*)&a, sizeof(a));
+                RegSetValueExW(hk, L"CandidateOpacity", 0, REG_DWORD, (const BYTE*)&b, sizeof(b));
+                RegCloseKey(hk);
+            }
+            lingxi::Settings r3 = lingxi::LoadSettings();
+            Report(r3.skinIndex == 0 && r3.candidateOpacity == 100,
+                   "SK7 out-of-range direct write rejected to defaults (7/120)");
+            RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_skop");
+            SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs[0] ? prevNs : L"");
         }
     }
 
