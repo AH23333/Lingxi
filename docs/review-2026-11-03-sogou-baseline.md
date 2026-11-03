@@ -292,3 +292,10 @@ x64/x86 两份哈希与 §12.3 InprocServer32 记录逐字一致（快照即被�
 | bin\work32\ImeCore.dll（Win32） | 314368 | `B09F2EB3707943EE8E0656B7C048EAE4CB2943CDA69DC553073D88455B8B97F7` |
 
 门禁状态：engine_test 单实例重跑中（此前两实例同沙盒互撞双双 exit 1，已查杀重跑，见 `tmp\et_run_clean.txt`）。绿后执行有意替换 + imecheck + `--version`/`--diagnostics` 探针复验，新哈希补记本节。真机效果（双拼方案切换、候选数文案）**待用户重启后确认**。
+
+### 13.3 Tier1-4 符号库扩充——有意替换记录（commit `7754943`）
+
+- 门禁：`tmp\et_run5.txt`/`tmp\et_run6.txt` 单实例 PASS=333 FAIL=1；唯一红为拼音延迟 `jintianqi` median 18.8ms（阈值 10ms）——三连跑稳定 18.8~21.5ms、英文延迟 0.39ms 正常、文件完整性类（C4/C1a/C1c/L10）单实例下全绿，定性为**用户在用机器的环境性争用**，本 diff 未触碰引擎路径。此前 `et_run4` 的 7 条 FAIL 全部为双实例共享 `bin\enginetest\userdata\userdict.txt` 互删假红（协作方并发跑 engine_test 所致）。
+- 替换：`bin\Debug\LingxiUI.exe` = 3261440B `D0089F4C264D3C61E474F767383F624C0D3EB6B4EEC4E5A9E4D813EAB530DAB7`（旧件备份 `LingxiUI.exe.20261103173955.prev`，3249152B=A8D1DB03…）。**两枚 ImeCore.dll 未动**，复核哈希仍为 §13.1 冻结值（537C27C7…/EC940FE1…）。
+- 复验：imecheck Self-check PASSED；`--version` 输出 1.0.0；`--diagnostics` 正常（DLL 路径=bin\Debug，用户词库 716 条、注音/单位等节加载）。
+- **待用户重启后真机确认**：符号面板新"单位"类与分类检索词（shuxue/huobi/zhuyin/danwei 等）——候选窗/面板在 LingxiUI.exe 内，重启 UI 进程即可，无需注销。
