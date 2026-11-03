@@ -25,6 +25,8 @@
 #include "../../ui/mgmt_logic.h" // 批14 管理窗纯逻辑层（过滤/行解析/选择集/批量启停）
 #include "../../ui/style_logic.h" // 批15 皮肤/透明度链路纯逻辑（钳制/α映射/下拉映射）
 #include "../../ui/uistyle.h"     // 批15 UiSkin 越界回退（header-only）
+#include "../../ime/keygate.h"    // 审查缺陷② 数字键页宽认领闸统一谓词（header-only）
+#include "../../ui/combo_logic.h" // 审查缺陷⑤ combo 域内非选项值保留口径（header-only）
 
 // 批8：ui/fileio.cpp 直链——UI 侧词典文件读写与失败路径实证（ROB 块）共用同一实现
 namespace lingxi {
@@ -3876,23 +3878,25 @@ int wmain(int argc, wchar_t** argv)
         Report(!UdFilterMatch(L"猫", L"mao", L"狗") && !UdFilterMatch(L"猫", L"mao", L"maom") &&
                !UdFilterMatch(L"", L"", L"x"),
                "MG2 ud filter: miss + longer-than-key + empty entry");
-        // MG3 显示行解析（删除/提升/降低的唯一词条定位路径，4 空格分隔）
+        // MG3 显示行解析（删除/提升/降低的唯一词条定位路径；N5 起 tab 分隔）
         {
             std::wstring w, k;
-            bool a = ParseUdDisplayLine(L"猫    mao    5", w, k) && w == L"猫" && k == L"mao";
+            bool a = ParseUdDisplayLine(L"猫\tmao\t5", w, k) && w == L"猫" && k == L"mao";
             bool b = !ParseUdDisplayLine(L"nosep", w, k);
-            bool c = !ParseUdDisplayLine(L"猫    mao", w, k);       // 半截行（无 count 段）
-            bool d = !ParseUdDisplayLine(L"     mao    5", w, k);   // 空词条
-            Report(a && b && c && d, "MG3 ud line parse: ok/no-sep/half/empty-word");
+            bool c = !ParseUdDisplayLine(L"猫\tmao", w, k);           // 半截行（无 count 段）
+            bool d = !ParseUdDisplayLine(L"\tmao\t5", w, k);          // 空词条
+            bool e = ParseUdDisplayLine(L"a  b\tc  d\t9", w, k) && w == L"a  b" && k == L"c  d"; // N5 根因钉：字段含多空格不再错位
+            Report(a && b && c && d && e, "MG3 ud line parse: ok/no-sep/half/empty-word/inner-spaces");
         }
         // MG4 选择集→操作目标：LB_GETSEL 旗标、未选中/解析失败行跳过、保持列表序
         {
-            std::vector<std::wstring> lines = { L"a    aaa    1", L"broken", L"b    bbb    2", L"c    ccc    3" };
+            std::vector<std::wstring> lines = { L"a\taaa\t1", L"broken", L"b\tbbb\t2", L"c\tccc\t3" };
             std::vector<int> sel = { 1, 1, 0, 1 };
-            auto t = CollectSelected(lines, sel);
+            size_t sk = 0;
+            auto t = CollectSelected(lines, sel, sk);
             Report(t.size() == 2 && t[0].word == L"a" && t[0].key == L"aaa" &&
-                   t[1].word == L"c" && t[1].key == L"ccc",
-                   "MG4 selection set: skip unselected/unparseable, order kept");
+                   t[1].word == L"c" && t[1].key == L"ccc" && sk == 1, // N5：跳过计数不静默
+                   "MG4 selection set: skip counted, order kept");
         }
         // MG5/MG6 批量启停停用表（Cell.disabled 唯一写入口口径）
         Report(ApplyBulkDisabled(L"a,b", { L"b", L"c" }, true) == L"a,b,c" && // 去重+追加
@@ -3936,12 +3940,13 @@ int wmain(int argc, wchar_t** argv)
                OpacityToAlpha(80) < OpacityToAlpha(90) &&
                OpacityToAlpha(90) < OpacityToAlpha(100),
                "SK2 opacity->alpha mapping exact + monotonic");
-        // SK3 设置页下拉双向映射（显示序 不透明/90/80/70；越界选择回缺省）
-        Report(OpacityFromComboSel(-1) == 100 && OpacityFromComboSel(0) == 100 &&
-               OpacityFromComboSel(1) == 90 && OpacityFromComboSel(2) == 80 &&
-               OpacityFromComboSel(3) == 70 && OpacityFromComboSel(4) == 100 &&
-               OpacityComboIndex(85) == 0 && OpacityComboIndex(70) == 3,
-               "SK3 combo roundtrip + out-of-set fallback");
+        // SK3 设置页下拉双向映射（显示序 不透明/90/80/70；缺陷⑤改口径：
+        // 越界选择保留原值、非选项值回显 CB_ERR——旧"回缺省"即静默重置根因）
+        Report(OpacityFromComboSel(-1, 85) == 85 && OpacityFromComboSel(0, 85) == 100 &&
+               OpacityFromComboSel(1, 85) == 90 && OpacityFromComboSel(2, 85) == 80 &&
+               OpacityFromComboSel(3, 85) == 70 && OpacityFromComboSel(4, 85) == 85 &&
+               OpacityComboIndex(85) == CB_ERR && OpacityComboIndex(70) == 3,
+               "SK3 combo roundtrip + keep-original");
         // SK4 UiSkin 越界回退 0（候选窗/设置页/符号面板共用取色器）
         Report(lingxi::UiSkin(0).accent == lingxi::UiSkin(7).accent &&
                lingxi::UiSkin(0).accent == lingxi::UiSkin(100).accent &&
@@ -4072,6 +4077,55 @@ int wmain(int argc, wchar_t** argv)
         }
         Report(exA, "EX1 all-manual key: Learn evicts no manual, new word refused");
         Report(exB, "EX2 mixed key: victim=learned, low-count manual survives");
+    }
+
+    // ===== DG. 审查缺陷② 数字键 Test/Down 页宽对称钉（ime/keygate.h 统一谓词）=====
+    // Test 侧三处认领（组合态/直通道/联想门）与 Down 侧选词闸共用
+    // DigitSelectClaim——对称性由单一谓词保证；真机按键分发 blocked 待真机。
+    {
+        bool t3 = true, t1 = true, t9 = true, sym = true, non = true;
+        for (uint32_t w = L'1'; w <= L'9'; w++)
+        {
+            const uint32_t off = w - L'1';
+            if (lingxi::DigitSelectClaim(w, 3) != (off < 3)) t3 = false;
+            if (lingxi::DigitSelectClaim(w, 1) != (off < 1)) t1 = false;
+            if (!lingxi::DigitSelectClaim(w, 9)) t9 = false; // 页宽 9=历史零变化基线
+            // 与 Down 侧公式 (wParam-'1') < candPageSize 全组合等价
+            for (uint32_t ps = 1; ps <= 9; ps++)
+                if (lingxi::DigitSelectClaim(w, ps) != (off < ps)) sym = false;
+        }
+        non = !lingxi::DigitSelectClaim(L'0', 9) && !lingxi::DigitSelectClaim(VK_TAB, 9) &&
+              !lingxi::DigitSelectClaim(L'9' + 1, 9);
+        Report(t3 && t1, "DG1 claim gate: pageSize 3/1 truth table");
+        Report(t9, "DG2 claim gate: pageSize 9 == legacy all-claim (zero change)");
+        Report(sym && non, "DG3 Test/Down formula equivalence + non-digit reject");
+    }
+
+    // ---- CS: 审查缺陷⑤ combo 域内非选项值保留（combo_logic.h）----
+    {
+        using namespace lingxi;
+        // CS1 回显侧：域内非选项值（1/2/4/7/8）→ CB_ERR，选项值→各自下标
+        Report(PageSizeComboIndex(3) == 0 && PageSizeComboIndex(5) == 1 &&
+               PageSizeComboIndex(6) == 2 && PageSizeComboIndex(9) == 3 &&
+               PageSizeComboIndex(1) == CB_ERR && PageSizeComboIndex(7) == CB_ERR &&
+               PageSizeComboIndex(8) == CB_ERR,
+               "CS1 pagesize echo: in-domain non-option -> CB_ERR");
+        // CS2 保存侧：无选择保留原值，正常选择生效
+        Report(PageSizeFromComboSel(CB_ERR, 7) == 7 &&
+               PageSizeFromComboSel(-1, 1) == 1 &&
+               PageSizeFromComboSel(0, 7) == 3 &&
+               PageSizeFromComboSel(3, 2) == 9,
+               "CS2 pagesize save: CB_ERR keeps, sel applies");
+        // CS3 透明度同型口径：85 回显 CB_ERR、保存保留；正常选择生效
+        Report(OpacityComboIndex(85) == CB_ERR && OpacityComboIndex(70) == 3 &&
+               OpacityFromComboSel(CB_ERR, 85) == 85 &&
+               OpacityFromComboSel(2, 85) == 80,
+               "CS3 opacity keep-original semantics");
+        // CS4 端到端（用户口径）：设成域内非选项值→打开设置页（回显）→
+        // 保存→值不变
+        Report(PageSizeFromComboSel(PageSizeComboIndex(7), 7) == 7 &&
+               OpacityFromComboSel(OpacityComboIndex(75), 75) == 75,
+               "CS4 load+save roundtrip preserves in-domain non-option value");
     }
 
     wprintf(L"=== 结果: PASS=%d FAIL=%d ===\n", g_pass, g_fail);

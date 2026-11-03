@@ -8,6 +8,7 @@
 //
 #include "service.h"
 #include "editsession.h"
+#include "keygate.h" // 批② 数字键页宽认领闸统一谓词（与 service.cpp 三处同源）
 
 #include "../common/proto.h"
 #include "../common/guids.h"
@@ -834,7 +835,10 @@ bool CTextService::PinyinKeyEaten(WPARAM wParam)
             return IsChinesePunctKey(wParam);
         }
         if (wParam >= L'1' && wParam <= L'9' && !shiftOrCaps)
-            return CandidatesVisible(); // 无 Shift 数字 = 当前页选词
+            // 审查缺陷②：认领闸与 Down 侧选词闸同口径（页宽 3 按 5 曾被
+            // 吃掉还把拼音串原样上屏）；页外数字放行给宿主
+            return CandidatesVisible() &&
+                   lingxi::DigitSelectClaim((uint32_t)wParam, LoadSettings().candPageSize);
         if ((wParam == VK_OEM_4 || wParam == VK_OEM_6) && !shiftOrCaps)
             return CandidatesVisible(); // 以词定字（GAP §1）：候选可见 [ ] 才认领，不可见原【】标点/放行
         return IsChinesePunctKey(wParam); // 其余标点（含 Shift 数字 ！？（）等）

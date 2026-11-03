@@ -1,5 +1,6 @@
 #include "service.h"
 #include "editsession.h"
+#include "keygate.h" // 批② 数字键页宽认领闸统一谓词（与 composition.cpp 同源）
 
 #include "../common/proto.h"
 #include "../common/guids.h"
@@ -717,8 +718,11 @@ bool CTextService::ReplaceTextBeforeCaret(const std::wstring& text, uint32_t del
 
 static bool IsSelectionKey(WPARAM wParam)
 {
+    // 审查缺陷②：数字认领加页宽闸（与 Down 侧选词闸同口径）——页宽<9 时
+    // 页外数字不认领、放行给宿主
+    const uint32_t ps = LoadSettings().candPageSize;
     return wParam == VK_TAB ||
-           (wParam >= L'1' && wParam <= L'9') ||
+           lingxi::DigitSelectClaim((uint32_t)wParam, ps) ||
            wParam == VK_ESCAPE;
 }
 
@@ -792,7 +796,7 @@ STDMETHODIMP CTextService::OnTestKeyDown(ITfContext* pContext, WPARAM wParam, LP
         // 防候选留在屏上语义漂变。
         const bool keepAssoc =
             wParam == VK_SPACE || wParam == VK_TAB ||   // Tab=提交首选（与下方选词道对齐）
-            (wParam >= L'1' && wParam <= L'9');
+            lingxi::DigitSelectClaim((uint32_t)wParam, LoadSettings().candPageSize); // 审查缺陷②：页外数字撤销联想并放行
         if (!keepAssoc)
         {
             LX_LOG(L"ime", L"联想撤销 vk=0x%02X", (uint32_t)wParam);
