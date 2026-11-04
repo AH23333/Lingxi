@@ -4156,6 +4156,35 @@ int wmain(int argc, wchar_t** argv)
         }
     }
 
+    // ===== N11：BumpSettingsSeq 双写碰撞（同 seq 残局）的 TTL 兜底自愈 =====
+    // 碰撞窗口（LoadSettings 内部读 seq 与读值之间）外部不可注入；此处构造碰撞
+    // 后残局——值已变而 seq 未再推进（直写不 bump）：TTL 内读侧缓存命中旧值
+    //（陈旧有界），过 TTL 全量重读收敛新值。这就是注释更正后的真实机制。
+    {
+        wchar_t prevNs[64] = L"";
+        GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs, 64);
+        SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", L"n11");
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_n11");
+        lingxi::Settings a; a.candidateOpacity = 80; lingxi::SaveSettings(a);
+        lingxi::Settings r1 = lingxi::LoadSettings(); // 建立缓存（记 seq=S）
+        HKEY hk = nullptr;
+        if (RegCreateKeyExW(HKEY_CURRENT_USER, L"Software\\LingxiIme_n11", 0, NULL,
+                            0, KEY_WRITE, NULL, &hk, NULL) == ERROR_SUCCESS)
+        {
+            DWORD v90 = 90; // 碰撞残局：值改、seq 不推进
+            RegSetValueExW(hk, L"CandidateOpacity", 0, REG_DWORD, (const BYTE*)&v90, sizeof(v90));
+            RegCloseKey(hk);
+        }
+        lingxi::Settings r2 = lingxi::LoadSettings(); // TTL 内：seq 未变 → 命中旧值
+        Sleep(600);                                    // 过 kSetCacheTtlMs(500ms)
+        lingxi::Settings r3 = lingxi::LoadSettings(); // TTL 过期 → 全量重读收敛
+        Report(r1.candidateOpacity == 80 && r2.candidateOpacity == 80 &&
+               r3.candidateOpacity == 90,
+               "N11 same-seq collision: stale within TTL, self-heals after TTL");
+        RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_n11");
+        SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs[0] ? prevNs : L"");
+    }
+
     // ===== BL. 批16 冷启动/候选生成耗时基线打点（每次发版可对比的一行数字）=====
     // 台架可确证的两段：① 词典加载=本进程首建 CreatePinyinPredictor（M5 处
     // 采集，登录冷启动真路径）；② 逐键候选生成=中位耗时（预热5+30次取 p50，

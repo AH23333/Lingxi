@@ -92,8 +92,14 @@ void SetQword(HKEY hKey, const wchar_t* name, unsigned long long v)
 
 // M5：设置版本号 bump——SaveSettings/SaveSettingsDiff 落盘尾部调用；读侧
 // （LoadSettings）版本不变且未超 TTL 才用缓存。键删除（ResetToDefaults）
-// 连版本号一起消失 → 下次读必 miss。并发双写最坏 seq 相同但值已变：读侧
-// 先读 seq 后读值，撕裂快照只存活到下一次 bump，可自愈。
+// 连版本号一起消失 → 下次读必 miss。
+// 双写碰撞的真实兜底口径（N11 更正旧注释误述"下一次 bump 自愈"）：先读后加
+// 非原子，双写者可产生**相同**新 seq——碰撞双方已把 seq 推到同值，读侧此后
+// 缓存命中不再重读，"下一次 bump"并不存在。实际自愈靠读侧 kSetCacheTtlMs
+// （500ms）TTL：撕裂/陈旧快照最多存活一个 TTL 周期，过期全量重读即收敛。
+// 不改行为的理由：生产单写者（LingxiUI 单例 + IME DLL 只读设置）使碰撞实际
+// 不可达；跨进程 CAS 需命名互斥锁，复杂度/挂死风险换不来不可达场景的收益。
+// engine_test N11 块钉 TTL 自愈语义（同 seq 残局 → TTL 内陈旧、过期收敛）。
 void BumpSettingsSeq(HKEY hKey)
 {
     DWORD seq = 0;
