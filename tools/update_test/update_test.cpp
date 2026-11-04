@@ -988,6 +988,46 @@ int wmain(int argc, wchar_t** argv) {
         CHECK(TryPendingRollbackSelfHeal(t2bin, nullptr), L"T2d 无标记自检 no-op");
     }
 
+    // ---------- T3：.prev-* 快照清理（保留最近 2 套，删最旧；失败只记日志）----------
+    {
+        std::wstring t3bin = g_tmp + L"\\t3\\bin";
+        CHECK(MkdirP(t3bin + L"\\Debug") && MkdirP(t3bin + L"\\Debug32"), L"T3 假树就绪");
+        WriteStr(t3bin + L"\\Debug\\a.dll.prev-100", "S1");
+        WriteStr(t3bin + L"\\Debug32\\a.dll.prev-100", "X1");
+        WriteStr(t3bin + L"\\Debug\\a.dll.prev-200", "S2");
+        WriteStr(t3bin + L"\\Debug\\b.dll.prev-200", "S2b");     // 同 ts 一套两件
+        WriteStr(t3bin + L"\\Debug\\a.dll.prev-300", "S3");
+        WriteStr(t3bin + L"\\Debug\\a.dll.prev-300-2", "S3q");   // 同秒撞名同属一套
+        WriteStr(t3bin + L"\\Debug32\\a.dll.prev-300", "X3");
+        std::wstring clog;
+        size_t del = CleanupOldPrevSnapshots(t3bin, 2, &clog);
+        CHECK(del == 2 &&
+                  GetFileAttributesW((t3bin + L"\\Debug\\a.dll.prev-100").c_str()) == INVALID_FILE_ATTRIBUTES &&
+                  GetFileAttributesW((t3bin + L"\\Debug32\\a.dll.prev-100").c_str()) == INVALID_FILE_ATTRIBUTES &&
+                  ReadAll(t3bin + L"\\Debug\\a.dll.prev-200") == "S2" &&
+                  ReadAll(t3bin + L"\\Debug\\b.dll.prev-200") == "S2b" &&
+                  ReadAll(t3bin + L"\\Debug\\a.dll.prev-300") == "S3" &&
+                  ReadAll(t3bin + L"\\Debug\\a.dll.prev-300-2") == "S3q" &&
+                  ReadAll(t3bin + L"\\Debug32\\a.dll.prev-300") == "X3",
+              L"T3a 三套快照清到两套：删最旧（双侧+同 ts 组套+seq 尾件归属正确）");
+        // 失败分支：最旧套一件被锁 → 删不掉只记日志保留，不影响其他
+        WriteStr(t3bin + L"\\Debug\\a.dll.prev-040", "S0");
+        WriteStr(t3bin + L"\\Debug\\a.dll.prev-050", "S0L");
+        g_t2LockPath = t3bin + L"\\Debug\\a.dll.prev-050";
+        g_t2Lock = CreateFileW(g_t2LockPath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                               OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL); // 拒 DELETE
+        std::wstring clog2;
+        size_t del2 = CleanupOldPrevSnapshots(t3bin, 2, &clog2);
+        CHECK(del2 == 1 && clog2.find(L"清理失败") != std::wstring::npos &&
+                  GetFileAttributesW(g_t2LockPath.c_str()) != INVALID_FILE_ATTRIBUTES &&
+                  GetFileAttributesW((t3bin + L"\\Debug\\a.dll.prev-040").c_str()) == INVALID_FILE_ATTRIBUTES,
+              L"T3b 占用件保留+记日志，其余旧套照删（清理失败不影响结果）");
+        if (g_t2Lock) { CloseHandle(g_t2Lock); g_t2Lock = NULL; }
+        size_t del3 = CleanupOldPrevSnapshots(t3bin, 2, nullptr);
+        CHECK(del3 == 1 && GetFileAttributesW(g_t2LockPath.c_str()) == INVALID_FILE_ATTRIBUTES,
+              L"T3c 解锁后再清：残留旧件删净");
+    }
+
     // ---------- 批次 4：VerifyInstalledHashes 直接对（篡改兜底）----------
     {
         std::wstring err;

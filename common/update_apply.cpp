@@ -6,7 +6,9 @@
 
 #include <shellapi.h>
 
+#include <algorithm>
 #include <ctime>
+#include <functional>
 
 #include "update_fetch.h"
 
@@ -562,7 +564,61 @@ bool ApplyUpdate(const ApplyRequest& req, const ApplyHooks& hooks, std::wstring*
     }
     if (!VerifyInstalledHashes(plan, &sub)) return failWith(L"自验失败（落盘 SHA256）: " + sub);
     if (log) *log += L"自验 3/3 落盘哈希与包内一致\n";
+    // T3：更新成功后清理更早的 .prev-* 快照（保留最近 2 套；失败只记日志）
+    CleanupOldPrevSnapshots(req.binRoot, 2, log);
     return true;
+}
+
+// ---------- T3 .prev-* 快照清理（保留最近 N 套） ----------
+size_t CleanupOldPrevSnapshots(const std::wstring& binRoot, size_t keepSets,
+                               std::wstring* log)
+{
+    // 收集：<ts 数值, 文件全路径>（ts= ".prev-" 后的数字段；同秒 -<seq> 撞名同属一套）
+    std::vector<std::pair<unsigned long long, std::wstring>> snaps;
+    const wchar_t* subDirs[] = { L"Debug", L"Debug32" };
+    for (const wchar_t* sub : subDirs)
+    {
+        std::wstring dir = binRoot + L"\\" + sub;
+        WIN32_FIND_DATAW fd{};
+        HANDLE h = FindFirstFileW((dir + L"\\*.prev-*").c_str(), &fd);
+        if (h == INVALID_HANDLE_VALUE) continue;
+        do
+        {
+            if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+            const wchar_t* mark = wcsstr(fd.cFileName, L".prev-");
+            if (!mark) continue;
+            const wchar_t* p = mark + 6;
+            if (!(*p >= L'0' && *p <= L'9')) continue;
+            unsigned long long ts = 0;
+            while (*p >= L'0' && *p <= L'9') { ts = ts * 10 + (unsigned)(*p - L'0'); p++; }
+            snaps.push_back({ ts, dir + L"\\" + fd.cFileName });
+        } while (FindNextFileW(h, &fd));
+        FindClose(h);
+    }
+    if (snaps.empty()) return 0;
+    // 定界：按 ts 降序取第 keepSets 套的 ts 为下限（同 ts 全保）
+    std::vector<unsigned long long> tss;
+    for (const auto& s : snaps) tss.push_back(s.first);
+    std::sort(tss.begin(), tss.end(), std::greater<unsigned long long>());
+    tss.erase(std::unique(tss.begin(), tss.end()), tss.end());
+    if (keepSets == 0 || tss.size() <= keepSets) return 0; // 套数未超 → 不动
+    unsigned long long floor = tss[keepSets - 1]; // 第 keepSets 新套的 ts（>=floor 保留）
+    size_t deleted = 0, failed = 0;
+    for (const auto& s : snaps)
+    {
+        if (s.first >= floor) continue; // 保留带
+        if (DeleteFileW(s.second.c_str())) deleted++;
+        else
+        {
+            failed++;
+            if (log) *log += L"快照清理失败(保留) " + s.second + L"\n";
+        }
+    }
+    if (log && (deleted || failed))
+        *log += L".prev-* 快照清理：删 " + std::to_wstring(deleted) +
+                L" 件，保留最近 " + std::to_wstring(keepSets) + L" 套" +
+                (failed ? L"（失败 " + std::to_wstring(failed) + L" 件保留）" : L"") + L"\n";
+    return deleted;
 }
 
 // ---------- T2 pending-rollback 标记与启动自检 ----------

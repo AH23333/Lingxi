@@ -79,10 +79,17 @@ struct ApplyRequest {
 
 // 完整流程：计划 → rename-aside+复制（T9 原子性）→ 重注册 → 自验（imecheck+探针+哈希）
 // → 任一步失败整体回滚（删新件、.prev-* 原名改回）。
-// 成功后 bin 目录保留 .prev-<ts> 快照（最近一轮），绝不自动删除。
+// 成功后保留最近 2 套 .prev-<ts> 快照（T3），更早的自动清理（失败只记日志）。
 // log 可空；非空则逐步追加中文进度（UI 展示）。
 bool ApplyUpdate(const ApplyRequest& req, const ApplyHooks& hooks, std::wstring* err,
                  std::wstring* log);
+
+// ===== T3 .prev-* 快照清理 =====
+// 扫描 binRoot\Debug 与 Debug32 下 *.prev-*（含同秒撞名的 -<seq> 尾件，同 ts 归一套），
+// 按时间戳保留最近 keepSets 套，删除更早的。删除失败（占用等）只记 log 不影响结果。
+// 返回成功删除的文件数。
+size_t CleanupOldPrevSnapshots(const std::wstring& binRoot, size_t keepSets,
+                               std::wstring* log);
 
 // ===== 一次性 UAC 提权发起（批次 5 UI 调用；本批不做真实 UAC 测试）=====
 // ShellExecuteW "runas" selfExe，参数 --update-apply "<stagingDir>"（T10：
