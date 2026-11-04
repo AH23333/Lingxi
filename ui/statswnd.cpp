@@ -80,18 +80,11 @@ void StatsExportCsv(HWND h)
         WideCharToMultiByte(CP_UTF8, 0, body, -1, &s[0], n, NULL, NULL);
         u8 += s;
     }
-    bool ok = false;
-    HANDLE hf = CreateFileW(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
-                            FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hf != INVALID_HANDLE_VALUE)
-    {
-        DWORD written = 0;
-        ok = WriteFile(hf, u8.data(), (DWORD)u8.size(), &written, NULL) &&
-             written == u8.size();
-        CloseHandle(hf);
-    }
+    // N10：原子写（fileio WriteFileBytes：.tmp+刷盘+rename，失败删 .tmp）——
+    // 直写目标件在中途失败/断电时留半截 CSV；目标被占则旧件完好、明示失败。
+    bool ok = WriteFileBytes(path, u8);
     MessageBoxW(h, ok ? (L"统计 CSV 已导出到：\n" + std::wstring(path)).c_str()
-                      : L"导出失败（无法写入文件）。",
+                      : L"导出失败（目标文件被占用或不可写；已有文件未被改动）。",
                 L"导出统计 CSV", MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONWARNING));
     LX_LOG(L"ui", L"统计 CSV 导出 ok=%d path=%ls", (int)ok, path);
 }
@@ -140,18 +133,9 @@ void StatsExportReport(HWND h)
                      st.wYear, st.wMonth, st.wDay, st.wHour, st.wMinute, st.wSecond);
         path = dir + name;
     }
-    bool ok = false;
-    HANDLE hf = CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL,
-                            CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-    if (hf != INVALID_HANDLE_VALUE)
-    {
-        DWORD written = 0;
-        ok = WriteFile(hf, u8.data(), (DWORD)u8.size(), &written, NULL) &&
-             written == u8.size();
-        CloseHandle(hf);
-    }
+    bool ok = WriteFileBytes(path, u8); // N10：原子写（同 CSV 导出注记）
     MessageBoxW(h, ok ? (L"诊断报告已导出到：\n" + path).c_str()
-                      : L"导出失败（无法写入文件，详见日志）",
+                      : L"导出失败（目标目录不可写，详见日志）",
                 L"导出诊断报告", MB_OK | (ok ? MB_ICONINFORMATION : MB_ICONWARNING));
     LX_LOG(L"ui", L"诊断报告导出 ok=%d path=%ls", (int)ok, path.c_str());
 }
