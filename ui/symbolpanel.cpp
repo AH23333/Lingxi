@@ -916,6 +916,16 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
 
 void ShowSymbolPanel(HINSTANCE hInst, std::function<void(const std::wstring&)> onInsert)
 {
+    // T4 线程防线：面板全部状态是 UI 线程私有静态（g_hPanel/g_cat/搜索缓存…），
+    // 非 UI 线程进入即拒——不崩、不改现有行为；首调定基准，异线程调用记日志。
+    static DWORD s_uiTid = 0;
+    if (s_uiTid == 0) s_uiTid = GetCurrentThreadId();
+    else if (GetCurrentThreadId() != s_uiTid)
+    {
+        LX_LOG(L"ui", L"符号面板拒绝非 UI 线程调用: tid=%u（UI tid=%u）",
+               GetCurrentThreadId(), s_uiTid);
+        return;
+    }
     // 热键/托盘重按 = 切替关闭（搜狗范式）：旧实现已开只置顶，用户重按热键
     // 面板纹丝不动，叠加"仅右键可关且无提示"——体感"面板关不掉"。
     if (g_hPanel)
