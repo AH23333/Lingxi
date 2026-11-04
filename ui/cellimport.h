@@ -37,4 +37,8 @@ struct CellImportResult
 CellImportResult ImportCellPackSync(const std::wstring& srcPath,
                                     const std::unordered_set<std::string>& validSylls,
                                     bool overwrite);
+
+// N7：清理 cell 目录下 rename-aside 残留的 *.del（删除时被占用改名让位的死件）。
+// 返回成功删除数；failed 非空时回填失败数（仍被占用等——调用方须记日志不静默）。
+size_t CleanupCellDelResidue(size_t* failed);
 } // namespace lingxi

@@ -3054,6 +3054,32 @@ int wmain(int argc, wchar_t** argv)
         Report(r4.ok && r4.id == "sctest" && r4.imported == 2 && normalized,
                "CELLc-4 plain-text fallback: id from stem, normalized .lxcell landed");
 
+        // c-6（N7）.del 残留清理：未占用即删；被占用跳过且 failed 计数（不静默）；
+        // 占压解除后重试删净
+        {
+            std::wstring delA = cellDir + L"\\resa.del", delB = cellDir + L"\\resb.del";
+            auto wrTiny = [](const std::wstring& p) {
+                HANDLE h = CreateFileW(p.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                                       FILE_ATTRIBUTE_NORMAL, NULL);
+                if (h != INVALID_HANDLE_VALUE)
+                { DWORD w = 0; WriteFile(h, "x", 1, &w, NULL); CloseHandle(h); }
+            };
+            wrTiny(delA); wrTiny(delB);
+            HANDLE hHold = CreateFileW(delA.c_str(), GENERIC_WRITE, 0, NULL,
+                                       OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL); // 无共享=占用
+            size_t failed = 99;
+            size_t n1 = lingxi::CleanupCellDelResidue(&failed);
+            bool aStay = GetFileAttributesW(delA.c_str()) != INVALID_FILE_ATTRIBUTES;
+            bool bGone = GetFileAttributesW(delB.c_str()) == INVALID_FILE_ATTRIBUTES;
+            if (hHold != INVALID_HANDLE_VALUE) CloseHandle(hHold);
+            size_t failed2 = 99;
+            size_t n2 = lingxi::CleanupCellDelResidue(&failed2);
+            bool aGone = GetFileAttributesW(delA.c_str()) == INVALID_FILE_ATTRIBUTES;
+            Report(n1 == 1 && failed == 1 && aStay && bGone &&
+                   n2 == 1 && failed2 == 0 && aGone,
+                   "CELLc-6 .del residue: unlocked deleted, locked skipped+counted, retry ok");
+        }
+
         // c-5 复核不一致分支不可注入（磁盘故障类）——此处如实不测，见 commit 说明
         DeleteFileW((cellDir + L"\\cimp.lxcell").c_str());
         DeleteFileW((cellDir + L"\\sctest.lxcell").c_str());

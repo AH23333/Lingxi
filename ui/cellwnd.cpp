@@ -258,6 +258,13 @@ void DoDelete(HWND hwnd)
         if (MoveFileExW(path.c_str(), aside.c_str(), 0)) deleted.push_back(id);
         else failed.push_back(id);
     }
+    // N7：rename-aside 产出的 .del 立即试清（引擎句柄释放后即可删净）
+    {
+        size_t cleanFailed = 0;
+        size_t cleaned = CleanupCellDelResidue(&cleanFailed);
+        if (cleaned || cleanFailed)
+            LX_LOG(L"ui", L"删除后 .del 清理: 删 %zu 失败 %zu", cleaned, cleanFailed);
+    }
     if (!deleted.empty())
     {
         Settings st = LoadSettings();
@@ -339,6 +346,13 @@ LRESULT CALLBACK CellWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
 
 void ShowCellDictWindow(HINSTANCE hInst)
 {
+    // N7：开窗即清 rename-aside 残留的 .del 死件（占用中删不掉则记日志，下次再试）
+    {
+        size_t failed = 0;
+        size_t n = CleanupCellDelResidue(&failed);
+        if (n || failed)
+            LX_LOG(L"ui", L"细胞词库 .del 残留清理: 删 %zu 失败 %zu", n, failed);
+    }
     if (g_hCellWnd)
     {
         ShowWindow(g_hCellWnd, SW_SHOW);

@@ -326,4 +326,24 @@ CellImportResult ImportCellPackSync(const std::wstring& srcPath,
     return res;
 }
 
+// N7：rename-aside 的 .del 死件清理（DoDelete 改名让位后无删除路径的根治）。
+// 仍被占用（引擎正读）的 .del 删除失败属正常——下次开窗/操作后再试，调用方记日志。
+size_t CleanupCellDelResidue(size_t* failed)
+{
+    if (failed) *failed = 0;
+    size_t deleted = 0;
+    std::wstring dir = CellPackDirW();
+    WIN32_FIND_DATAW fd{};
+    HANDLE h = FindFirstFileW((dir + L"\\*.del").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return 0;
+    do
+    {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        if (DeleteFileW((dir + L"\\" + fd.cFileName).c_str())) deleted++;
+        else if (failed) (*failed)++;
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return deleted;
+}
+
 } // namespace lingxi
