@@ -560,6 +560,16 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
         return 0;
     }
 
+    // T2：上次更新回滚不完整的补做自检（无标记=纯一次文件探测 no-op；
+    // 补做失败=标记保留+日志，不静默——宿主仍占用旧件时 ACL/占用失败属预期）
+    {
+        std::wstring binRoot, workRoot, healLog;
+        if (lingxi::updater::ComputeBinRootsFromModule(&binRoot, &workRoot))
+            lingxi::updater::TryPendingRollbackSelfHeal(binRoot, &healLog);
+        if (!healLog.empty())
+            LX_LOG(L"ui", L"更新回滚自检: %ls", healLog.c_str());
+    }
+
     // 自助更新：自动检查（默认关；开则距上次检查满 24h 才后台查一次，设计 §1/§8）
     lingxi::UpdateUiAutoCheckOnStartup();
 

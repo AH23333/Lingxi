@@ -91,5 +91,14 @@ bool ApplyUpdate(const ApplyRequest& req, const ApplyHooks& hooks, std::wstring*
 bool LaunchElevatedApply(const std::wstring& selfExe, const std::wstring& stagingDir,
                          std::wstring* err);
 
+// ===== T2 pending-rollback 补救（回滚不完整不再是"诚实但无补救"）=====
+// 回滚不完整时（新件被宿主加载删不掉/旧件改不回）落标记文件
+// <binRoot>\work\pending-rollback.txt（UTF-8 行式：reason=/copied=/prev=<prev>|<dst>）。
+std::wstring PendingRollbackMarkerPath(const std::wstring& binRoot);
+// LingxiUI 启动自检：无标记 → true（no-op）；有标记 → 按标记补做回滚
+//（删新件+旧快照改回；已缺失的件按"上轮部分回滚已完成"判定幂等）。
+// 全成 → 删标记返回 true；任一失败 → 保留标记、log 追加明细（不静默）返回 false。
+bool TryPendingRollbackSelfHeal(const std::wstring& binRoot, std::wstring* log);
+
 } // namespace updater
 } // namespace lingxi

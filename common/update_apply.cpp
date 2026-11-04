@@ -387,28 +387,74 @@ struct ReplaceState {
     std::vector<std::pair<std::wstring, std::wstring>> renamed;  // {prev, 原 dst}
 };
 
+// T2：回滚不完整时落 pending-rollback 标记（tmp+rename 原子写）。UTF-8 行式。
+void WritePendingRollbackMarker(const std::wstring& binRoot, const ReplaceState& st,
+                                const std::wstring& reason, std::wstring* note)
+{
+    auto u8of = [](const std::wstring& w) {
+        if (w.empty()) return std::string();
+        int n = WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), NULL, 0, NULL, NULL);
+        std::string s(n, '\0');
+        WideCharToMultiByte(CP_UTF8, 0, w.c_str(), (int)w.size(), &s[0], n, NULL, NULL);
+        return s;
+    };
+    std::string body = "v=1\n";
+    std::wstring oneLine = reason;
+    for (auto& ch : oneLine) if (ch == L'\n' || ch == L'\r') ch = L'；';
+    body += "reason=" + u8of(oneLine) + "\n";
+    for (const auto& c : st.copied) body += "copied=" + u8of(c) + "\n";
+    for (const auto& pr : st.renamed) body += "prev=" + u8of(pr.first) + "|" + u8of(pr.second) + "\n";
+
+    std::wstring mp = PendingRollbackMarkerPath(binRoot);
+    std::wstring e;
+    if (!EnsureParentDirs(mp, &e)) { *note += L"回滚标记目录不可建: " + e + L"；"; return; }
+    std::wstring tmp = mp + L".tmp";
+    HANDLE h = CreateFileW(tmp.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) { *note += L"回滚标记写入失败；"; return; }
+    DWORD w = 0;
+    BOOL ok = WriteFile(h, body.data(), (DWORD)body.size(), &w, NULL);
+    if (ok && w == (DWORD)body.size()) ok = FlushFileBuffers(h);
+    CloseHandle(h);
+    if (!ok || w != (DWORD)body.size() ||
+        !MoveFileExW(tmp.c_str(), mp.c_str(), MOVEFILE_REPLACE_EXISTING))
+    {
+        DeleteFileW(tmp.c_str());
+        *note += L"回滚标记落盘失败；";
+        return;
+    }
+    *note += L"已落 pending-rollback 标记（下次启动自检补做）；";
+}
+
 // 回滚：删新件 → .prev-* 原名改回。note 收集回滚自身的失败（必须上报，绝不吞）。
-bool RollbackAll(ReplaceState* st, std::wstring* note)
+// pending* 非空时回填"未完成项"（T2 标记只记未完成项——已回滚成功的件不进标记，
+// 否则启动自检会把上轮已恢复的 dst 误删）。
+bool RollbackAll(ReplaceState* st, std::wstring* note,
+                 std::vector<std::wstring>* pendingCopied = nullptr,
+                 std::vector<std::pair<std::wstring, std::wstring>>* pendingRenamed = nullptr)
 {
     bool clean = true;
     for (auto it = st->copied.rbegin(); it != st->copied.rend(); ++it) {
         if (!DeleteFileW(it->c_str())) {
             clean = false;
             *note += L"删除新件失败 " + *it + L"(err=" + std::to_wstring(GetLastError()) + L")；";
+            if (pendingCopied) pendingCopied->push_back(*it);
         }
     }
     for (auto it = st->renamed.rbegin(); it != st->renamed.rend(); ++it) {
         if (!MoveFileExW(it->first.c_str(), it->second.c_str(), 0)) {
             clean = false;
             *note += L"旧件改回失败 " + it->second + L"(err=" + std::to_wstring(GetLastError()) + L")；";
+            if (pendingRenamed) pendingRenamed->push_back(*it);
         }
     }
     return clean;
 }
 
 // T9 两阶段：先全部 rename-aside（被锁 DLL 改名合法，#89），再全部复制。
-// 任一失败 → 已做操作全部撤销，不留半替换态。
-bool ApplyReplace(const std::vector<FileOp>& plan, ReplaceState* st, std::wstring* err)
+// 任一失败 → 已做操作全部撤销，不留半替换态；撤销自身不完整 → 落 T2 标记。
+bool ApplyReplace(const std::vector<FileOp>& plan, const std::wstring& binRoot,
+                  ReplaceState* st, std::wstring* err)
 {
     wchar_t tsbuf[32];
     _snwprintf_s(tsbuf, _TRUNCATE, L"%llu", (unsigned long long)time(NULL));
@@ -431,8 +477,12 @@ bool ApplyReplace(const std::vector<FileOp>& plan, ReplaceState* st, std::wstrin
         if (!moved) {
             *err = L"rename-aside 失败 " + op.rel + L"（err=" + std::to_wstring(moveErr) + L"）";
             std::wstring note;
-            RollbackAll(st, &note); // copied 为空，只改回已挪的
-            if (!note.empty()) *err += L"；回滚不完整: " + note;
+            ReplaceState pending; // T2：只记回滚未完成项
+            RollbackAll(st, &note, &pending.copied, &pending.renamed); // copied 为空，只改回已挪的
+            if (!note.empty()) {
+                *err += L"；回滚不完整: " + note;
+                WritePendingRollbackMarker(binRoot, pending, *err, err); // T2：落标记待启动自检补做
+            }
             return false;
         }
         st->renamed.push_back({prev, op.dst});
@@ -440,14 +490,18 @@ bool ApplyReplace(const std::vector<FileOp>& plan, ReplaceState* st, std::wstrin
     for (const auto& op : plan) {
         if (!EnsureParentDirs(op.dst, err)) {
             std::wstring note;
-            bool clean = RollbackAll(st, &note);
+            ReplaceState pending;
+            bool clean = RollbackAll(st, &note, &pending.copied, &pending.renamed);
+            if (!clean) WritePendingRollbackMarker(binRoot, pending, *err, &note);
             *err += clean ? L"（已回滚）" : L"（回滚不完整: " + note + L"）";
             return false;
         }
         if (!CopyFileW(op.src.c_str(), op.dst.c_str(), FALSE)) {
             *err = L"复制新件失败 " + op.rel + L"（err=" + std::to_wstring(GetLastError()) + L"）";
             std::wstring note;
-            bool clean = RollbackAll(st, &note);
+            ReplaceState pending;
+            bool clean = RollbackAll(st, &note, &pending.copied, &pending.renamed);
+            if (!clean) WritePendingRollbackMarker(binRoot, pending, *err, &note);
             *err += clean ? L"（已回滚）" : L"（回滚不完整: " + note + L"）";
             return false;
         }
@@ -466,7 +520,7 @@ bool ApplyUpdate(const ApplyRequest& req, const ApplyHooks& hooks, std::wstring*
     if (log) *log += L"替换计划 " + std::to_wstring(plan.size()) + L" 个文件（x64+x86 双位）\n";
 
     ReplaceState st;
-    if (!ApplyReplace(plan, &st, err)) {
+    if (!ApplyReplace(plan, req.binRoot, &st, err)) {
         if (log) *log += L"替换失败: " + *err + L"\n";
         return false;
     }
@@ -474,7 +528,9 @@ bool ApplyUpdate(const ApplyRequest& req, const ApplyHooks& hooks, std::wstring*
 
     auto failWith = [&](const std::wstring& reason) -> bool {
         std::wstring note;
-        bool clean = RollbackAll(&st, &note);
+        ReplaceState pending; // T2：标记只记未完成项（已完成的不进，自检幂等才安全）
+        bool clean = RollbackAll(&st, &note, &pending.copied, &pending.renamed);
+        if (!clean) WritePendingRollbackMarker(req.binRoot, pending, reason, &note);
         *err = reason + (clean ? L"（已整体回滚，旧件原样恢复）"
                                : L"（回滚不完整: " + note + L"）");
         if (log) *log += *err + L"\n";
@@ -507,6 +563,91 @@ bool ApplyUpdate(const ApplyRequest& req, const ApplyHooks& hooks, std::wstring*
     if (!VerifyInstalledHashes(plan, &sub)) return failWith(L"自验失败（落盘 SHA256）: " + sub);
     if (log) *log += L"自验 3/3 落盘哈希与包内一致\n";
     return true;
+}
+
+// ---------- T2 pending-rollback 标记与启动自检 ----------
+std::wstring PendingRollbackMarkerPath(const std::wstring& binRoot)
+{
+    return binRoot + L"\\work\\pending-rollback.txt";
+}
+
+bool TryPendingRollbackSelfHeal(const std::wstring& binRoot, std::wstring* log)
+{
+    std::wstring mp = PendingRollbackMarkerPath(binRoot);
+    HANDLE h = CreateFileW(mp.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return true; // 无标记 = no-op
+    std::string raw;
+    char buf[4096];
+    DWORD n = 0;
+    while (ReadFile(h, buf, sizeof(buf), &n, NULL) && n) raw.append(buf, n);
+    CloseHandle(h);
+    if (raw.empty() || raw.size() > (64u << 10)) // 异常大标记：不解析，留待人工
+    {
+        if (log) *log += L"pending-rollback 标记异常（空/超 64KB），保留待人工: " + mp;
+        return false;
+    }
+    auto wide = [](const std::string& s) {
+        if (s.empty()) return std::wstring();
+        int wn = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), NULL, 0);
+        std::wstring w(wn, L'\0');
+        MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], wn);
+        return w;
+    };
+    std::vector<std::wstring> copied;
+    std::vector<std::pair<std::wstring, std::wstring>> renamed;
+    size_t pos = 0;
+    while (pos <= raw.size())
+    {
+        size_t nl = raw.find('\n', pos);
+        std::string line = (nl == std::string::npos) ? raw.substr(pos) : raw.substr(pos, nl - pos);
+        pos = (nl == std::string::npos) ? raw.size() + 1 : nl + 1;
+        if (!line.empty() && line.back() == '\r') line.pop_back();
+        if (line.rfind("copied=", 0) == 0) copied.push_back(wide(line.substr(7)));
+        else if (line.rfind("prev=", 0) == 0)
+        {
+            std::string v = line.substr(5);
+            size_t bar = v.find('|');
+            if (bar != std::string::npos)
+                renamed.push_back({ wide(v.substr(0, bar)), wide(v.substr(bar + 1)) });
+        }
+    }
+    bool allOk = true;
+    std::wstring detail;
+    for (const auto& dst : copied) // 删新件；已不存在=上轮部分回滚已删（幂等）
+    {
+        if (GetFileAttributesW(dst.c_str()) == INVALID_FILE_ATTRIBUTES) continue;
+        if (!DeleteFileW(dst.c_str()))
+        {
+            allOk = false;
+            detail += L"删新件失败 " + dst + L"(err=" + std::to_wstring(GetLastError()) + L")；";
+        }
+    }
+    for (const auto& pr : renamed) // 旧快照改回；快照缺失+dst 在=上轮已改回（幂等）
+    {
+        if (GetFileAttributesW(pr.first.c_str()) == INVALID_FILE_ATTRIBUTES)
+        {
+            if (GetFileAttributesW(pr.second.c_str()) == INVALID_FILE_ATTRIBUTES)
+            { // 快照与目标双双缺失：旧件无从恢复，必须人工介入（不静默）
+                allOk = false;
+                detail += L"快照与目标均缺失，无法改回: " + pr.second + L"；";
+            }
+            continue;
+        }
+        if (!MoveFileExW(pr.first.c_str(), pr.second.c_str(), 0))
+        {
+            allOk = false;
+            detail += L"旧件改回失败 " + pr.second + L"(err=" + std::to_wstring(GetLastError()) + L")；";
+        }
+    }
+    if (allOk)
+    {
+        DeleteFileW(mp.c_str());
+        if (log) *log += L"pending-rollback 补做成功（新件已删/旧件已改回），标记已清除";
+        return true;
+    }
+    if (log) *log += L"pending-rollback 补做未竟（标记保留，下次启动重试）: " + detail;
+    return false;
 }
 
 // ---------- 一次性 UAC 提权发起 ----------

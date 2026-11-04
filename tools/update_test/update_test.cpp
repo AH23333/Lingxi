@@ -225,6 +225,19 @@ static int g_imeCalls = 0;
 static bool g_imeOk = true;
 static bool StubImecheck(const std::wstring&, std::wstring*) { g_imeCalls++; return g_imeOk; }
 
+// T2 注入桩：imecheck 时机（复制完成、自验阶段）把新 dst 独占锁死——随后回滚
+// 删新件必败 = 回滚不完整场景。返回 false 触发 failWith 回滚链。
+static HANDLE g_t2Lock = NULL;
+static std::wstring g_t2LockPath;
+static bool StubImecheckLockDst(const std::wstring&, std::wstring*) {
+    if (g_t2Lock) { CloseHandle(g_t2Lock); g_t2Lock = NULL; }
+    // GENERIC_READ + 仅共享读：不给 DELETE 即"宿主加载态"（删必败、改名让位败），
+    // 同时自断言可读回内容（GENERIC_WRITE 会挡住工装的 ReadAll 共享读）
+    g_t2Lock = CreateFileW(g_t2LockPath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    return false;
+}
+
 // 数 dst 旁边 .prev-* 快照个数（回滚断言用）。
 static int CountPrev(const std::wstring& dstPath) {
     WIN32_FIND_DATAW fd;
@@ -926,6 +939,53 @@ int wmain(int argc, wchar_t** argv) {
         CHECK(ReadAll(fakeBin + L"\\Debug\\ImeCore.dll") == "NEW64" &&
                   ReadAll(fakeBin + L"\\Debug\\sub") == "iam-a-file",
               L"失败后旧态完整恢复（要么全换要么全回滚，T9）");
+    }
+
+    // ---------- T2：回滚不完整 → pending-rollback 标记 → 启动自检补做两分支 ----------
+    {
+        std::wstring t2bin = g_tmp + L"\\t2\\bin";
+        std::wstring t2stg = g_tmp + L"\\t2\\stg";
+        CHECK(MkdirP(t2bin + L"\\Debug") && MkdirP(t2bin + L"\\Debug32") &&
+                  MkdirP(t2stg + L"\\x64") && MkdirP(t2stg + L"\\x86"), L"T2 假树就绪");
+        WriteStr(t2bin + L"\\Debug\\ImeCore.dll", "T2OLD64");
+        WriteStr(t2bin + L"\\Debug32\\ImeCore.dll", "T2OLD32");
+        WriteStr(t2stg + L"\\x64\\ImeCore.dll", "T2NEW64");
+        WriteStr(t2stg + L"\\x86\\ImeCore.dll", "T2NEW32");
+        const std::wstring marker = PendingRollbackMarkerPath(t2bin);
+
+        ApplyHooks hk2;
+        hk2.reRegister = StubReRegister;
+        hk2.imecheck = StubImecheckLockDst; // 复制后锁新件 + 报败 → 回滚不完整
+        g_t2LockPath = t2bin + L"\\Debug\\ImeCore.dll";
+        ApplyRequest rq;
+        rq.binRoot = t2bin; rq.stagingDir = t2stg; rq.versionStr = L"9.9.9";
+        rq.imecheckScript = L"x.ps1"; rq.doRegister = true;
+        std::wstring err, lg;
+        bool ok = ApplyUpdate(rq, hk2, &err, &lg);
+        std::string mark = ReadAll(marker);
+        CHECK(!ok && err.find(L"回滚不完整") != std::wstring::npos &&
+                  mark.find("copied=") != std::string::npos &&
+                  mark.find("ImeCore.dll") != std::string::npos,
+              L"T2a 回滚不完整 → pending-rollback 标记已写且含目标路径");
+        CHECK(ReadAll(t2bin + L"\\Debug\\ImeCore.dll") == "T2NEW64" &&
+                  ReadAll(t2bin + L"\\Debug32\\ImeCore.dll") == "T2OLD32",
+              L"T2a 中间态实证：x64 新件残留（被占删不掉），x86 已回滚");
+
+        // 分支一：占用未解 → 自检补做失败，标记保留不静默
+        std::wstring healLog;
+        CHECK(!TryPendingRollbackSelfHeal(t2bin, &healLog) &&
+                  GetFileAttributesW(marker.c_str()) != INVALID_FILE_ATTRIBUTES &&
+                  healLog.find(L"补做未竟") != std::wstring::npos,
+              L"T2b 占用中自检：补做失败、标记保留、日志明示");
+        // 分支二：占用解除 → 补做成功：新件删净、旧件改回、标记清除
+        if (g_t2Lock) { CloseHandle(g_t2Lock); g_t2Lock = NULL; }
+        std::wstring healLog2;
+        CHECK(TryPendingRollbackSelfHeal(t2bin, &healLog2) &&
+                  ReadAll(t2bin + L"\\Debug\\ImeCore.dll") == "T2OLD64" &&
+                  GetFileAttributesW(marker.c_str()) == INVALID_FILE_ATTRIBUTES,
+              L"T2c 解锁后自检：补做成功（旧件改回+标记清除+幂等消化部分回滚）");
+        // 幂等：标记已无 → 自检 no-op
+        CHECK(TryPendingRollbackSelfHeal(t2bin, nullptr), L"T2d 无标记自检 no-op");
     }
 
     // ---------- 批次 4：VerifyInstalledHashes 直接对（篡改兜底）----------
