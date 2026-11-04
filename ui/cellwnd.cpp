@@ -169,6 +169,10 @@ void RefreshCellList()
 
 struct CellImportJob { HWND hwnd; std::wstring src; bool overwrite; };
 
+// N9：导入结果所有权槽（至多一个在途——g_cellImporting 防重入保证）。
+// 投递前登记，窗口处理/销毁领取；投递失败仅当领回自己的指针才回收。
+mgmt::PendingSlot<CellImportResult> g_cellResSlot;
+
 DWORD WINAPI CellImportThread(LPVOID p)
 {
     CellImportJob* job = (CellImportJob*)p;
@@ -177,9 +181,19 @@ DWORD WINAPI CellImportThread(LPVOID p)
     std::unordered_set<std::string> set(syls.begin(), syls.end());
     CellImportResult* res = new CellImportResult(
         ImportCellPackSync(job->src, set, job->overwrite));
-    if (!IsWindow(job->hwnd) ||
-        !PostMessageW(job->hwnd, WM_APP_CELL_DONE, res->ok ? 1 : 0, (LPARAM)res))
+    if (!IsWindow(job->hwnd))
+    {
         delete res; // 窗已灭：直接释放（导入件本身已落盘，下次开窗可见）
+        delete job;
+        return 0;
+    }
+    // N9：先登记再投递——窗口在消息处理前销毁时由 WM_DESTROY 领取回收，
+    // 结果不再悬在队列里随窗泄漏
+    if (CellImportResult* stale = g_cellResSlot.Register(res)) delete stale; // 防御（防重入已在）
+    if (!PostMessageW(job->hwnd, WM_APP_CELL_DONE, res->ok ? 1 : 0, (LPARAM)res))
+    {
+        if (g_cellResSlot.Claim() == res) delete res; // 未被窗口侧领取才回收
+    }
     delete job;
     return 0;
 }
@@ -303,7 +317,10 @@ LRESULT CALLBACK CellWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         break;
     case WM_APP_CELL_DONE:
     {
-        CellImportResult* res = (CellImportResult*)lParam;
+        // N9：只信槽——槽空=所有权已被领取（如 WM_DESTROY 先收），
+        // lParam 指针此时不可再用（悬垂），直接忽略
+        CellImportResult* res = g_cellResSlot.Claim();
+        if (!res) return 0;
         g_cellImporting = false;
         EnableWindow(GetDlgItem(hwnd, IDC_CELL_INSTALL), TRUE);
         SetDlgItemTextW(hwnd, IDC_CELL_STATIC, res->message.c_str());
@@ -338,6 +355,11 @@ LRESULT CALLBACK CellWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
     case WM_CLOSE:
         ShowWindow(hwnd, SW_HIDE);
         return 0;
+    case WM_DESTROY:
+        // N9：窗口销毁先于 WM_APP_CELL_DONE 处理时，队列消息随窗丢弃——
+        // 结果在槽里，此处领取回收（无在途导入则 Claim 得 nullptr，无操作）
+        if (CellImportResult* res = g_cellResSlot.Claim()) delete res;
+        break;
     }
     return DefWindowProcW(hwnd, msg, wParam, lParam);
 }

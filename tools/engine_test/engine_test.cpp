@@ -4044,6 +4044,29 @@ int wmain(int argc, wchar_t** argv)
                CellQuotaEffective({{L"a",6},{L"b",5},{L"c",4}}, L"b", 11) == 5 &&
                CellQuotaEffective({}, L"z", 5) == 0,                              // 不存在=0
                "MG9 cell quota: id-sorted accumulate, over-cap whole-pack ineffective");
+        // MG10（N9）PendingSlot 所有权传递：任意时序恰好释放一次（关窗竞态不漏不双删）
+        {
+            PendingSlot<int> slot;
+            int* a = new int(1);
+            bool s1 = slot.Register(a) == nullptr && slot.Claim() == a && slot.Claim() == nullptr;
+            delete a;
+            Report(s1, "MG10a pending slot: register->claim once, re-claim null");
+            // 关窗竞态序：投递方登记→窗口销毁先领取→投递失败回收领不到（不二次释放）
+            int* b = new int(2);
+            slot.Register(b);
+            int* byDestroy = slot.Claim();  // WM_DESTROY 先收
+            int* byPoster = slot.Claim();   // 投递失败回收路径
+            Report(byDestroy == b && byPoster == nullptr,
+                   "MG10b destroy-before-deliver: exactly one owner");
+            delete b;
+            // 防御顶掉：连登两次，旧指针由调用方回收（防重入外的病态双登记）
+            int* c = new int(3); int* d = new int(4);
+            int* firstKick = slot.Register(c); // 空槽 → nullptr
+            int* kicked = slot.Register(d);    // 顶掉 c → 返回 c
+            Report(firstKick == nullptr && kicked == c && slot.Claim() == d,
+                   "MG10c double register kicks old, claim newest");
+            delete c; delete d;
+        }
     }
 
     // ===== SK. 批15 皮肤/透明度链路钉：下拉映射→持久化→读校验→钳制/α（ui/style_logic.h）=====

@@ -8,6 +8,7 @@
 // 视觉与交互（多选高亮、搜索框实时刷新观感）blocked 待真机。
 //
 #include <algorithm>
+#include <atomic>
 #include <cwctype>
 #include <string>
 #include <utility>
@@ -156,6 +157,23 @@ inline size_t CellQuotaEffective(std::vector<std::pair<std::wstring, size_t>> en
     }
     return 0;
 }
+
+// N9 单槽所有权传递（至多一个在途——调用方须以防重入保证）：投递方 Register
+// 登记后若投递失败须 Claim 回收（仅当领回自己的指针才 delete——窗口侧可能已
+// 先一步 Claim 走）；窗口侧处理消息/销毁各 Claim 一次，后到者得 nullptr。
+// 任意时序下指针恰好被释放一次，不悬在窗口队列里随窗销毁（关窗竞态泄漏根治）。
+// engine_test MG10 钉语义。
+template <typename T>
+class PendingSlot
+{
+public:
+    // 登记新指针；返回被顶掉的旧指针（调用方负责释放；正常路径恒 nullptr）
+    T* Register(T* p) { return slot_.exchange(p, std::memory_order_acq_rel); }
+    // 领取槽内指针并置空（后到者/空槽得 nullptr）
+    T* Claim() { return slot_.exchange(nullptr, std::memory_order_acq_rel); }
+private:
+    std::atomic<T*> slot_{ nullptr };
+};
 
 } // namespace mgmt
 } // namespace lingxi
