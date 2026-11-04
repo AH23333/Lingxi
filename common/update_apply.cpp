@@ -621,6 +621,133 @@ size_t CleanupOldPrevSnapshots(const std::wstring& binRoot, size_t keepSets,
     return deleted;
 }
 
+// ---------- P1-2 staging 内容信任锚 ----------
+// 清单行式：x64\<rel>=<sha256小写hex>（一行一件，排序确定序，x86 同型）。
+// rel 来自 zip 预校验过的白名单字符集，但仍防御性拒绝分隔符字符。
+static bool BuildManifestLocked(const std::wstring& stagingDir, std::wstring* manifest,
+                                std::wstring* err)
+{
+    static const wchar_t* kArches[2] = { L"x64", L"x86" };
+    std::vector<std::wstring> lines;
+    for (const wchar_t* arch : kArches) {
+        std::wstring dir = stagingDir + L"\\" + arch;
+        std::vector<std::wstring> files;
+        if (!EnumTree(dir, L"", &files, err)) return false;
+        if (files.empty()) {
+            if (err) *err = std::wstring(L"staging 子树为空: ") + arch;
+            return false;
+        }
+        for (const auto& rel : files) {
+            if (rel.find_first_of(L";\"\r\n=") != std::wstring::npos) {
+                if (err) *err = L"staging 文件名含清单分隔符（拒绝）: " + rel;
+                return false;
+            }
+            std::string hex; std::wstring e;
+            if (!Sha256File(dir + L"\\" + rel, &hex, &e)) {
+                if (err) *err = L"staging 读哈希失败 " + rel + L": " + e;
+                return false;
+            }
+            lines.push_back(std::wstring(arch) + L"\\" + rel + L"=" +
+                            std::wstring(hex.begin(), hex.end()));
+        }
+    }
+    std::sort(lines.begin(), lines.end());
+    manifest->clear();
+    for (const auto& l : lines) { *manifest += l; *manifest += L'\n'; }
+    return true;
+}
+
+bool BuildStagingManifest(const std::wstring& stagingDir, std::wstring* manifest,
+                          std::wstring* err)
+{
+    return BuildManifestLocked(stagingDir, manifest, err);
+}
+
+bool VerifyStagingAgainstManifest(const std::wstring& stagingDir,
+                                  const std::wstring& manifest, std::wstring* err)
+{
+    std::wstring now;
+    if (!BuildManifestLocked(stagingDir, &now, err)) return false;
+    if (now == manifest) return true;
+    // 定位首条不一致行，错误信息写清是哪件不符（缺失/多余/内容不同）
+    auto toSet = [](const std::wstring& m) {
+        std::vector<std::wstring> v;
+        size_t pos = 0;
+        while (pos < m.size()) {
+            size_t nl = m.find(L'\n', pos);
+            v.push_back(m.substr(pos, nl == std::wstring::npos ? nl : nl - pos));
+            if (nl == std::wstring::npos) break;
+            pos = nl + 1;
+        }
+        return v;
+    };
+    std::vector<std::wstring> want = toSet(manifest), got = toSet(now);
+    std::sort(want.begin(), want.end());
+    std::sort(got.begin(), got.end());
+    for (const auto& w : want) {
+        if (!std::binary_search(got.begin(), got.end(), w)) {
+            size_t eq = w.find(L'=');
+            std::wstring rel = w.substr(0, eq);
+            std::wstring base = rel + L"=";
+            bool renamed = false;
+            for (const auto& g : got)
+                if (g.compare(0, base.size(), base) == 0) { renamed = true; break; }
+            if (err) *err = L"staging 与已校验清单不符: " + rel +
+                            (renamed ? L"（内容被改动）" : L"（文件缺失）");
+            return false;
+        }
+    }
+    for (const auto& g : got) {
+        if (!std::binary_search(want.begin(), want.end(), g)) {
+            size_t eq = g.find(L'=');
+            if (err) *err = L"staging 多出未校验文件: " + g.substr(0, eq);
+            return false;
+        }
+    }
+    if (err) *err = L"staging 与已校验清单不符（顺序异常）";
+    return false;
+}
+
+bool VerifyStagingTrusted(const std::wstring& stagingDir, const std::wstring& manifestPath,
+                          const std::string& expectManifestSha256, std::wstring* err)
+{
+    if (expectManifestSha256.size() != 64) {
+        if (err) *err = L"清单哈希参数非法（须为 64 位 SHA256 hex）";
+        return false;
+    }
+    std::string actual; std::wstring e;
+    if (!Sha256File(manifestPath, &actual, &e)) {
+        if (err) *err = L"读取清单文件失败: " + e;
+        return false;
+    }
+    if (actual != expectManifestSha256) {
+        if (err) *err = L"清单文件哈希与发起侧传入不符（清单可能被篡改），拒绝替换";
+        return false;
+    }
+    HANDLE h = CreateFileW(manifestPath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) {
+        if (err) *err = L"清单文件打不开（err=" + std::to_wstring(GetLastError()) + L"）";
+        return false;
+    }
+    std::string raw;
+    char buf[8192]; DWORD n = 0;
+    while (ReadFile(h, buf, sizeof(buf), &n, NULL) && n) raw.append(buf, n);
+    CloseHandle(h);
+    if (raw.empty() || raw.size() > (256u << 10)) {
+        if (err) *err = L"清单文件为空或超 256KB（异常，拒绝）";
+        return false;
+    }
+    int wn = MultiByteToWideChar(CP_UTF8, 0, raw.data(), (int)raw.size(), NULL, 0);
+    if (wn <= 0) {
+        if (err) *err = L"清单文件不是合法 UTF-8";
+        return false;
+    }
+    std::wstring manifest(wn, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, raw.data(), (int)raw.size(), &manifest[0], wn);
+    return VerifyStagingAgainstManifest(stagingDir, manifest, err);
+}
+
 // ---------- T2 pending-rollback 标记与启动自检 ----------
 std::wstring PendingRollbackMarkerPath(const std::wstring& binRoot)
 {
@@ -708,9 +835,12 @@ bool TryPendingRollbackSelfHeal(const std::wstring& binRoot, std::wstring* log)
 
 // ---------- 一次性 UAC 提权发起 ----------
 bool LaunchElevatedApply(const std::wstring& selfExe, const std::wstring& stagingDir,
+                         const std::wstring& manifestPath, const std::string& manifestSha256,
                          std::wstring* err)
 {
-    std::wstring args = L"--update-apply \"" + stagingDir + L"\"";
+    std::wstring args = L"--update-apply \"" + stagingDir + L"\" --manifest \"" +
+                        manifestPath + L"\" --manifest-sha " +
+                        std::wstring(manifestSha256.begin(), manifestSha256.end());
     HINSTANCE h = ShellExecuteW(NULL, L"runas", selfExe.c_str(), args.c_str(), NULL, SW_HIDE);
     if ((INT_PTR)h > 32) return true;
     if ((INT_PTR)h == (INT_PTR)1223 /*ERROR_CANCELLED*/) {

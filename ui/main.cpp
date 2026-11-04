@@ -318,7 +318,9 @@ const wchar_t* kHelpText =
     L"  --settings     打开设置页（已运行实例则转发后退出）\n"
     L"  --symbols      打开符号面板（已运行实例则转发后退出）\n"
     L"  --probe-pinyin / --probe-llm / --probe-chain / --probe-typing\n"
-    L"  --update-apply <staging>  提权侧执行替换（内部：设置页一键更新经 UAC 拉起）\n"
+    L"  --update-apply <staging> --manifest <file> --manifest-sha <hex>\n"
+    L"                 提权侧执行替换（内部：设置页一键更新经 UAC 拉起；\n"
+    L"                 P1-2：先复核清单哈希与 staging 全文件，不符零替换）\n"
     L"                 内部探针（回归脚本用）\n";
 
 // --diagnostics：OS/构建/DPI/设置/数据文件统计（排障一屏汇总）
@@ -488,13 +490,33 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     {
         // 提权侧（T10）：只接受 bin\work\staging\<合法版本>；结果写 apply-result.txt
         // 供 UI 侧 worker 轮询（T12：UI 不猜结果，独立读文件）。不走单例/消息循环。
+        // P1-2：--manifest/--manifest-sha 必须随 argv 传入（发起侧在解压复核后锚定）；
+        // 先复核清单文件哈希、再按清单复核 staging 全文件，任何不符零替换。
         std::wstring staging = argc >= 3 ? argv[2] : L"";
+        std::wstring manifestPath, manifestShaW;
+        for (int i = 3; i + 1 < argc; i++)
+        {
+            if (wcscmp(argv[i], L"--manifest") == 0) manifestPath = argv[i + 1];
+            else if (wcscmp(argv[i], L"--manifest-sha") == 0) manifestShaW = argv[i + 1];
+            // 未知参数：忽略（不消费下一个，防错位）
+        }
         std::wstring binRoot, workRoot, err, log;
         lingxi::updater::SemVer ver;
         bool ok = false;
         if (lingxi::updater::ComputeBinRootsFromModule(&binRoot, &workRoot) &&
             lingxi::updater::ValidateStagingPath(staging, workRoot, &ver, &err))
         {
+            if (manifestPath.empty() || manifestShaW.empty())
+            {
+                err = L"缺少 --manifest/--manifest-sha（P1-2：拒绝无信任锚的提权替换）";
+            }
+            else
+            {
+                std::string sha;
+                sha.reserve(manifestShaW.size());
+                for (wchar_t c : manifestShaW) sha.push_back((char)tolower((unsigned char)c));
+                if (lingxi::updater::VerifyStagingTrusted(staging, manifestPath, sha, &err))
+                {
             wchar_t vs[32];
             _snwprintf_s(vs, _TRUNCATE, L"%u.%u.%u", (unsigned)ver.major, (unsigned)ver.minor,
                          (unsigned)ver.patch);
@@ -508,6 +530,8 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
             req.doRegister = true;
             lingxi::updater::ApplyHooks hk;
             ok = lingxi::updater::ApplyUpdate(req, hk, &err, &log);
+                } // VerifyStagingTrusted
+            }
         }
         std::wstring result = ok ? (L"OK " + err) : (L"FAIL " + err);
         std::string u8;

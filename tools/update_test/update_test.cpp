@@ -1042,6 +1042,70 @@ int wmain(int argc, wchar_t** argv) {
               L"落盘被篡改 → 拒（替换后独立复核）");
     }
 
+    // ---------- P1-2：staging 信任锚（清单复核，换包窗口反向自证）----------
+    {
+        std::wstring mstg = g_tmp + L"\\m\\staging\\9.9.9";
+        CHECK(MkdirP(mstg + L"\\x64\\data") && MkdirP(mstg + L"\\x86"), L"P1-2 假 staging 双树");
+        WriteStr(mstg + L"\\x64\\ImeCore.dll", "M64");
+        WriteStr(mstg + L"\\x64\\data\\pinyin.txt", "MPY");
+        WriteStr(mstg + L"\\x86\\ImeCore.dll", "M32");
+        std::wstring err, mf1, mf2;
+        CHECK(BuildStagingManifest(mstg, &mf1, &err) &&
+                  BuildStagingManifest(mstg, &mf2, &err) && mf1 == mf2 &&
+                  mf1.find(L"x64\\ImeCore.dll=") != std::wstring::npos &&
+                  mf1.find(L"x86\\ImeCore.dll=") != std::wstring::npos,
+              L"P1-2a 清单生成：双树逐文件且两次确定序一致");
+        CHECK(VerifyStagingAgainstManifest(mstg, mf1, &err),
+              L"P1-2b 未篡改 → 清单复核通过");
+
+        // 篡改内容 → 拒且报"内容被改动"
+        WriteStr(mstg + L"\\x64\\ImeCore.dll", "EVIL");
+        CHECK(!VerifyStagingAgainstManifest(mstg, mf1, &err) &&
+                  err.find(L"内容被改动") != std::wstring::npos,
+              L"P1-2c 换包（改内容）→ 拒，错误点名文件与改动形态");
+        WriteStr(mstg + L"\\x64\\ImeCore.dll", "M64"); // 还原
+
+        // 删一件 → 拒（缺失）；多一件 → 拒（未校验文件）
+        MoveFileExW((mstg + L"\\x86\\ImeCore.dll").c_str(),
+                    (mstg + L"\\x86\\ImeCore.bak").c_str(), 0);
+        CHECK(!VerifyStagingAgainstManifest(mstg, mf1, &err) &&
+                  err.find(L"文件缺失") != std::wstring::npos,
+              L"P1-2d 抽走一件 → 拒（缺失）");
+        MoveFileExW((mstg + L"\\x86\\ImeCore.bak").c_str(),
+                    (mstg + L"\\x86\\ImeCore.dll").c_str(), 0);
+        WriteStr(mstg + L"\\x64\\extra.dll", "EXTRA");
+        CHECK(!VerifyStagingAgainstManifest(mstg, mf1, &err) &&
+                  err.find(L"多出未校验文件") != std::wstring::npos,
+              L"P1-2e 塞入未校验文件 → 拒");
+        DeleteFileW((mstg + L"\\x64\\extra.dll").c_str());
+
+        // 提权侧一站式：清单文件哈希锚（argv 传入值）不符 → 拒；相符 → 过
+        std::wstring mp = TPath(L"staging-manifest.txt");
+        {
+            std::string u8;
+            int n = WideCharToMultiByte(CP_UTF8, 0, mf1.c_str(), -1, NULL, 0, NULL, NULL);
+            u8.resize((size_t)n - 1);
+            WideCharToMultiByte(CP_UTF8, 0, mf1.c_str(), -1, &u8[0], n, NULL, NULL);
+            CHECK(WriteStr(mp, u8), L"P1-2 清单落盘（UTF-8）");
+        }
+        std::string goodSha;
+        CHECK(Sha256File(mp, &goodSha, &err) && goodSha.size() == 64, L"清单哈希算出");
+        CHECK(VerifyStagingTrusted(mstg, mp, goodSha, &err),
+              L"P1-2f 清单哈希相符 + staging 未动 → 提权侧复核通过");
+        WriteStr(mp, "tampered-manifest");
+        CHECK(!VerifyStagingTrusted(mstg, mp, goodSha, &err) &&
+                  err.find(L"清单可能被篡改") != std::wstring::npos,
+              L"P1-2g 清单文件被换 → 拒（哈希锚起作用，不看内容）");
+        WriteStr(mp, "whatever");
+        CHECK(!VerifyStagingTrusted(mstg, mp, std::string(64, '0'), &err),
+              L"P1-2h 清单哈希恒不符 → 拒");
+        CHECK(!VerifyStagingTrusted(mstg, mp, "abc", &err) &&
+                  err.find(L"64 位") != std::wstring::npos,
+              L"P1-2i 哈希参数非法长度 → 拒（防误用）");
+        // 零替换实证：以上所有拒绝路径均未触碰任何 dst（假 bin 不存在于本块），
+        // 拒绝发生在 ApplyUpdate 之前（main.cpp 提权侧顺序），结构性零替换。
+    }
+
     PrintW(L"\n== update_test 汇总：PASS=%d FAIL=%d ==\n", g_pass, g_fail);
     return g_fail == 0 ? 0 : 1;
 }

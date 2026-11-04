@@ -91,11 +91,32 @@ bool ApplyUpdate(const ApplyRequest& req, const ApplyHooks& hooks, std::wstring*
 size_t CleanupOldPrevSnapshots(const std::wstring& binRoot, size_t keepSets,
                                std::wstring* log);
 
+// ===== P1-2 staging 内容信任锚（审查 review-2026-11-04-system-integration）=====
+// 问题：staging 位于用户可写目录，下载期校验（zip↔SUMS）到 UAC 确认之间存在
+// 换包窗口；旧提权侧只验路径合法 + 自验哈希以 staging 自身为锚（换包后两側
+// 一起换，检出不了）。
+// 方案：发起侧在解压复核后调用 BuildStagingManifest 生成逐文件清单（排序确定序），
+// 写到 workRoot 下清单文件，并把**清单文件的 SHA256** 随 UAC 命令行传入提权侧；
+// 提权侧先复核清单文件哈希（argv 是唯一不被磁盘篡改锚定的通道），再按清单复核
+// staging 全文件，任何一件不符即整体拒绝、零替换。
+// 残余风险如实声明：同用户进程若在发起侧进程内执行代码可伪造 argv——该前提已
+// 等同整机失守，不在本链威胁模型内（设计文档 T3 同款口径）。
+bool BuildStagingManifest(const std::wstring& stagingDir, std::wstring* manifest,
+                          std::wstring* err);
+bool VerifyStagingAgainstManifest(const std::wstring& stagingDir,
+                                  const std::wstring& manifest, std::wstring* err);
+// 提权侧一站式：复核清单文件哈希 → 读清单（UTF-8）→ 复核 staging 全文件。
+// expectManifestSha256 为 argv 传入的清单文件 SHA256（小写 hex）。
+bool VerifyStagingTrusted(const std::wstring& stagingDir, const std::wstring& manifestPath,
+                          const std::string& expectManifestSha256, std::wstring* err);
+
 // ===== 一次性 UAC 提权发起（批次 5 UI 调用；本批不做真实 UAC 测试）=====
-// ShellExecuteW "runas" selfExe，参数 --update-apply "<stagingDir>"（T10：
-// 提权侧收到后必须自行 ValidateStagingPath，本函数只负责发起）。
+// ShellExecuteW "runas" selfExe，参数 --update-apply "<stagingDir>" --manifest
+// "<manifestPath>" --manifest-sha "<hex>"（T10 + P1-2：提权侧收到后必须自行
+// ValidateStagingPath + VerifyStagingTrusted，本函数只负责发起）。
 // 用户拒绝 UAC → false + "已取消"。
 bool LaunchElevatedApply(const std::wstring& selfExe, const std::wstring& stagingDir,
+                         const std::wstring& manifestPath, const std::string& manifestSha256,
                          std::wstring* err);
 
 // ===== T2 pending-rollback 补救（回滚不完整不再是"诚实但无补救"）=====

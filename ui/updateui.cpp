@@ -244,12 +244,53 @@ DWORD WINAPI ApplyWorker(LPVOID)
         return 0;
     }
 
+    // P1-2 信任锚：解压复核后立即生成 staging 逐文件清单并落盘，清单文件的
+    // SHA256 随 UAC argv 传入提权侧——argv 发起后不受磁盘篡改影响，提权侧
+    // 据清单复核 staging，消除"用户可写 staging → UAC 确认"的换包窗口。
+    std::wstring manifest;
+    if (!lingxi::updater::BuildStagingManifest(staging, &manifest, &err)) {
+        FailStage(L"staging 清单生成失败：" + err);
+        return 0;
+    }
+    std::string manifestU8;
+    {
+        int n = WideCharToMultiByte(CP_UTF8, 0, manifest.c_str(), -1, NULL, 0, NULL, NULL);
+        if (n <= 1) { FailStage(L"清单编码失败"); return 0; }
+        manifestU8.resize((size_t)n - 1);
+        WideCharToMultiByte(CP_UTF8, 0, manifest.c_str(), -1, &manifestU8[0], n, NULL, NULL);
+    }
+    std::wstring manifestPath = g_workRoot + L"\\staging-manifest.txt";
+    {
+        // 就地直写（workRoot 内一次性清单，非用户数据；写失败即终止不发起提权）
+        HANDLE hm = CreateFileW(manifestPath.c_str(), GENERIC_WRITE, 0, NULL,
+                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (hm == INVALID_HANDLE_VALUE) {
+            FailStage(L"清单落盘失败（无法写入 " + manifestPath + L"）");
+            return 0;
+        }
+        DWORD wm = 0;
+        BOOL okw = WriteFile(hm, manifestU8.data(), (DWORD)manifestU8.size(), &wm, NULL);
+        CloseHandle(hm);
+        if (!okw || wm != (DWORD)manifestU8.size()) {
+            DeleteFileW(manifestPath.c_str());
+            FailStage(L"清单落盘失败（写入不完整）");
+            return 0;
+        }
+    }
+    std::string manifestSha;
+    if (!lingxi::updater::Sha256File(manifestPath, &manifestSha, &err)) {
+        FailStage(L"清单哈希失败：" + err);
+        return 0;
+    }
+
     wchar_t self[MAX_PATH] = {};
     GetModuleFileNameW(NULL, self, ARRAYSIZE(self));
     std::wstring resultFile = g_workRoot + L"\\apply-result.txt";
     DeleteFileW(resultFile.c_str());
     PostState(State::Staged, new std::wstring(L"校验与暂存完成，即将请求一次 UAC 提权"));
-    if (!LaunchElevatedApply(self, staging, &err)) { FailStage(err); return 0; }
+    if (!LaunchElevatedApply(self, staging, manifestPath, manifestSha, &err)) {
+        FailStage(err); return 0;
+    }
     PostState(State::Replacing, new std::wstring(L"等待提权进程完成（UAC 确认后自动进行）"));
 
     for (int i = 0; i < 600; i++) { // 至多 10 分钟轮询提权侧结果（T12：独立复核文件，不猜）
