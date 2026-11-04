@@ -3681,12 +3681,17 @@ int wmain(int argc, wchar_t** argv)
                 CloseHandle(hHold);
                 Sleep(500);                                 // 给僵尸 persist 线程窗口
                 std::string fAfter; readBytes(udPath, fAfter);
-                noZombie = (fAfter == fBefore) &&
-                           fAfter.find(u8(L"停机二")) == std::string::npos; // ownerDead 生效
+                // 审查缺陷③后口径：dtor 最终写走独立 .dtor.tmp，.tmp 被占不再
+                // 阻断最终态落盘——断言从"最终态缺席"强化为"最终态落盘且完整"。
+                // 僵尸旧快照不覆盖由 rename 前复查 ownerDead 保证（挂死窗口
+                // 台架不可构造，归 §八-7 观察项）。
+                noZombie = fBefore.find(u8(L"停机二")) == std::string::npos &&
+                           fAfter.find(u8(L"停机二")) != std::string::npos &&
+                           udValidLines(fAfter) > 0;
             } else CloseHandle(hHold);
         }
         Report(boundedB, "C1b shutdown with failing write bounded");
-        Report(noZombie, "C1c ownerDead blocks zombie overwrite");
+        Report(noZombie, "C1c dtor final state lands via .dtor.tmp (zombie rechecked)");
     }
 
     // ===== C1d. 强杀腰斩：子进程连发 Learn+异步落盘，父进程随机杀 ×5，词典恒完整 =====
