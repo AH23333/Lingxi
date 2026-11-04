@@ -3989,6 +3989,26 @@ int wmain(int argc, wchar_t** argv)
             lingxi::Settings r3 = lingxi::LoadSettings();
             Report(r3.skinIndex == 0 && r3.candidateOpacity == 100,
                    "SK7 out-of-range direct write rejected to defaults (7/120)");
+            // N6 机制钉（细胞管理窗缺陷复现于 settings 层）：stale 全量快照回写
+            // 把设置页刚改的键刷回旧值；改走 SaveSettingsDiff 后并发改动保留。
+            {
+                lingxi::Settings a; a.skinIndex = 2; a.candidateOpacity = 80;
+                lingxi::SaveSettings(a);
+                lingxi::Settings snap = lingxi::LoadSettings();   // 管理窗快照 skinIndex=2
+                lingxi::Settings b = lingxi::LoadSettings(); b.skinIndex = 5; // 设置页并发改
+                lingxi::SaveSettingsDiff(b);
+                snap.candidateOpacity = 90;                       // 管理窗只动自己字段
+                lingxi::SaveSettings(snap);                       // 旧口径：全量回写
+                lingxi::Settings r4 = lingxi::LoadSettings();
+                bool clobber = (r4.skinIndex == 2);               // 并发改动被刷回=缺陷实证
+                lingxi::Settings c = lingxi::LoadSettings(); c.skinIndex = 4;
+                lingxi::SaveSettingsDiff(c);
+                lingxi::Settings snap2 = lingxi::LoadSettings(); snap2.candidateOpacity = 70;
+                lingxi::SaveSettingsDiff(snap2);                  // 新口径：diff 回写
+                lingxi::Settings r5 = lingxi::LoadSettings();
+                Report(clobber && r5.skinIndex == 4 && r5.candidateOpacity == 70,
+                       "N6 full-save clobbers concurrent edit; diff-save preserves");
+            }
             RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_skop");
             SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs[0] ? prevNs : L"");
         }

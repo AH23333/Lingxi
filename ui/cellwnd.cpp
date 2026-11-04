@@ -220,12 +220,14 @@ void DoInstall(HWND hwnd)
 void DoToggle(HWND hwnd, bool dis)
 {
     // 批14 批量启停：选择集 id 列表 → mgmt::ApplyBulkDisabled 一次算出新停用表
-    // → 单次 SaveSettings 整批落盘（engine_test MG5/MG8 钉表计算口径）
+    // → 单次 SaveSettingsDiff 整批落盘（engine_test MG5/MG8 钉表计算口径）
     std::vector<std::wstring> ids = SelectedRowIds();
     if (ids.empty()) { SetDlgItemTextW(hwnd, IDC_CELL_STATIC, L"请先在列表选中词库包（可 Ctrl/Shift 多选）"); return; }
     Settings st = LoadSettings();
     st.cellDisabled = mgmt::ApplyBulkDisabled(st.cellDisabled, ids, dis);
-    SaveSettings(st); // 引擎在下一次 Predict 检出变更并重建（无锁红线）
+    // N6：diff 落盘——只写本窗负责的 cellDisabled，不再全量回写覆盖设置页
+    // 的并发改动（机制钉：engine_test "N6 full-save clobbers..."）
+    SaveSettingsDiff(st); // 引擎在下一次 Predict 检出变更并重建（无锁红线）
     RefreshCellList();
     wchar_t buf[256];
     _snwprintf_s(buf, _TRUNCATE, L"已%s %d 个包：下一次输入即%s", dis ? L"停用" : L"启用",
@@ -260,7 +262,7 @@ void DoDelete(HWND hwnd)
     {
         Settings st = LoadSettings();
         st.cellDisabled = mgmt::ApplyBulkDisabled(st.cellDisabled, deleted, false); // 剔停用表残留项
-        SaveSettings(st);
+        SaveSettingsDiff(st); // N6：diff 落盘，不覆盖设置页并发改动
         if (g_hooks.reloadCellPacks) g_hooks.reloadCellPacks();
     }
     RefreshCellList();
