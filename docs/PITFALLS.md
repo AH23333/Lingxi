@@ -578,3 +578,11 @@
 - **断言**：engine_test `TR3 surrogate pair kept whole at cut`、`TR4 over-quota pair dropped whole`（另 TR1/TR2/TR5 钉 BMP 边界与透传）；任何改动截断路径的代码必须保持这五条全绿。
 - **关联**：批9 commit `7690ee0`；#85（同为"编码单元口径"类坑——UTF-16LE 无 BOM 误读）。
 
+
+## 系统集面审查补遗（2026-11-04）
+
+### 97. 机器级注册指向用户可写二进制——开发树部署形态固有风险（审查 review-2026-11-04-system-integration P2）
+- **现状**：`tools\register.cmd` 把 `HKLM` CLSID/TIP 直接指向源码树 `bin\Debug\ImeCore.dll`（用户可写路径）。任何同用户进程都可替换该 DLL，之后每个新建宿主进程（包括以管理员运行、加载 TIP 的程序）都会加载被替换件——机器级注册放大了用户目录二进制的暴露面。
+- **定性**：不是缺陷，是开发形态的固有风险；**仅限开发机自用，禁止当正式分发形态**。
+- **正式分发出路**：安装器把 `ImeCore.dll`（x64+x86）与 `LingxiUI.exe` 复制到 `Program Files\LingxiIme\`（管理员写权、用户只读）后再注册；更新链相应改为替换 ACL 受保护的二进制。本仓库当前不做此安装器。
+- **关联**：docs/review-2026-11-04-system-integration.md P2-1；同批 P1-2 已修（staging 清单信任锚，update-design T13）。
