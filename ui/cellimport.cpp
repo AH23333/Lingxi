@@ -6,9 +6,14 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdint>
+#include <cstdio>
 #include <string>
 #include <unordered_set>
 #include <vector>
+
+#include "mgmt_logic.h"            // N8b：CellQuotaEffective / SplitIds / ToLowerW
+#include "../common/settings.h"    // N8b：停用表（LoadSettings().cellDisabled）
 
 namespace lingxi {
 
@@ -173,6 +178,54 @@ std::string StemOf(const std::wstring& path)
     return ToUtf8(name);
 }
 
+// 轻量扫包：只取 id 头 + 词条行数（含 tab 的行），与 cellwnd ScanPacks 同口径。
+// N8b 生效配额模拟用（导入线程，包文件全量 IO 可接受）。
+struct PackLite { std::wstring id; size_t entries = 0; };
+std::vector<PackLite> ScanPackLites(const std::wstring& dir)
+{
+    std::vector<PackLite> out;
+    WIN32_FIND_DATAW fd{};
+    HANDLE h = FindFirstFileW((dir + L"\\*.lxcell").c_str(), &fd);
+    if (h == INVALID_HANDLE_VALUE) return out;
+    do
+    {
+        if (fd.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) continue;
+        std::wstring fn = fd.cFileName;
+        std::string raw;
+        if (!ReadAllW(dir + L"\\" + fn, raw) || raw.empty()) continue;
+        PackLite pl;
+        bool inHeader = true;
+        size_t pos = 0;
+        while (pos <= raw.size())
+        {
+            size_t nl = raw.find('\n', pos);
+            std::string line = (nl == std::string::npos) ? raw.substr(pos)
+                                                         : raw.substr(pos, nl - pos);
+            pos = (nl == std::string::npos) ? raw.size() + 1 : nl + 1;
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            if (line.empty() || line[0] == ';') continue;
+            if (line.rfind("LXCELL", 0) == 0) continue;
+            if (inHeader && line.find('\t') == std::string::npos &&
+                (line.rfind("name=", 0) == 0 || line.rfind("id=", 0) == 0 ||
+                 line.rfind("weight=", 0) == 0))
+            {
+                if (line.rfind("id=", 0) == 0) pl.id = ToWide(line.substr(3));
+                continue;
+            }
+            inHeader = false;
+            if (line.find('\t') != std::string::npos) pl.entries++;
+        }
+        if (pl.id.empty() && fn.size() > 7) pl.id = fn.substr(0, fn.size() - 7); // 去 .lxcell 兜底
+        out.push_back(std::move(pl));
+    } while (FindNextFileW(h, &fd));
+    FindClose(h);
+    return out;
+}
+
+} // namespace
+
+// N8a：归一化丢信息即追加 FNV-1a 哈希后缀（纯 CJK stem 不再全归一成 "pack"）。
+// 无信息丢失（纯小写 ascii/数字/- 且首尾非 '-'）保持原样——存量包 id 不变。
 std::string MakeIdFromStem(const std::string& stem)
 {
     std::string id;
@@ -185,8 +238,21 @@ std::string MakeIdFromStem(const std::string& stem)
     while (!id.empty() && id.front() == '-') id.erase(id.begin());
     while (!id.empty() && id.back() == '-') id.pop_back();
     if (id.empty()) id = "pack";
+    std::string lower;
+    lower.reserve(stem.size());
+    for (char ch : stem) lower.push_back(char(std::tolower((unsigned char)ch)));
+    if (id != lower) // 归一化丢失信息（替换/剥离/兜底）→ 哈希后缀去重
+    {
+        uint32_t h = 2166136261u;
+        for (unsigned char c : stem) { h ^= c; h *= 16777619u; }
+        char suf[16];
+        sprintf_s(suf, "-%08x", h);
+        id += suf;
+    }
     return id;
 }
+
+namespace {
 
 std::string SerializeLxcell(const LxcellParseResult& r)
 {
@@ -323,6 +389,32 @@ CellImportResult ImportCellPackSync(const std::wstring& srcPath,
         res.message += L"）";
     }
     if (converted) res.message += L"（深蓝纯文本产物已规范化为 .lxcell）";
+
+    // N8b：生效口径——镜像引擎 RebuildCellPacks（剔停用→id 升序→合计上限
+    // 整包跳），模拟本包是否真生效；不生效在文案明示，杜绝"说成功但配额拒"。
+    {
+        constexpr size_t kMaxCellTotal = 500000; // 与引擎 kMaxCellTotalEntries 同值
+                                                 //（engine_test CELLd 钉两侧一致）
+        Settings qst = LoadSettings();
+        std::unordered_set<std::wstring> dis;
+        for (const auto& d : mgmt::SplitIds(qst.cellDisabled))
+        {
+            std::wstring l = mgmt::ToLowerW(d);
+            if (!l.empty()) dis.insert(l);
+        }
+        std::vector<std::pair<std::wstring, size_t>> enabled;
+        std::unordered_set<std::wstring> seenIds;
+        for (const auto& pl : ScanPackLites(dir))
+        {
+            std::wstring lid = mgmt::ToLowerW(pl.id);
+            if (dis.count(lid) || seenIds.count(lid)) continue; // 停用/重复 id 先到者胜
+            seenIds.insert(lid);
+            enabled.push_back({ pl.id, pl.entries });
+        }
+        if (mgmt::CellQuotaEffective(enabled, ToWide(p.id), kMaxCellTotal) == 0)
+            res.message += L"（注意：启用合计超 500000 条上限，本包暂不生效——"
+                           L"停用或删除其他包后下一次输入自动生效）";
+    }
     return res;
 }
 

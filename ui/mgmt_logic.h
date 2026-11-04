@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cwctype>
 #include <string>
+#include <utility>
 #include <vector>
 
 namespace lingxi {
@@ -135,6 +136,25 @@ inline std::wstring ApplyBulkDisabled(const std::wstring& csv,
             cur.erase(std::remove(cur.begin(), cur.end(), id), cur.end());
     }
     return JoinIds(cur);
+}
+
+// N8b 启用合计限额裁决（镜像引擎 RebuildCellPacks：调用方先剔停用表/去重 id，
+// 本函数按 id 升序累计，从超限包起整包不生效——与引擎 break 口径一致）。
+// 返回指定 id 的生效条数（0=不生效/不存在）。引擎_test MG9 钉口径。
+inline size_t CellQuotaEffective(std::vector<std::pair<std::wstring, size_t>> enabled,
+                                 const std::wstring& id, size_t cap)
+{
+    std::sort(enabled.begin(), enabled.end(),
+              [](const std::pair<std::wstring, size_t>& a,
+                 const std::pair<std::wstring, size_t>& b) { return a.first < b.first; });
+    size_t total = 0;
+    for (const auto& p : enabled)
+    {
+        if (total + p.second > cap) break; // 引擎口径：超限整包跳，后续皆不生效
+        total += p.second;
+        if (p.first == id) return p.second;
+    }
+    return 0;
 }
 
 } // namespace mgmt

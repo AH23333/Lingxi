@@ -3080,6 +3080,29 @@ int wmain(int argc, wchar_t** argv)
                    "CELLc-6 .del residue: unlocked deleted, locked skipped+counted, retry ok");
         }
 
+        // c-7（N8a）CJK 文件名 id 哈希后缀去重：两个不同中文名不再同归一成 pack 顶包
+        {
+            std::wstring srcC1 = writeSrc(L"词库一.txt", "细胞词\txi bao ci\n");
+            std::wstring srcC2 = writeSrc(L"词库二.txt", "钢耗\tgang hao\n");
+            lingxi::CellImportResult rc1 = lingxi::ImportCellPackSync(srcC1, sy, false);
+            lingxi::CellImportResult rc2 = lingxi::ImportCellPackSync(srcC2, sy, false);
+            auto wideId = [](const std::string& s) { return std::wstring(s.begin(), s.end()); };
+            bool landed1 = false, landed2 = false;
+            if (rc1.ok) landed1 = GetFileAttributesW((cellDir + L"\\" + wideId(rc1.id) + L".lxcell").c_str()) != INVALID_FILE_ATTRIBUTES;
+            if (rc2.ok) landed2 = GetFileAttributesW((cellDir + L"\\" + wideId(rc2.id) + L".lxcell").c_str()) != INVALID_FILE_ATTRIBUTES;
+            Report(rc1.ok && rc2.ok && rc1.id != rc2.id &&
+                   rc1.id.rfind("pack-", 0) == 0 && rc2.id.rfind("pack-", 0) == 0 &&
+                   landed1 && landed2 &&
+                   lingxi::MakeIdFromStem("sctest") == "sctest" &&     // 无信息丢失不加后缀（存量兼容）
+                   lingxi::MakeIdFromStem("My Dict") != "my-dict" &&   // 丢信息→哈希后缀
+                   lingxi::MakeIdFromStem(lingxi::MakeIdFromStem("词库一")) == lingxi::MakeIdFromStem("词库一"), // 幂等
+                   "CELLc-7 CJK stem ids hash-deduped; clean stem unchanged; idempotent");
+            if (rc1.ok) DeleteFileW((cellDir + L"\\" + wideId(rc1.id) + L".lxcell").c_str());
+            if (rc2.ok) DeleteFileW((cellDir + L"\\" + wideId(rc2.id) + L".lxcell").c_str());
+            DeleteFileW(srcC1.c_str());
+            DeleteFileW(srcC2.c_str());
+        }
+
         // c-5 复核不一致分支不可注入（磁盘故障类）——此处如实不测，见 commit 说明
         DeleteFileW((cellDir + L"\\cimp.lxcell").c_str());
         DeleteFileW((cellDir + L"\\sctest.lxcell").c_str());
@@ -3088,6 +3111,69 @@ int wmain(int argc, wchar_t** argv)
         DeleteFileW(src3.c_str());
         lingxi::IPredictor* reset = lingxi::CreatePinyinPredictor();
         if (reset) delete reset; // 复位沙盒：cell 目录已空
+    }
+
+    // ===== CELLd. N8b 合计 500000 上限双口径钉：导入文案明示"暂不生效"，
+    // 引擎侧同口径整包不加载（MG9 纯函数钉排序/累计，本块钉端到端一致） =====
+    {
+        std::unordered_set<std::string> sy = { "xi", "bao", "gang" };
+        std::wstring cellDir = lingxi::CellPackDirW();
+        auto wr = [&](const std::wstring& path, const std::string& content) {
+            HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                                   FILE_ATTRIBUTE_NORMAL, NULL);
+            if (h == INVALID_HANDLE_VALUE) return;
+            DWORD w = 0;
+            WriteFile(h, content.data(), (DWORD)content.size(), &w, NULL);
+            CloseHandle(h);
+        };
+        // 词列无 CJK 限制（ParseLxcell 只校验音节列）；marker 词用 CJK 便于候选断言
+        auto bigPack = [](const char* id, const char* markerWord, const char* markerSyll,
+                          const char* fillerSyll, size_t n) {
+            std::string c = "LXCELL 1\nname="; c += id; c += "\nid="; c += id; c += "\n";
+            for (size_t i = 0; i < n; i++)
+            { c += 'w'; c += std::to_string(i); c += '\t'; c += fillerSyll; c += '\n'; }
+            c += markerWord; c += '\t'; c += markerSyll; c += '\n';
+            return c;
+        };
+        std::wstring q1 = ExeDir() + L"\\quota1.lxcell", q2 = ExeDir() + L"\\quota2.lxcell",
+                     q3 = ExeDir() + L"\\quota3.lxcell";
+        // 单包上限 200000（CELLa-12）：filler+marker 恰 200000 不触顶；
+        // marker 音节列与 filler 区分（避免 20 万同音节词挤占候选窗的断言噪声）
+        wr(q1, bigPack("quota1", "甲标", "xi bao", "xi", 199999));    // 计 200000
+        wr(q2, bigPack("quota2", "乙标", "xi xi", "xi", 199999));     // 合计 400000
+        wr(q3, bigPack("quota3", "丙标", "gang gang", "xi", 100000)); // 合计 500001>500000
+        lingxi::CellImportResult r1 = lingxi::ImportCellPackSync(q1, sy, false);
+        lingxi::CellImportResult r2 = lingxi::ImportCellPackSync(q2, sy, false);
+        lingxi::CellImportResult r3 = lingxi::ImportCellPackSync(q3, sy, false);
+        // 口径一（导入侧）：q3 成功落盘但文案明示暂不生效；q1/q2 无该提示
+        bool msgOk = r1.ok && r2.ok && r3.ok &&
+                     r1.message.find(L"暂不生效") == std::wstring::npos &&
+                     r2.message.find(L"暂不生效") == std::wstring::npos &&
+                     r3.message.find(L"暂不生效") != std::wstring::npos;
+        // 口径二（引擎侧）：q1/q2 marker 进候选，q3 marker 不出现（合计超限整包跳）
+        bool engOk = false;
+        {
+            lingxi::IPredictor* py = lingxi::CreatePinyinPredictor();
+            if (py)
+            {
+                auto hasW = [](const lingxi::Prediction& p, const wchar_t* w) {
+                    for (const auto& c : p.cands) if (c == w) return true;
+                    return false;
+                };
+                engOk = hasW(py->Predict(L"xibao"), L"甲标") &&
+                        hasW(py->Predict(L"xixi"), L"乙标") &&
+                        !hasW(py->Predict(L"ganggang"), L"丙标");
+                delete py;
+            }
+        }
+        Report(msgOk && engOk,
+               "CELLd 500k total quota: import msg honest + engine skips over-cap pack");
+        DeleteFileW((cellDir + L"\\quota1.lxcell").c_str());
+        DeleteFileW((cellDir + L"\\quota2.lxcell").c_str());
+        DeleteFileW((cellDir + L"\\quota3.lxcell").c_str());
+        DeleteFileW(q1.c_str()); DeleteFileW(q2.c_str()); DeleteFileW(q3.c_str());
+        lingxi::IPredictor* reset2 = lingxi::CreatePinyinPredictor();
+        if (reset2) delete reset2; // 复位沙盒
     }
 
     // ===== CI. 批13 细胞词库导入失败路径真注入钉（批8 ROB 标准） =====
@@ -3951,6 +4037,13 @@ int wmain(int argc, wchar_t** argv)
                    ApplyBulkDisabled(L"p1,p2", one, false) == L"p1",
                    "MG8 single-id toggle == bulk(ids=1) equivalence");
         }
+        // MG9（N8b）启用合计限额裁决：id 升序累计、超限起整包不生效（镜像引擎 break）
+        Report(CellQuotaEffective({{L"a",6},{L"b",5},{L"c",4}}, L"a", 10) == 6 &&
+               CellQuotaEffective({{L"a",6},{L"b",5},{L"c",4}}, L"b", 10) == 0 && // 6+5>10 整包跳
+               CellQuotaEffective({{L"a",6},{L"b",5},{L"c",4}}, L"c", 10) == 0 && // 后续皆不生效
+               CellQuotaEffective({{L"a",6},{L"b",5},{L"c",4}}, L"b", 11) == 5 &&
+               CellQuotaEffective({}, L"z", 5) == 0,                              // 不存在=0
+               "MG9 cell quota: id-sorted accumulate, over-cap whole-pack ineffective");
     }
 
     // ===== SK. 批15 皮肤/透明度链路钉：下拉映射→持久化→读校验→钳制/α（ui/style_logic.h）=====

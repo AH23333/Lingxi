@@ -41,4 +41,9 @@ CellImportResult ImportCellPackSync(const std::wstring& srcPath,
 // N7：清理 cell 目录下 rename-aside 残留的 *.del（删除时被占用改名让位的死件）。
 // 返回成功删除数；failed 非空时回填失败数（仍被占用等——调用方须记日志不静默）。
 size_t CleanupCellDelResidue(size_t* failed);
+
+// N8a：文件名 stem（UTF-8）→ 包 id（小写字母/数字/-）。归一化丢失信息
+//（含 CJK 字节、大小写、首尾剥离）时追加 stem 的 FNV-1a 哈希后缀去重——
+// 纯 CJK 文件名不再全部归一成 "pack" 互相顶包。engine_test CELLc-7 钉口径。
+std::string MakeIdFromStem(const std::string& stem);
 } // namespace lingxi
