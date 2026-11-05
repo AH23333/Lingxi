@@ -28,6 +28,7 @@
 #include "../../ime/keygate.h"    // 审查缺陷② 数字键页宽认领闸统一谓词（header-only）
 #include "../../ui/combo_logic.h" // 审查缺陷⑤ combo 域内非选项值保留口径（header-only）
 #include "../../common/caret_edit.h" // M5 组合内光标编辑纯逻辑（header-only）
+#include "../../ui/hotwords_logic.h" // 批2-① 常选词 TOP N 解析（header-only）
 
 // 批8：ui/fileio.cpp 直链——UI 侧词典文件读写与失败路径实证（ROB 块）共用同一实现
 namespace lingxi {
@@ -1750,6 +1751,31 @@ int wmain(int argc, wchar_t** argv)
                 for (const auto& w : r3b.cands)
                     if (w.find(L"什") != std::wstring::npos) { backOn = true; break; }
                 Report(backOn, "typoCorrection: re-enable restores rescue", L"");
+            }
+
+            // P10f. 常选词 TOP N 解析（hotwords_logic.h）：计数降序/同数词升序/
+            // 坏行跳过/截断 N/manual 与 lastUsed 列不影响计数列定位
+            {
+                const char* raw =
+                    "中国\tzhongguo\t5\n"
+                    "坏行无制表符\n"
+                    "北京\tbeijing\t9\t1\n"          // manual 第 4 列
+                    "上海\tshanghai\t9\t0\t1730000000\n" // 5 列齐全
+                    "零次\tlingci\t0\n"             // count=0 跳过
+                    "负次\tfuci\t-3\n"
+                    "广州\tguangzhou\t7\t0\n";
+                auto top = lingxi::ParseTopUserWords(raw, 10);
+                Report(top.size() == 4 && top[0].first == "上海" && top[0].second == 9 &&
+                       top[1].first == "北京" && top[1].second == 9 &&
+                       top[2].first == "广州" && top[2].second == 7 &&
+                       top[3].first == "中国" && top[3].second == 5,
+                       "hotwords: count desc, word asc on tie, bad rows skipped", L"");
+                auto top2 = lingxi::ParseTopUserWords(raw, 2);
+                Report(top2.size() == 2 && top2[1].first == "北京",
+                       "hotwords: topN truncation", L"");
+                Report(lingxi::ParseTopUserWords("", 10).empty() &&
+                       lingxi::ParseTopUserWords("a\tb\n", 10).empty(),
+                       "hotwords: empty/garbage input -> empty", L"");
             }
 
             // P11. R3 日期时间直出：rq/sj/xq/rqsj 整串触发注入置顶

@@ -13,10 +13,39 @@
 #include <mutex>
 
 #include "../common/settings.h"
+#include "hotwords_logic.h" // 批2-① 常选词 TOP N（离线热词，userdict 计数派生）
 
 namespace lingxi {
 
 namespace {
+
+// 读 userdict.txt 全文（统计窗常选词数据源）。与引擎 UserDictPath 同路径口径；
+// 引擎侧原子写（.tmp+rename）保证本读永不拿到半截文件。
+std::string ReadUserDictRaw()
+{
+    wchar_t buf[MAX_PATH] = {};
+    DWORD n = GetEnvironmentVariableW(L"APPDATA", buf, MAX_PATH);
+    if (n == 0 || n >= MAX_PATH) return {};
+    std::wstring path = std::wstring(buf) + L"\\LingxiIme\\userdict.txt";
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                           OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return {};
+    std::string raw;
+    char chunk[8192]; DWORD rd = 0;
+    while (ReadFile(h, chunk, sizeof(chunk), &rd, NULL) && rd)
+        raw.append(chunk, rd);
+    CloseHandle(h);
+    return raw;
+}
+
+std::wstring U8ToWideLocal(const std::string& s)
+{
+    int wn = MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), NULL, 0);
+    if (wn <= 0) return L"";
+    std::wstring w(wn, L'\0');
+    MultiByteToWideChar(CP_UTF8, 0, s.data(), (int)s.size(), &w[0], wn);
+    return w;
+}
 
 std::mutex g_mtx;
 UsageData g_data;
@@ -254,7 +283,10 @@ void StatsReset()
 std::wstring BuildStatsText()
 {
     UsageData d = StatsSnapshot();
-    if (d.totalPicks == 0)
+    // 常选词 TOP 10（离线热词，台账批2-①）：userdict 计数降序。
+    // 提前算好：无选词统计但有导入词（manual count>=1）时本节仍应展示。
+    auto hotTop = ParseTopUserWords(ReadUserDictRaw(), 10);
+    if (d.totalPicks == 0 && hotTop.empty())
         return L"灵犀输入法 · 打字统计\r\n\r\n"
                L"尚无选词记录。\r\n\r\n"
                L"（通过候选窗选词上屏后开始统计；每 20 次选词落盘一次，"
@@ -287,6 +319,20 @@ std::wstring BuildStatsText()
                      (unsigned long long)d.dayChars, (unsigned)goal, pct,
                      d.dayChars >= goal ? L"✓ 已达成" : L"");
         text += g;
+    }
+    // 常选词 TOP 10（离线热词，台账批2-①）：userdict 计数降序；无学习词不显示本节
+    if (!hotTop.empty())
+    {
+        text += L"\r\n【常选词 TOP 10】（自学习/自定义词条的累计选用次数；"
+                L"统计清零不影响本节，清空用户词典才清除）\r\n";
+        for (size_t i = 0; i < hotTop.size(); i++)
+        {
+            wchar_t line[160];
+            _snwprintf_s(line, _TRUNCATE, L"%2u. %ls × %d\r\n",
+                         (unsigned)(i + 1), U8ToWideLocal(hotTop[i].first).c_str(),
+                         hotTop[i].second);
+            text += line;
+        }
     }
     return text +
         L"\r\n（口径：候选窗选词上屏；每 20 次选词落盘，退出时保存。"
