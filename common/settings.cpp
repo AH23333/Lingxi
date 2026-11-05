@@ -218,6 +218,7 @@ Settings LoadSettings()
     if (GetDword(hKey, L"FullWidthAlnum", v)) s.fullWidthAlnum = v != 0;
     if (GetDword(hKey, L"FuzzyPinyin", v)) s.fuzzyPinyin = v != 0;
     if (GetDword(hKey, L"FuzzyGroups", v) && v <= 0xFF) s.fuzzyGroups = v; // 缺键=全组，与历史行为一致
+    if (GetDword(hKey, L"TypoCorrection", v)) s.typoCorrection = v != 0; // 缺键=开（R4 泛化救援）
     // 中英切换键：新键 ToggleMode 优先；无/越界则旧键 ShiftToggle
     // （bool）派生 0/1；两键均缺 = 默认 1（Shift 切换，与历史行为一致）
     DWORD tm = 0;
@@ -300,6 +301,7 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"FullWidthAlnum", s.fullWidthAlnum ? 1 : 0);
     SetDword(hKey, L"FuzzyPinyin", s.fuzzyPinyin ? 1 : 0);
     SetDword(hKey, L"FuzzyGroups", s.fuzzyGroups);
+    SetDword(hKey, L"TypoCorrection", s.typoCorrection ? 1 : 0);
     // 双键兼容：ShiftToggle（旧 bool）与新 ToggleMode 同步写——旧版 UI/DLL 读旧键
     // 仍得正确的开/关语义（仅"Shift 或 Ctrl"细模式对旧版退化为"开"）
     SetDword(hKey, L"ShiftToggle", s.toggleMode != 0 ? 1 : 0);
@@ -374,6 +376,7 @@ void SaveSettingsDiff(const Settings& s)
     PutDwordDiff(hKey, L"FullWidthAlnum", s.fullWidthAlnum ? 1 : 0);
     PutDwordDiff(hKey, L"FuzzyPinyin", s.fuzzyPinyin ? 1 : 0);
     PutDwordDiff(hKey, L"FuzzyGroups", s.fuzzyGroups);
+    PutDwordDiff(hKey, L"TypoCorrection", s.typoCorrection ? 1 : 0);
     PutDwordDiff(hKey, L"ShiftToggle", s.toggleMode != 0 ? 1 : 0);
     PutDwordDiff(hKey, L"ToggleMode", s.toggleMode);
     PutDwordDiff(hKey, L"Shuangpin", s.shuangpin ? 1 : 0);

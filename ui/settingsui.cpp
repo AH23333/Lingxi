@@ -128,6 +128,7 @@ constexpr int IDC_BTN_STATS = 132;      // 打字统计入口（词典页"词典
 constexpr int IDC_CHK_FWALNUM = 133;    // 全角字母数字（搜狗 F4 对标）
 constexpr int IDC_CMB_SPSCH = 134;      // 双拼方案：0 小鹤 1 自然码 2 微软
 constexpr int IDC_CMB_PGSIZE = 145;     // 每页候选数：3/5/6/9（批3 收编 kPageSize）
+constexpr int IDC_CHK_TYPO = 146;       // 智能纠错（R4 泛化救援）开关
 constexpr int IDC_EDT_UPDREPO = 140;    // 更新：仓库 owner/repo 输入框（批次 5）
 constexpr int IDC_CHK_UPDAUTO = 141;    // 更新：自动检查开关（默认关）
 constexpr int IDC_BTN_UPDCHECK = 142;   // 更新：手动检查按钮
@@ -142,6 +143,7 @@ HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
       g_hChkLlmRerank = nullptr, g_hChkLlmMultiPath = nullptr, g_hChkAssocPick = nullptr,
       g_hChkFwAlnum = nullptr;
 HWND g_hChkFz[8] = {}; // 模糊音组细分开关（8 组）
+HWND g_hChkTypo = nullptr; // 智能纠错（R4 泛化救援）开关
 HWND g_hCmbOpacity = nullptr;
 HWND g_hCmbUiFont = nullptr; // 界面字体族下拉
 HWND g_hCmbPgSize = nullptr; // 每页候选数下拉（批3 可配页宽）
@@ -180,6 +182,7 @@ void LoadToControls()
     SetToggle(g_hChkFwAlnum, s.fullWidthAlnum);
     SetToggle(g_hChkFuzzy, s.fuzzyPinyin);
     for (int fz = 0; fz < 8; fz++) SetToggle(g_hChkFz[fz], (s.fuzzyGroups >> fz) & 1u);
+    SetToggle(g_hChkTypo, s.typoCorrection);
     ComboBox_SetCurSel(g_hCmbToggleMode, (int)(s.toggleMode <= 4 ? s.toggleMode : 1));
     SetToggle(g_hChkShuangpin, s.shuangpin);
     ComboBox_SetCurSel(g_hCmbSpSch, s.shuangpinScheme <= 2 ? (int)s.shuangpinScheme : 0);
@@ -219,6 +222,7 @@ void SaveFromControls()
     s.cnPunct = ToggleOn(g_hChkCnPunct);
     s.fullWidthAlnum = ToggleOn(g_hChkFwAlnum);
     s.fuzzyPinyin = ToggleOn(g_hChkFuzzy);
+    s.typoCorrection = ToggleOn(g_hChkTypo);
     { unsigned grp = 0; for (int fz = 0; fz < 8; fz++) if (ToggleOn(g_hChkFz[fz])) grp |= 1u << fz;
       s.fuzzyGroups = grp ? grp : 0xFF; } // 一组未勾=退回全组（总开关才是关闭入口，避免"全关静默失聪"）
     int tsel = ComboBox_GetCurSel(g_hCmbToggleMode);
@@ -1182,6 +1186,9 @@ void CreateSettingsWindow(HINSTANCE hInst)
         IDC_CHK_FZ_FH, IDC_CHK_FZ_LR, IDC_CHK_FZ_GK };
       for (int fz = 0; fz < 8; fz++)
       { g_hChkFz[fz] = mkToggle(fzId[fz]); mkRow(fzName[fz], L"总开关开启时按组生效", g_hChkFz[fz], CK_TOGGLE, 44); } }
+    g_hChkTypo = mkToggle(IDC_CHK_TYPO);
+    mkRow(L"智能纠错", L"打错的音节按编辑距离一步内救活（如 tain→天、shne→什）；正常输入不受影响",
+          g_hChkTypo, CK_TOGGLE, 44);
     g_hChkShuangpin = mkToggle(IDC_CHK_SHUANGPIN);
     mkRow(L"双拼", L"每音节两键：声母+韵母；三方案声母一致（zh=V ch=I sh=U），方案见下行",
           g_hChkShuangpin, CK_TOGGLE, 44);

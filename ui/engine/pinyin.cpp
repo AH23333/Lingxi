@@ -550,7 +550,8 @@ public:
                     if (u.kind != SyllUnit::FULL) { ok = false; break; }
                 if (ok) { allFull = true; break; }
             }
-            if (!allFull && raw.find_first_of("aeiou") != std::string::npos)
+            if (!allFull && st.typoCorrection &&
+                raw.find_first_of("aeiou") != std::string::npos)
             {
                 std::vector<SegPath> rescue = EnumeratePaths(raw, true);
                 if (!rescue.empty()) paths = std::move(rescue);

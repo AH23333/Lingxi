@@ -30,6 +30,9 @@ struct Settings
     bool fuzzyPinyin = true;      // 模糊音总开关：关=全部组失效；开=按 fuzzyGroups 位掩码生效
     uint32_t fuzzyGroups = 0xFF;  // 模糊音组位掩码：bit0=zh/z bit1=ch/c bit2=sh/s bit3=n/l bit4=前后鼻音 bit5=f/h bit6=l/r bit7=g/k
                                   // （对标微软拼音"可细分开关"；0 视为仅总开关无组=无互通，默认全组）
+    bool typoCorrection = true;   // 智能纠错（R4 泛化救援）：打错的音节经编辑距离≤1 救活。
+                                  // 关=救援趟不启用（静态表 CorrectSyllableTypo 三条高频规则
+                                  // 仍生效——那是历史既有行为，不在本开关范围）。默认开。
     uint32_t toggleMode = 1;      // 中英切换键（B5 草案②）：0 无 1 Shift 2 Shift 或
                                   // Ctrl 3 CapsLock（KeyDown 即吞，不翻转大小写）
                                   // 4 仅 Ctrl。

@@ -1721,6 +1721,37 @@ int wmain(int argc, wchar_t** argv)
                 Report(lingxi::TailCaretPos(2, 7) == 5, "M5 caret: pos mapping", L"");
             }
 
+            // P10e. 智能纠错设置开关（TypoCorrection）：关=救援趟不启用
+            {
+                lingxi::Settings s0 = lingxi::LoadSettings();
+                // 缺省开：shne 救活含"什"
+                lingxi::Prediction r1 = py->Predict(L"shne");
+                bool onOk = false;
+                for (const auto& w : r1.cands)
+                    if (w.find(L"什") != std::wstring::npos) { onOk = true; break; }
+                Report(onOk, "typoCorrection: default on rescues shne", L"");
+                // 置关：shne 不再救活（候选不含"什"）；静态表纠错不受影响（niou→牛）
+                lingxi::Settings s1 = s0; s1.typoCorrection = false;
+                lingxi::SaveSettings(s1);
+                lingxi::Prediction r2 = py->Predict(L"shne");
+                bool stillThere = false;
+                for (const auto& w : r2.cands)
+                    if (w.find(L"什") != std::wstring::npos) { stillThere = true; break; }
+                Report(!stillThere, "typoCorrection: off disables rescue", L"");
+                lingxi::Prediction r3 = py->Predict(L"niou");
+                bool staticOk = false;
+                for (const auto& w : r3.cands)
+                    if (w.find(L"牛") != std::wstring::npos) { staticOk = true; break; }
+                Report(staticOk, "typoCorrection: static table unaffected by off", L"");
+                // 回开并还原基线
+                lingxi::SaveSettings(s0);
+                lingxi::Prediction r3b = py->Predict(L"shne");
+                bool backOn = false;
+                for (const auto& w : r3b.cands)
+                    if (w.find(L"什") != std::wstring::npos) { backOn = true; break; }
+                Report(backOn, "typoCorrection: re-enable restores rescue", L"");
+            }
+
             // P11. R3 日期时间直出：rq/sj/xq/rqsj 整串触发注入置顶
             {
                 struct DtCase { const wchar_t* input; const wchar_t* must1; const wchar_t* must2; };
