@@ -1778,6 +1778,73 @@ int wmain(int argc, wchar_t** argv)
                        "hotwords: empty/garbage input -> empty", L"");
             }
 
+            // P10g. 批3-② 纠错学到的键归一：typo 键落词典前改写为修正音节序列
+            {
+                wchar_t appdata[MAX_PATH] = {0};
+                GetEnvironmentVariableW(L"APPDATA", appdata, MAX_PATH);
+                std::wstring upath = std::wstring(appdata) + L"\\LingxiIme\\userdict.txt";
+                std::vector<uint8_t> backup;
+                bool existed = false;
+                if (HANDLE hb = CreateFileW(upath.c_str(), GENERIC_READ, FILE_SHARE_READ, NULL,
+                                            OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                    hb != INVALID_HANDLE_VALUE)
+                {
+                    existed = true;
+                    DWORD sz = GetFileSize(hb, NULL);
+                    backup.resize(sz);
+                    DWORD rd = 0; ReadFile(hb, backup.data(), sz, &rd, NULL);
+                    CloseHandle(hb);
+                }
+                DeleteFileW(upath.c_str());
+                // 事件驱动口径：先 Predict 走过救援趟（登记原键→修正键），再 Learn
+                lingxi::Prediction warm = py->Predict(L"shne"); (void)warm;
+                py->Learn(L"shne", L"什");       // typo 键 → 应学为 shen
+                py->Learn(L"shne", L"什");
+                py->Learn(L"zg", L"中国");        // 简拼键 → 维持 zg
+                py->Learn(L"jintian", L"今天");   // 正常键 → 维持
+                // 轮询异步落盘（P9 同型；每轮 FlushUserDict 再踢一脚——P9 尾部
+                // 在途写可能正占 busy，本批 Learn 的 KickPersist 会被跳过，
+                // dirty 滞留至下一事件；测试不等闲，逐轮主动踢）
+                std::string content;
+                for (int wait = 0; wait < 200; ++wait)
+                {
+                    py->FlushUserDict();
+                    if (HANDLE hf = CreateFileW(upath.c_str(), GENERIC_READ,
+                                                FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                                                OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, NULL);
+                        hf != INVALID_HANDLE_VALUE)
+                    {
+                        DWORD sz = GetFileSize(hf, NULL);
+                        std::vector<uint8_t> buf(sz ? sz : 1);
+                        DWORD rd = 0; ReadFile(hf, buf.data(), sz, &rd, NULL);
+                        CloseHandle(hf);
+                        content.assign((const char*)buf.data(), rd);
+                        if (content.find("\tshen\t") != std::string::npos &&
+                            content.find("\tzg\t") != std::string::npos)
+                            break;
+                    }
+                    Sleep(10);
+                }
+                Report(content.find("\tshen\t") != std::string::npos &&
+                       content.find("什\tshen\t") != std::string::npos,
+                       "typo learn: key normalized to shen", L"");
+                Report(content.find("\tshne\t") == std::string::npos,
+                       "typo learn: no typo key persisted", L"");
+                Report(content.find("\tzg\t") != std::string::npos,
+                       "typo learn: shorthand key (zg) kept as-is", L"");
+                Report(content.find("\tjintian\t") != std::string::npos,
+                       "typo learn: normal key unchanged", L"");
+                // 还原用户词典
+                DeleteFileW(upath.c_str());
+                if (existed)
+                {
+                    if (HANDLE hw = CreateFileW(upath.c_str(), GENERIC_WRITE, 0, NULL,
+                                                CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+                        hw != INVALID_HANDLE_VALUE)
+                    { DWORD wr = 0; WriteFile(hw, backup.data(), (DWORD)backup.size(), &wr, NULL); CloseHandle(hw); }
+                }
+            }
+
             // P11. R3 日期时间直出：rq/sj/xq/rqsj 整串触发注入置顶
             {
                 struct DtCase { const wchar_t* input; const wchar_t* must1; const wchar_t* must2; };

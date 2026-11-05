@@ -554,7 +554,18 @@ public:
                 raw.find_first_of("aeiou") != std::string::npos)
             {
                 std::vector<SegPath> rescue = EnumeratePaths(raw, true);
-                if (!rescue.empty()) paths = std::move(rescue);
+                if (!rescue.empty())
+                {
+                    paths = rescue; // 复制保留一份供纠错键登记
+                    // 批3-②：登记 原键→修正键（Learn 只按此表改写，事件驱动）
+                    std::string fixedKey;
+                    if (RescueCorrectedKey(NormalizeIn(raw), rescue, fixedKey))
+                    {
+                        std::lock_guard<std::mutex> lk(_udMtx);
+                        if (_rescueKeys.size() >= 4096) _rescueKeys.clear();
+                        _rescueKeys[NormalizeIn(raw)] = fixedKey;
+                    }
+                }
             }
         }
         if (paths.empty())
@@ -795,6 +806,9 @@ private:
     std::unordered_map<std::string, std::vector<std::string>> _fuzzyOf;
     // 非法串 → 距其编辑距离≤1 的合法音节（R4 泛化纠错反向索引，BuildTypoIndex）。
     std::unordered_map<std::string, std::vector<std::string>> _typoFixes;
+    // 批3-② 本次会话真走过救援趟的 原键→修正键（_udMtx 保护；Learn 仅按此表
+    // 归一学习键，>4096 清空防膨胀——纠错学习是低频路径，清表代价可忽略）。
+    std::unordered_map<std::string, std::string> _rescueKeys;
 
     // 自学习用户词典：规范化拼音串 → 用户选过的词（按次数）。
     // 三方并发访问：管道预测线程（Predict 读）、管道读线程（Learn 写）、
@@ -1462,38 +1476,49 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn, bool allowTypoGen 
     // 编辑距离≤1 泛纠错反向索引（R4 泛化）：键=非法串（长度≥2），值=与其一次
     // 编辑（替换/删除/插入/相邻换位）可达的合法音节表。只收录"本身不是合法
     // 音节"的串作键——合法串永走正常 FULL 路径，纠错不劫持。随音节表一次性
-    // 预计算，热路径 O(1) 查表；单键值表排序截断到 8（防 an/ang 这类高邻域
-    // 键在 DP 梁内爆路径）。
+    // 预计算，热路径 O(1) 查表；值表按编辑类型优先级排序（换位>替换>删除>
+    // 插入，换位是最高频真实误拼）再字典序，截断到 8 防 DP 梁内爆路径。
     void BuildTypoIndex()
     {
         _typoFixes.clear();
-        auto addFix = [this](std::string&& typo, const std::string& syl) {
+        // 值带编辑类型优先级：换位(0)=人类最高频误拼 > 替换(1) > 删除(2) > 插入(3)。
+        // 纯字典序会把 she（插入 n）排在 shen（换位 ne）前面——实证 shne 被纠成 she。
+        std::unordered_map<std::string, std::vector<std::pair<int, std::string>>> tmp;
+        auto addFix = [this, &tmp](std::string&& typo, const std::string& syl, int prio) {
             if (typo.size() < 2) return;          // 单字母是 INITIAL 简拼领土
             if (_syllables.count(typo)) return;    // 合法串不做纠错键
-            auto& v = _typoFixes[std::move(typo)];
-            if (std::find(v.begin(), v.end(), syl) == v.end()) v.push_back(syl);
+            auto& v = tmp[std::move(typo)];
+            for (const auto& p : v) if (p.second == syl) return; // 同音节已录（保最高优先级）
+            v.emplace_back(prio, syl);
         };
         static const char* kLetters = "abcdefghijklmnopqrstuvwxyz";
         for (const auto& s : _syllables)
         {
             const size_t len = s.size();
-            for (size_t i = 0; i < len; i++)               // 替换
+            for (size_t i = 0; i + 1 < len; i++)              // 相邻换位（tain→tian）
+                if (s[i] != s[i + 1]) { std::string t = s; std::swap(t[i], t[i + 1]); addFix(std::move(t), s, 0); }
+            for (size_t i = 0; i < len; i++)                  // 替换
                 for (const char* c = kLetters; *c; c++)
-                    if (*c != s[i]) { std::string t = s; t[i] = *c; addFix(std::move(t), s); }
-            for (size_t i = 0; i < len; i++)               // 删除
-                addFix(s.substr(0, i) + s.substr(i + 1), s);
-            if (len < 6)                                    // 插入（音节上限 6）
+                    if (*c != s[i]) { std::string t = s; t[i] = *c; addFix(std::move(t), s, 1); }
+            for (size_t i = 0; i < len; i++)                  // 删除
+                addFix(s.substr(0, i) + s.substr(i + 1), s, 2);
+            if (len < 6)                                       // 插入（音节上限 6）
                 for (size_t i = 0; i <= len; i++)
                     for (const char* c = kLetters; *c; c++)
-                        addFix(s.substr(0, i) + *c + s.substr(i), s);
-            for (size_t i = 0; i + 1 < len; i++)            // 相邻换位（tain→tian）
-                if (s[i] != s[i + 1]) { std::string t = s; std::swap(t[i], t[i + 1]); addFix(std::move(t), s); }
+                        addFix(s.substr(0, i) + *c + s.substr(i), s, 3);
         }
-        for (auto& kv : _typoFixes)
+        for (auto& kv : tmp)
         {
             auto& v = kv.second;
-            std::sort(v.begin(), v.end());
-            if (v.size() > 8) v.resize(8);
+            std::stable_sort(v.begin(), v.end(),
+                             [](const auto& a, const auto& b) {
+                                 if (a.first != b.first) return a.first < b.first;
+                                 return a.second < b.second;
+                             });
+            std::vector<std::string> out;
+            for (const auto& p : v) out.push_back(p.second);
+            if (out.size() > 8) out.resize(8);
+            _typoFixes.emplace(kv.first, std::move(out));
         }
     }
 
@@ -1882,6 +1907,40 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn, bool allowTypoGen 
         }).detach();
     }
 
+    // 批3-② 纠错学到的键归一（v2，事件驱动）：仅在本次 Predict 真走过救援趟、
+    // 且最优全 FULL 救援路径满足"恰好一处被纠错、其余单元与原文逐字一致、
+    // 恰好消耗整串"时，登记 原键→修正键。Learn 只按这张表改写——合成/乱敲
+    // 键从未进过 Predict（L10 两万合成键零预测），永不被改写；残表上限 4096
+    // 防爆。真实效果：用户真靠纠错选中的词，学习键归一到 shen 而非 shne。
+    // 返回 false=本输入无可登记的纠错归一。
+    bool RescueCorrectedKey(const std::string& key, const std::vector<SegPath>& rescue,
+                            std::string& out)
+    {
+        const SegPath* best = nullptr;
+        for (const auto& p : rescue)
+        {
+            bool ok = !p.units.empty();
+            for (const auto& u : p.units)
+                if (u.kind != SyllUnit::FULL) { ok = false; break; }
+            if (ok && (!best || p.cost < best->cost)) best = &p;
+        }
+        if (!best) return false;
+        int typoUnits = 0;
+        size_t pos = 0;
+        std::string fixed;
+        for (const auto& u : best->units)
+        {
+            size_t rl = u.rawLen ? u.rawLen : u.text.size();
+            if (pos + rl > key.size() || key.compare(pos, rl, u.text) != 0) typoUnits++;
+            fixed += u.text;
+            pos += rl;
+        }
+        if (typoUnits != 1 || pos != key.size() || fixed.empty() || fixed == key)
+            return false;
+        out = std::move(fixed);
+        return true;
+    }
+
     // 用户选择反馈：该拼音串下，被选词计数 +1，落盘后下次同串置顶。
     void Learn(const std::wstring& rawPinyin, const std::wstring& word) override
     {
@@ -1898,6 +1957,13 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn, bool allowTypoGen 
         // 不做同一转换，学习键与查询键永不相交，双拼下学习完全失效
         if (sp) key = ShuangpinToQuanpin(key, lsp.shuangpinScheme);
         key = NormKey(key);
+        if (key.empty()) return;
+        {
+            // 批3-②：仅当本次会话 Predict 真为该键走过救援趟才归一学习键。
+            std::lock_guard<std::mutex> lk(_udMtx);
+            auto rk = _rescueKeys.find(key);
+            if (rk != _rescueKeys.end()) key = rk->second;
+        }
         if (key.empty()) return;
         {
             std::lock_guard<std::mutex> lk(_udMtx);
