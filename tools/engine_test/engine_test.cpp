@@ -30,6 +30,9 @@
 #include "../../common/caret_edit.h" // M5 组合内光标编辑纯逻辑（header-only）
 #include "../../ui/hotwords_logic.h" // 批2-① 常选词 TOP N 解析（header-only）
 
+#include <algorithm>
+#include <chrono>
+
 // 批8：ui/fileio.cpp 直链——UI 侧词典文件读写与失败路径实证（ROB 块）共用同一实现
 namespace lingxi {
 bool ReadFileBytes(const std::wstring& path, std::string& out);
@@ -1843,6 +1846,70 @@ int wmain(int argc, wchar_t** argv)
                         hw != INVALID_HANDLE_VALUE)
                     { DWORD wr = 0; WriteFile(hw, backup.data(), (DWORD)backup.size(), &wr, NULL); CloseHandle(hw); }
                 }
+            }
+
+            // P10h. 整句模式开关（SentenceMode，期一收口）
+            {
+                lingxi::Settings s0 = lingxi::LoadSettings();
+                const wchar_t* kLong = L"wojintianxiangqugongyuankaihui";
+                const wchar_t* kSentence = L"我今天想去公园开会";
+                // 开态（缺省）：整句在候选里
+                lingxi::Prediction rOn = py->Predict(kLong);
+                bool onHas = false;
+                for (const auto& w : rOn.cands) if (w == kSentence) { onHas = true; break; }
+                Report(onHas, "sentenceMode: on keeps sentence cand", L"");
+                // 逐词输入（单词即整词）开/关候选必须逐字一致
+                lingxi::Prediction wOn = py->Predict(L"shijie");
+                lingxi::Settings s1 = s0; s1.sentenceMode = false;
+                lingxi::SaveSettings(s1);
+                lingxi::Prediction wOff = py->Predict(L"shijie");
+                Report(wOn.cands == wOff.cands,
+                       "sentenceMode: word-only input identical on/off", L"");
+                // 关态：整句候选剔除，逐词候选仍在（"我"=覆盖音节1的单词）
+                lingxi::Prediction rOff = py->Predict(kLong);
+                bool offHasSentence = false, offHasWord = false;
+                for (const auto& w : rOff.cands)
+                {
+                    if (w == kSentence) offHasSentence = true;
+                    if (w == L"我") offHasWord = true;
+                }
+                Report(!offHasSentence && offHasWord && !rOff.cands.empty(),
+                       "sentenceMode: off drops sentence, keeps words", L"");
+                lingxi::SaveSettings(s0); // 还原
+                lingxi::Prediction rBack = py->Predict(kLong);
+                bool backOn = false;
+                for (const auto& w : rBack.cands) if (w == kSentence) { backOn = true; break; }
+                Report(backOn, "sentenceMode: re-enable restores sentence", L"");
+            }
+
+            // P10i. 长句专项耗时（期一收口）：12/13 音节实测×21 次取中位，
+            // 帽=实测中位×5 与 10ms 取大（实测值打进 INFO 供台账引用）
+            {
+                const wchar_t* kL1 = L"womenjintianxiangqugongyuanyiqidakaishui"; // 12 音节
+                const wchar_t* kL2 = L"wojintianxiangqugongyuankaihui";           // 13 音节
+                double worstMed = 0;
+                for (const wchar_t* q : { kL1, kL2 })
+                {
+                    std::vector<double> ts;
+                    for (int i = 0; i < 21; i++)
+                    {
+                        auto t0 = std::chrono::steady_clock::now();
+                        lingxi::Prediction r = py->Predict(q); (void)r;
+                        auto t1 = std::chrono::steady_clock::now();
+                        ts.push_back(std::chrono::duration<double, std::milli>(t1 - t0).count());
+                    }
+                    std::sort(ts.begin(), ts.end());
+                    double med = ts[ts.size() / 2];
+                    worstMed = (std::max)(worstMed, med);
+                    wchar_t det[160];
+                    _snwprintf_s(det, _TRUNCATE, L"long-sentence '%ls' median=%.3fms max=%.3fms",
+                                 q, med, ts.back());
+                    Report(true, "INFO long-sentence latency", det);
+                }
+                double cap = (std::max)(10.0, worstMed * 5);
+                wchar_t capDet[160];
+                _snwprintf_s(capDet, _TRUNCATE, L"median=%.3fms cap=%.1fms", worstMed, cap);
+                Report(worstMed < cap, "long-sentence latency within measured cap", capDet);
             }
 
             // P11. R3 日期时间直出：rq/sj/xq/rqsj 整串触发注入置顶

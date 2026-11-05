@@ -33,6 +33,9 @@ struct Settings
     bool typoCorrection = true;   // 智能纠错（R4 泛化救援）：打错的音节经编辑距离≤1 救活。
                                   // 关=救援趟不启用（静态表 CorrectSyllableTypo 三条高频规则
                                   // 仍生效——那是历史既有行为，不在本开关范围）。默认开。
+    bool sentenceMode = true;     // 整句模式：多词链整句候选（"wojintian…"→"我今天想去…"）。
+                                  // 关=只出逐词候选（词数>1 的候选剔除），逐词集合与开态
+                                  // 完全一致（顺序不动）。默认开=现状零变化。
     uint32_t toggleMode = 1;      // 中英切换键（B5 草案②）：0 无 1 Shift 2 Shift 或
                                   // Ctrl 3 CapsLock（KeyDown 即吞，不翻转大小写）
                                   // 4 仅 Ctrl。

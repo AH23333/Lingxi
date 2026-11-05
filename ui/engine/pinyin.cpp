@@ -587,6 +587,12 @@ public:
         }
 
         std::vector<Candidate> out = Generate(paths, coverOk ? &inForCover : nullptr, strictSep);
+        // 整句模式开关（期一收口）：关=剔除词数>1 的多词链候选，只留逐词；
+        // 逐词集合与顺序与开态完全一致（纯过滤，不重排）。
+        if (!st.sentenceMode)
+            out.erase(std::remove_if(out.begin(), out.end(),
+                                     [](const Candidate& c) { return c.words > 1; }),
+                      out.end());
         for (const auto& c : out)
             LX_LOGV(L"py", L"cand cost=%.2f %hs", c.cost, ToUtf8(c.word).c_str());
 
