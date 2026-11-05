@@ -56,6 +56,44 @@ function Get-ClsidServerPath($hive, $path) {
 
 if ($DryRun) { Step "DRY RUN - no changes will be made" }
 
+# P2-2: elevated-as-a-DIFFERENT-account guard. All HKCU/AppData cleanup below
+# targets the CURRENT profile; if elevation happened under another admin
+# account we would clean (and verify) the wrong user's state. Heuristic:
+# machine-side registration exists but this account shows no per-user trace.
+$hkcuHasTrace = (Test-Path "HKCU:\Software\LingxiIme") -or
+    ($null -ne (Get-ItemProperty 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run' `
+        -Name LingxiIme -ErrorAction SilentlyContinue)) -or
+    (Test-Path "$env:APPDATA\LingxiIme")
+$hklmHasReg = Test-Path "Registry::HKLM\SOFTWARE\Classes\CLSID\$tip"
+if ($hklmHasReg -and -not $hkcuHasTrace) {
+    Write-Host "[uninstall] WARN: machine registration exists but THIS account has no per-user trace." -ForegroundColor Yellow
+    Write-Host "            If you elevated with a DIFFERENT admin account, HKCU/AppData/language-list"
+    Write-Host "            cleanup will hit the wrong profile. Re-run elevated as the installing user."
+    Write-Host "            (Continuing; per-user checks below may report false OK.)"
+}
+
+# P2-4: DLLs still mapped by running hosts cannot be deleted until sign-out.
+# Detection via module enumeration (loaded images hold no open handle, so
+# file-open probes are blind -- verified: ReadWrite/None open succeeds on a
+# loaded ImeCore.dll). Same-user processes only; elevation sees all.
+function Get-LingxiDllHosts($dllPath) {
+    $names = @()
+    try {
+        $norm = $dllPath.ToLowerInvariant()
+        foreach ($p in Get-Process -ErrorAction SilentlyContinue) {
+            try {
+                foreach ($m in $p.Modules) {
+                    if ($m.FileName -and $m.FileName.ToLowerInvariant() -eq $norm) {
+                        $names += "$($p.ProcessName) (PID $($p.Id))"
+                        break
+                    }
+                }
+            } catch { } # access denied on elevated/system procs when not elevated
+        }
+    } catch { }
+    return $names
+}
+
 Step "stop LingxiUI"
 Plan "Stop-Process -Name LingxiUI -Force"
 if (-not $DryRun) { Stop-Process -Name LingxiUI -Force -ErrorAction SilentlyContinue }
@@ -222,6 +260,19 @@ foreach ($k in $RegKeyTargets[0..3]) {
             Write-Host "            or delete manually: reg delete $($k.hive)\$($k.path) /f"
         }
     }
+}
+
+# P2-4: report hosts still mapping our DLLs (delete will fail until sign-out).
+$dll64 = "$Root\bin\Debug\ImeCore.dll"
+$dll32 = "$Root\bin\Debug32\ImeCore.dll"
+$hosts64 = @(Get-LingxiDllHosts $dll64)
+$hosts32 = @(Get-LingxiDllHosts $dll32)
+if (($hosts64.Count + $hosts32.Count) -gt 0) {
+    Write-Host "[uninstall] NOTE: IME DLL still mapped by running host(s), files CANNOT be deleted yet:" -ForegroundColor Yellow
+    if ($hosts64.Count) { Write-Host "            $dll64  <-  $($hosts64 -join ', ')" }
+    if ($hosts32.Count) { Write-Host "            $dll32  <-  $($hosts32 -join ', ')" }
+    Write-Host "            The IME stays usable in those hosts until they restart or you sign out;"
+    Write-Host "            delete the source tree AFTER signing out and back in."
 }
 
 if ($DryRun) {
