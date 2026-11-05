@@ -27,6 +27,7 @@
 #include "../../ui/uistyle.h"     // 批15 UiSkin 越界回退（header-only）
 #include "../../ime/keygate.h"    // 审查缺陷② 数字键页宽认领闸统一谓词（header-only）
 #include "../../ui/combo_logic.h" // 审查缺陷⑤ combo 域内非选项值保留口径（header-only）
+#include "../../common/caret_edit.h" // M5 组合内光标编辑纯逻辑（header-only）
 
 // 批8：ui/fileio.cpp 直链——UI 侧词典文件读写与失败路径实证（ROB 块）共用同一实现
 namespace lingxi {
@@ -1681,6 +1682,43 @@ int wmain(int argc, wchar_t** argv)
                         Report(found, "R4 rescue: normal partial unaffected", L"");
                     }
                 }
+            }
+
+            // P10d. M5 组合内光标编辑纯逻辑（caret_edit.h）：距尾偏移模型
+            {
+                // 左移/右移边界
+                Report(lingxi::TailLeft(0, 5) == 1 && lingxi::TailLeft(5, 5) == 5,
+                       "M5 caret: left move clamps at head", L"");
+                Report(lingxi::TailRight(2, 5) == 1 && lingxi::TailRight(0, 5) == 0,
+                       "M5 caret: right move clamps at tail", L"");
+                // 光标处插入：jintan 光标在 t 前（tail=2，caret=4）插 i → jintian
+                {
+                    std::wstring s = L"jintan";
+                    lingxi::TailInsert(s, 2, L'i');
+                    Report(s == L"jintian", "M5 caret: insert at caret", L"");
+                }
+                // 光标处退格：jinttian（多打 t）光标在多余 t 后（tail=3）退格删 t
+                {
+                    std::wstring s = L"jinttian"; size_t tail = 3;
+                    bool ok = lingxi::TailBackspace(s, tail);
+                    Report(ok && s == L"jintian" && tail == 3,
+                           "M5 caret: backspace at caret", L"");
+                }
+                // 退格边界：光标在串首 → false 且串不变
+                {
+                    std::wstring s = L"abc"; size_t tail = 3;
+                    bool ok = lingxi::TailBackspace(s, tail);
+                    Report(!ok && s == L"abc", "M5 caret: backspace at head no-op", L"");
+                }
+                // 惰性收敛：串被清空后偏移自动收敛（各重置路径零挂钩的证明）
+                {
+                    std::wstring s; // 模拟 commit 后串清空、tail 残留旧值 4
+                    Report(lingxi::TailCaretPos(4, s.size()) == 0 &&
+                           lingxi::TailRight(4, 0) == 0,
+                           "M5 caret: stale tail lazily clamps after clear", L"");
+                }
+                // 位置换算：tail=2/len=7 → caret=5
+                Report(lingxi::TailCaretPos(2, 7) == 5, "M5 caret: pos mapping", L"");
             }
 
             // P11. R3 日期时间直出：rq/sj/xq/rqsj 整串触发注入置顶

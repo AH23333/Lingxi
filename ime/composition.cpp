@@ -15,6 +15,7 @@
 #include "../common/log.h"
 #include "../common/settings.h"
 #include "../common/punct.h"
+#include "../common/caret_edit.h" // M5 组合内光标编辑纯逻辑（Tail* 系列）
 
 #include <functional>
 #include <memory>
@@ -456,7 +457,7 @@ void CTextService::PinyinAppend(wchar_t ch)
     if (!_inlineComp)
     {
         // 无组合模式：仅更新内存拼音串并刷新候选窗。
-        _pinyin += ch;
+        TailInsert(_pinyin, _pinyinTail, ch);
         LX_LOG(L"key", L"Append(no-inline) ch=%lc len=%u", (wint_t)ch, (uint32_t)_pinyin.size());
         SendPinyinCtx();
         return;
@@ -465,12 +466,15 @@ void CTextService::PinyinAppend(wchar_t ch)
     ITfContext* pCtx = nullptr;
     if (!GetFocusContext(_pThreadMgr, &pCtx)) return;
 
-    _pinyin += ch;
+    TailInsert(_pinyin, _pinyinTail, ch);
     _fSelfInsert = TRUE;
-    auto task = [this](TfEditCookie ec) -> HRESULT
+    auto task = [this, pCtx](TfEditCookie ec) -> HRESULT
     {
         if (!_compRange) return E_FAIL;
-        return _compRange->SetText(ec, 0, _pinyin.c_str(), (LONG)_pinyin.size());
+        HRESULT hr = _compRange->SetText(ec, 0, _pinyin.c_str(), (LONG)_pinyin.size());
+        if (FAILED(hr)) return hr;
+        SyncCaretSelection(pCtx, ec);
+        return S_OK;
     };
     auto* pSession = new CPinyinEditSession(this, pCtx, task);
     RequestSessionEx(pCtx, _tfClientId, pSession, TF_ES_READWRITE);
@@ -480,13 +484,51 @@ void CTextService::PinyinAppend(wchar_t ch)
     SendPinyinCtx();
 }
 
+// M5 组合内光标编辑：←/→ 移动光标（caret 以距尾偏移存于 _pinyinTail，
+// 串清零/重置路径由 ClampTail 惰性收敛），并把光标位置同步给宿主显示。
+void CTextService::PinyinCaretMove(int dir)
+{
+    if (_pinyin.empty()) return;
+    _pinyinTail = (dir < 0) ? TailLeft(_pinyinTail, _pinyin.size())
+                            : TailRight(_pinyinTail, _pinyin.size());
+    if (!_inlineComp || !_pComposition) return; // 无组合模式无宿主文本可同步
+    ITfContext* pCtx = nullptr;
+    if (!GetFocusContext(_pThreadMgr, &pCtx)) return;
+    auto task = [this, pCtx](TfEditCookie ec) -> HRESULT
+    {
+        SyncCaretSelection(pCtx, ec);
+        return S_OK;
+    };
+    auto* pSession = new CPinyinEditSession(this, pCtx, task);
+    RequestSessionEx(pCtx, _tfClientId, pSession, TF_ES_READWRITE);
+    pSession->Release();
+    pCtx->Release();
+}
+
+void CTextService::SyncCaretSelection(ITfContext* pCtx, TfEditCookie ec)
+{
+    if (!pCtx || !_compRange) return;
+    ITfRange* pSel = nullptr;
+    if (FAILED(_compRange->Clone(&pSel)) || !pSel) return;
+    LONG caret = (LONG)TailCaretPos(_pinyinTail, _pinyin.size());
+    LONG moved = 0;
+    pSel->Collapse(ec, TF_ANCHOR_START);
+    pSel->ShiftStart(ec, caret, &moved, NULL);
+    pSel->ShiftEnd(ec, caret, &moved, NULL);
+    TF_SELECTION sel{};
+    sel.range = pSel;
+    sel.style.ase = TF_AE_START;
+    sel.style.fInterimChar = FALSE;
+    pCtx->SetSelection(ec, 1, &sel);
+    pSel->Release();
+}
+
 void CTextService::PinyinShrink()
 {
     if (!_inlineComp)
     {
         LX_LOG(L"key", L"Shrink(no-inline) before len=%u", (uint32_t)_pinyin.size());
-        if (_pinyin.empty()) return;
-        _pinyin.pop_back();
+        if (!TailBackspace(_pinyin, _pinyinTail)) return; // 光标已在串首：吞掉防退宿主文本
         if (_pinyin.empty()) { LX_LOG(L"key", L"Shrink -> Cancel"); PinyinCancel(); return; }
         LX_LOG(L"key", L"Shrink after len=%u", (uint32_t)_pinyin.size());
         SendPinyinCtx();
@@ -501,12 +543,20 @@ void CTextService::PinyinShrink()
     ITfContext* pCtx = nullptr;
     if (!GetFocusContext(_pThreadMgr, &pCtx)) return;
 
-    _pinyin.pop_back();
+    if (!TailBackspace(_pinyin, _pinyinTail))
+    {
+        // 光标已在串首：无处可退，吞掉（放行会删到宿主组合前的正文）。
+        pCtx->Release();
+        return;
+    }
     _fSelfInsert = TRUE;
-    auto task = [this](TfEditCookie ec) -> HRESULT
+    auto task = [this, pCtx](TfEditCookie ec) -> HRESULT
     {
         if (!_compRange) return E_FAIL;
-        return _compRange->SetText(ec, 0, _pinyin.c_str(), (LONG)_pinyin.size());
+        HRESULT hr = _compRange->SetText(ec, 0, _pinyin.c_str(), (LONG)_pinyin.size());
+        if (FAILED(hr)) return hr;
+        SyncCaretSelection(pCtx, ec);
+        return S_OK;
     };
     auto* pSession = new CPinyinEditSession(this, pCtx, task);
     RequestSessionEx(pCtx, _tfClientId, pSession, TF_ES_READWRITE);
@@ -1151,8 +1201,12 @@ void CTextService::HandlePinyinKey(ITfContext* pContext, WPARAM wParam, BOOL* pf
         PageCandidatesHomeEnd(true);
         return;
     case VK_LEFT:
+        // M5 组合内光标编辑：左移光标（随后 Backspace/字母键作用于光标处），
+        // 宿主内光标经 SetSelection 同步显示。仍吞下保组合。
+        PinyinCaretMove(-1);
+        return;
     case VK_RIGHT:
-        // 吞下保组合：组合光标编辑为 M5 尾巴（预留），放行会造成光标错位。
+        PinyinCaretMove(+1);
         return;
     case VK_SPACE:
     case VK_TAB:

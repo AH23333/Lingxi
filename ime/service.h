@@ -148,6 +148,10 @@ private:
     void PinyinAppend(wchar_t ch);
     void PinyinShrink();
     void PinyinCancel();
+    void PinyinCaretMove(int dir); // dir=-1 左移 / +1 右移（M5 组合内光标编辑）
+    // 把组合内光标同步到宿主（SetSelection 折叠到 _pinyinTail 对应位置）；
+    // 仅在编辑会话内调用。失败静默——光标显示是体验增强，不影响编辑语义。
+    void SyncCaretSelection(ITfContext* pCtx, TfEditCookie ec);
     // 提交汉字并按 cover 决定剩余拼音去留（B1 部分提交）：
     // 0 < cover < _pinyin.size() 且 _pinyin 全字母 → 上屏词后剩余串继续组合；
     // 其余（cover 0/越界/含非字母）→ 全清（旧行为）。
@@ -233,6 +237,7 @@ private:
     int _modeRetryLeft = 8; // 激活过渡窗口有限次延迟重检计数（见 DetectPinyinMode 自愈）
     bool _modeSlowRetry = false; // 快速重检耗尽后已降级慢速自愈（降级日志只打一次）
     std::wstring _pinyin;         // 当前拼音字母串
+    size_t _pinyinTail = 0;       // 光标距串尾偏移（caret_edit.h；0=串尾，清零路径惰性收敛）
     ITfComposition* _pComposition = nullptr;
     ITfRange* _compRange = nullptr;
     // 内联组合（把拼音字母写入宿主 composition）。Chromium 对组合的写操作/销毁
