@@ -437,7 +437,8 @@ void CTextService::PinyinStart(wchar_t ch)
         }
         pRange->Release();
         if (_pComposition)
-            LX_LOG(L"ime", L"组合开始 pinyin=%ls", _pinyin.c_str());
+            // P3-1 隐私：诊断日志不落击键内容，只记长度（排障够用时序/长度即可）
+            LX_LOG(L"ime", L"组合开始 len=%u", (unsigned)_pinyin.size());
         return S_OK;
     };
     auto* pSession = new CPinyinEditSession(this, pCtx, task);
