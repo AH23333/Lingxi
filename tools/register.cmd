@@ -39,8 +39,11 @@ rem Autostart (complete-app hygiene): launch LingxiUI at logon so tray,
 rem hotkeys and the engine are up before the first IME use. LingxiUI has a
 rem single-instance mutex, so a manual launch while autostarted is a no-op.
 rem Removed by uninstall.ps1 (zero-residue check 9).
+rem P3-4: normalize %~dp0.. to a canonical path -- otherwise the Run value
+rem keeps a literal "tools\.." segment (works, but ugly in registry readers).
 set "RUNKEY=HKCU\Software\Microsoft\Windows\CurrentVersion\Run"
-reg add "%RUNKEY%" /v LingxiIme /t REG_SZ /d "\"%~dp0..\bin\%CONFIG%\LingxiUI.exe\"" /f >nul 2>&1
+for %%I in ("%~dp0..") do set "ROOTN=%%~fI"
+reg add "%RUNKEY%" /v LingxiIme /t REG_SZ /d "\"%ROOTN%\bin\%CONFIG%\LingxiUI.exe\"" /f >nul 2>&1
 if errorlevel 1 (
     echo [register] WARNING: autostart entry not written.
 ) else (
