@@ -1604,6 +1604,50 @@ int wmain(int argc, wchar_t** argv)
                                  r.cands.empty() ? L"<none>" : r.cands[0].c_str());
                     Report(ok, "R4 valid syllable not hijacked", detail);
                 }
+
+                // P10b. R4 泛化纠错（编辑距离≤1 反向索引）：静态表外的误拼也能救活
+                {
+                    struct TypoCase { const wchar_t* input; const wchar_t* expect; };
+                    const TypoCase kGen[] = {
+                        // ① 相邻换位（tain→tian、shne→shen）
+                        { L"tain", L"天" }, { L"shne", L"什" },
+                        // ② 单字符插入（zhng→zhong、shnag→shang）
+                        { L"zhng", L"中" }, { L"shng", L"上" },
+                        // ③ 单字符删除（zhonng→zhong；zhonng 无合法切分/无短简拼词兜底）
+                        { L"zhonng", L"中" },
+                        // ④ 单字符替换（xian→xian 之外：xien→xie? xien 替换 n→e=xiee 非音节；
+                        //    用 chuog→chuo(chuo 错 o 位)→chuo…稳妥替换例：niun→niu 是静态表；
+                        //    泛化替换例：menq→meng? q/g 替换距离 1 ✓ meng→梦）
+                        { L"menq", L"梦" },
+                    };
+                    for (const auto& tc : kGen)
+                    {
+                        lingxi::Prediction r = py->Predict(tc.input);
+                        bool found = false;
+                        for (const auto& w : r.cands)
+                            if (w.find(tc.expect) != std::wstring::npos) { found = true; break; }
+                        wchar_t detail[160];
+                        _snwprintf_s(detail, _TRUNCATE, L"'%ls' 含'%ls'=%d (cands=%zu first='%ls')",
+                                     tc.input, tc.expect, found ? 1 : 0, r.cands.size(),
+                                     r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                        Report(found, "R4 generalized typo (edit dist 1)", detail);
+                    }
+                    // 反例 1：合法音节不经过泛化路径——hao 首选仍是"好"
+                    {
+                        lingxi::Prediction r = py->Predict(L"hao");
+                        bool ok = !r.cands.empty() && r.cands[0].find(L"好") != std::wstring::npos;
+                        wchar_t detail[160];
+                        _snwprintf_s(detail, _TRUNCATE, L"first='%ls'",
+                                     r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                        Report(ok, "R4 generalized: valid syllable not hijacked", detail);
+                    }
+                    // 反例 2：完全垃圾串不崩溃（候选可为空或仅简拼链）
+                    {
+                        lingxi::Prediction r = py->Predict(L"zxzx");
+                        std::wstring d = L"cands=" + std::to_wstring(r.cands.size());
+                        Report(true, "R4 generalized: garbage input no crash", d.c_str());
+                    }
+                }
             }
 
             // P11. R3 日期时间直出：rq/sj/xq/rqsj 整串触发注入置顶

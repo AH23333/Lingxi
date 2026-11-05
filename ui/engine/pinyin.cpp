@@ -536,6 +536,26 @@ public:
         bool strictSep = NormalizeIn(raw).find('\'') != std::string::npos;
 
         std::vector<SegPath> paths = EnumeratePaths(raw);
+        // R4 泛化救援门控：常规枚举没有任何"全 FULL 音节"路径（用户多半打错
+        // 了某个音节）且输入含元音（排除 xyzxyz 纯辅音垃圾串出废候选）时，
+        // 才启用编辑距离≤1 泛纠错重枚举。判据是"全 FULL"而非"含 FULL"——
+        // shne/menq 这类串里碰巧含 e 这类单音节，"含 FULL"会误判为有效读法。
+        // 正常输入（全拼/混拼成链）绝不进救援趟，排序零扰动。
+        {
+            bool allFull = false;
+            for (const auto& pp : paths)
+            {
+                bool ok = !pp.units.empty();
+                for (const auto& u : pp.units)
+                    if (u.kind != SyllUnit::FULL) { ok = false; break; }
+                if (ok) { allFull = true; break; }
+            }
+            if (!allFull && raw.find_first_of("aeiou") != std::string::npos)
+            {
+                std::vector<SegPath> rescue = EnumeratePaths(raw, true);
+                if (!rescue.empty()) paths = std::move(rescue);
+            }
+        }
         if (paths.empty())
         {
             LX_LOGV(L"py", L"input=%hs paths=0", raw.c_str());
@@ -772,6 +792,8 @@ private:
     unsigned _fuzzyGroups = 0x1F; // 模糊音组位掩码，见 Settings.fuzzyGroups
     // 音节 → 合法模糊变体（含自身，自身在首位）；加载后一次性预计算，热路径只查表。
     std::unordered_map<std::string, std::vector<std::string>> _fuzzyOf;
+    // 非法串 → 距其编辑距离≤1 的合法音节（R4 泛化纠错反向索引，BuildTypoIndex）。
+    std::unordered_map<std::string, std::vector<std::string>> _typoFixes;
 
     // 自学习用户词典：规范化拼音串 → 用户选过的词（按次数）。
     // 三方并发访问：管道预测线程（Predict 读）、管道读线程（Learn 写）、
@@ -995,6 +1017,7 @@ private:
 
         BuildIndexes();
         BuildFuzzyIndex();
+        BuildTypoIndex();
         LoadUserDict();
         LoadTraditionalMap();
     }
@@ -1265,7 +1288,11 @@ static bool IsInterjectionSyllable(const std::string& s)
     return !s.empty();
 }
 
-std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
+// allowTypoGen：R4 泛化救援（编辑距离≤1 反向索引）开关。仅 Predict 在常规
+// 枚举无"全 FULL 路径"时才以 true 重枚举——正常输入排序零扰动（typo 路径
+// 永无机会与合法路径同场竞争）；缺省 false，其它调用点（注音回放/词典键
+// 校验等）全部不启用。
+std::vector<SegPath> EnumeratePaths(const std::string& rawIn, bool allowTypoGen = false)
     {
         std::string in = NormalizeIn(rawIn);
         int n = (int)in.size();
@@ -1305,6 +1332,15 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
                 std::string fixedSyl;
                 if (CorrectSyllableTypo(s, fixedSyl) && _syllables.count(fixedSyl))
                     Extend(dp, i, i + L, SyllUnit{ SyllUnit::FULL, fixedSyl, L }, 5);
+                else if (allowTypoGen && s.size() >= 2)
+                {
+                    // R4 泛化救援（编辑距离≤1：替换/删除/插入/相邻换位）：
+                    // 仅 rescue 趟查反向索引（见 EnumeratePaths 签名注释）。
+                    auto it = _typoFixes.find(s);
+                    if (it != _typoFixes.end())
+                        for (const auto& f : it->second)
+                            Extend(dp, i, i + L, SyllUnit{ SyllUnit::FULL, f, L }, 5);
+                }
             }
             // 零声母简写兜底（B3）：i/u 打头省略 y/w 的写法作为完整音节
             // 单元扩展，与上方逐字全拼/简拼并存，由 DP cost 自然竞争；
@@ -1417,6 +1453,44 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn)
         _fuzzyOf.clear();
         for (const auto& s : _syllables)
             _fuzzyOf.emplace(s, ComputeFuzzy(s));
+    }
+
+    // 编辑距离≤1 泛纠错反向索引（R4 泛化）：键=非法串（长度≥2），值=与其一次
+    // 编辑（替换/删除/插入/相邻换位）可达的合法音节表。只收录"本身不是合法
+    // 音节"的串作键——合法串永走正常 FULL 路径，纠错不劫持。随音节表一次性
+    // 预计算，热路径 O(1) 查表；单键值表排序截断到 8（防 an/ang 这类高邻域
+    // 键在 DP 梁内爆路径）。
+    void BuildTypoIndex()
+    {
+        _typoFixes.clear();
+        auto addFix = [this](std::string&& typo, const std::string& syl) {
+            if (typo.size() < 2) return;          // 单字母是 INITIAL 简拼领土
+            if (_syllables.count(typo)) return;    // 合法串不做纠错键
+            auto& v = _typoFixes[std::move(typo)];
+            if (std::find(v.begin(), v.end(), syl) == v.end()) v.push_back(syl);
+        };
+        static const char* kLetters = "abcdefghijklmnopqrstuvwxyz";
+        for (const auto& s : _syllables)
+        {
+            const size_t len = s.size();
+            for (size_t i = 0; i < len; i++)               // 替换
+                for (const char* c = kLetters; *c; c++)
+                    if (*c != s[i]) { std::string t = s; t[i] = *c; addFix(std::move(t), s); }
+            for (size_t i = 0; i < len; i++)               // 删除
+                addFix(s.substr(0, i) + s.substr(i + 1), s);
+            if (len < 6)                                    // 插入（音节上限 6）
+                for (size_t i = 0; i <= len; i++)
+                    for (const char* c = kLetters; *c; c++)
+                        addFix(s.substr(0, i) + *c + s.substr(i), s);
+            for (size_t i = 0; i + 1 < len; i++)            // 相邻换位（tain→tian）
+                if (s[i] != s[i + 1]) { std::string t = s; std::swap(t[i], t[i + 1]); addFix(std::move(t), s); }
+        }
+        for (auto& kv : _typoFixes)
+        {
+            auto& v = kv.second;
+            std::sort(v.begin(), v.end());
+            if (v.size() > 8) v.resize(8);
+        }
     }
 
     // -----------------------------------------------------------------------
