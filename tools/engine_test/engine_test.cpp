@@ -1648,6 +1648,39 @@ int wmain(int argc, wchar_t** argv)
                         Report(true, "R4 generalized: garbage input no crash", d.c_str());
                     }
                 }
+
+                // P10c. R4 泛化救援·残段纠错：末尾音节"连前缀都不是"时救活
+                {
+                    struct TypoCase { const wchar_t* input; const wchar_t* expect; };
+                    const TypoCase kRes[] = {
+                        // shenh→shen（多打 h）：pass1 无全 FULL 路径 → 救援趟
+                        { L"shenh", L"什" },
+                        // mingt→ming（多打 t）：残段不是任何音节前缀
+                        { L"mingt", L"明" },
+                        // woshne→wo+shen（换位）：多音节串末尾残段纠错
+                        { L"woshne", L"身" },
+                    };
+                    for (const auto& tc : kRes)
+                    {
+                        lingxi::Prediction r = py->Predict(tc.input);
+                        bool found = false;
+                        for (const auto& w : r.cands)
+                            if (w.find(tc.expect) != std::wstring::npos) { found = true; break; }
+                        wchar_t detail[160];
+                        _snwprintf_s(detail, _TRUNCATE, L"'%ls' 含'%ls'=%d (cands=%zu first='%ls')",
+                                     tc.input, tc.expect, found ? 1 : 0, r.cands.size(),
+                                     r.cands.empty() ? L"<none>" : r.cands[0].c_str());
+                        Report(found, "R4 rescue: partial-syllable typo", detail);
+                    }
+                    // 反例：正常残段不污染——"jin"（正常前缀）候选仍含"今"系
+                    {
+                        lingxi::Prediction r = py->Predict(L"jin");
+                        bool found = false;
+                        for (const auto& w : r.cands)
+                            if (w.find(L"今") != std::wstring::npos) { found = true; break; }
+                        Report(found, "R4 rescue: normal partial unaffected", L"");
+                    }
+                }
             }
 
             // P11. R3 日期时间直出：rq/sj/xq/rqsj 整串触发注入置顶

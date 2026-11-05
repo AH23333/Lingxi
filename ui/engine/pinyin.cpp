@@ -1328,7 +1328,7 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn, bool allowTypoGen 
                 // R4 拼音纠错：非合法音节时尝试常见误拼改写，改写命中音节表
                 // 才扩展（rawLen=原串长，供 cover 回放不错位）。加 3 罚分：
                 // 高于简拼(4/格)的正常路径——正常读法永远优先，仅救活
-                // "打错必挂"的输入；残段(PARTIAL)纠错暂不支持。
+                // "打错必挂"的输入；残段纠错由救援趟处理（见残段池注释）。
                 std::string fixedSyl;
                 if (CorrectSyllableTypo(s, fixedSyl) && _syllables.count(fixedSyl))
                     Extend(dp, i, i + L, SyllUnit{ SyllUnit::FULL, fixedSyl, L }, 5);
@@ -1383,6 +1383,9 @@ std::vector<SegPath> EnumeratePaths(const std::string& rawIn, bool allowTypoGen 
             if (r.empty() || r[0] == '\'') continue;
             if (_syllables.count(r)) continue;       // 完整音节走完整路径
             if (!IsSyllablePrefix(r)) continue;       // 必须是某音节前缀
+            // 注：末尾残段的"打错"（连前缀都不是）由救援趟 DP 内的音节级泛
+            // 纠错覆盖（FULL typo 单元直达串尾进 fullPool），此处不另设残段
+            // 纠错通道——批1-2 实证：四条残段误拼断言在无专码时亦全绿。
             for (const auto& p : dp[i])
             {
                 SegPath np = p;
