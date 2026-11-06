@@ -61,6 +61,8 @@ void AttachSettingsWheelForwarding(HWND settingsWnd); // settingswheel.cpp：组
 void CreateUserDictWindow(HINSTANCE hInst);
 // ---- cellwnd.cpp：A 细胞词库管理窗（design-cell-dict-2026-11-03 A5）----
 void ShowCellDictWindow(HINSTANCE hInst);
+// ---- skinwnd.cpp：在线皮肤管理窗（URL 导入/应用/删除；托盘入口）----
+void ShowSkinWindow(HINSTANCE hInst);
 std::wstring UserDictPathW();    // %APPDATA%\LingxiIme\userdict.txt
 bool ReadFileBytes(const std::wstring& path, std::string& out);
 bool WriteFileBytes(const std::wstring& path, const std::string& data);

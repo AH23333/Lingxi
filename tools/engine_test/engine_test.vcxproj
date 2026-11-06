@@ -67,6 +67,7 @@
     <ClCompile Include="..\..\ui\symsearch.cpp" />
     <ClCompile Include="..\..\ui\fileio.cpp" />
     <ClCompile Include="..\..\ui\cellimport.cpp" />
+    <ClCompile Include="..\..\ui\skinstore.cpp" />
     <ClCompile Include="..\..\common\update.cpp" />
     <ClCompile Include="..\..\common\update_fetch.cpp" />
     <ClCompile Include="..\..\common\settings.cpp" />

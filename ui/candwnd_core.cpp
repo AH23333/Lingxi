@@ -8,6 +8,7 @@
 #include "../common/log.h"
 #include "../common/settings.h"
 #include "uistyle.h"
+#include "skinstore.h" // UiCurrentSkin（在线肤解析单一口径）
 
 //
 // 候选窗核心（P2 拆分自 window.cpp，2026-10-31）：窗口生命周期（Init/
@@ -83,7 +84,7 @@ bool CandWindow::Init(HINSTANCE hInst)
     UiApplyRoundCorners(_hwnd, 240, 120); // Win11 DWM 圆角 / 老系统 RGN
 
     RebuildFonts(LoadSettings().candidateFontSize);
-    ApplySkin(LoadSettings().skinIndex);
+    ApplySkin(LoadSettings());
     return true;
 }
 
@@ -298,8 +299,14 @@ void CandWindow::Show(const RECT& caretScreen, const std::vector<std::wstring>& 
         RebuildFonts(fs); // 字号设置变化即时生效
     else if (LoadSettings().uiFont != _fontFace)
         RebuildFonts(_fontSize); // 字体族设置变化即时生效（字号不变只换 face）
-    if (uint32_t sk = LoadSettings().skinIndex; sk != _skinIndex)
-        ApplySkin(sk); // 皮肤设置变化即时生效
+    {
+        // 皮肤变化即时生效：比对解析后双通道色值（在线肤 id 命中/删除回退/
+        // 在线 A↔B 索引不变但色值变，skinIndex 比对全部漏检）
+        Settings stSk = LoadSettings();
+        SkinDef def = UiCurrentSkin(stSk);
+        if (def.accent != _accent || def.hoverLight != _hoverLight)
+            ApplySkin(stSk);
+    }
     EnterCriticalSection(&_cs);
     _caret = caretScreen;
     _cands = cands;

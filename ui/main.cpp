@@ -6,6 +6,7 @@
 #include <windows.h>
 
 #include "window.h"
+#include "skinstore.h" // UiReloadSkins（在线皮肤注册表首扫）
 #include "pipeserver.h"
 #include "settingsui.h"
 #include "uiinternal.h" // g_hooks（P3 回调收口：装配段一次性填充）
@@ -600,6 +601,10 @@ int WINAPI wWinMain(HINSTANCE hInst, HINSTANCE, PWSTR, int)
     // 就绪信号：进程启动即创建未触发事件，管道服务监听后置信号。
     // e2e 等此事件替代盲等（冷启动 LLM 加载可达数秒，管道未就绪时 CTX 被丢弃）。
     HANDLE hReady = CreateEventW(NULL, TRUE, FALSE, L"Local\\LingxiUIReady");
+
+    // 在线皮肤注册表首扫（CandWindow::Init → ApplySkin → UiCurrentSkin 读时
+    // 解析之前必须就绪；之后的导入/删除由 skinwnd 主线程再 UiReloadSkins）
+    lingxi::UiReloadSkins();
 
     // H3 根治（停机不析构）：Stop() 有界等待超时后僵尸线程仍可能触
     // PipeServer/CandWindow/引擎内存——若这些对象随 wWinMain 返回消亡

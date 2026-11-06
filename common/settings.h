@@ -62,6 +62,10 @@ struct Settings
     bool assocAfterPick = true;   // 选词联想（GAP §11）：中文全量上屏/联想点选上屏后自动弹联想
                                    // 候选（可空格连续输出，对标 MS）；任何无组合按键即撤销。默认开。
     uint32_t skinIndex = 0;        // 候选窗配色（ui/uistyle.h kSkins）：0 翠绿（默认）
+    std::wstring skinId;           // 在线皮肤 id（ui/skinstore，%APPDATA%\LingxiIme\skins
+                                   // 下 .lxskin）：空=内置 skinIndex；非空且注册表命中→
+                                   // 下载肤，未命中（已删）→回退内置。id 寻址与
+                                   // cellDisabled 同先例——装/删其他皮肤不重排选择。
     uint32_t uiFont = 0;           // 界面字体族（ui/uistyle.h kUiFontFaces）：
                                    // 0 微软雅黑（默认）1 宋体 2 等线 3 Segoe UI
     uint32_t candidateOpacity = 100; // 候选窗不透明度%（70/80/90/100），GAP §3 透明度定制

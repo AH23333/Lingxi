@@ -14,6 +14,7 @@
 #include "../common/log.h"
 #include "../common/settings.h"
 #include "uistyle.h"
+#include "skinstore.h" // UiCurrentSkinName（在线肤名解析）
 #include "usagestats.h"
 
 namespace lingxi {
@@ -98,7 +99,8 @@ const wchar_t* kHelpText =
 std::wstring BuildHelpText()
 {
     Settings s = LoadSettings();
-    static const wchar_t* kSkinNames[] = { L"翠绿", L"青碧", L"橙", L"红", L"金", L"茶棕", L"玫粉" };
+    // 肤名经 skinstore 单入口解析（在线肤→其名/已删标注；内置→共享名表）
+    const std::wstring skinNm = UiCurrentSkinName(s);
     static const wchar_t* kToggleNames[] = { L"关闭", L"Shift", L"Shift 或 Ctrl",
                                              L"CapsLock", L"仅 Ctrl" };
     static const wchar_t* kDarkNames[] = { L"跟随系统", L"浅色", L"深色" };
@@ -119,7 +121,7 @@ std::wstring BuildHelpText()
         L"（本页只读；修改请进设置页或托盘菜单，改动即时生效）\r\n",
         kHelpText,
         kToggleNames[s.toggleMode],
-        kSkinNames[s.skinIndex], s.candidateCount, s.candidateFontSize,
+        skinNm.c_str(), s.candidateCount, s.candidateFontSize,
         s.candidateOpacity,
         kUiFontNames[s.uiFont], kDarkNames[s.darkMode],
         s.fuzzyPinyin ? L"开" : L"关",

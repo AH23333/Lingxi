@@ -28,6 +28,12 @@ inline constexpr SkinDef kSkins[] = {
 };
 constexpr uint32_t kSkinCount = (uint32_t)(sizeof(kSkins) / sizeof(kSkins[0]));
 
+// 内置肤名表（原 candwnd_interact/helpwnd 两处私有重复表合并；在线肤名由
+// skinstore UiCurrentSkinName 解析，不入本表）
+inline constexpr const wchar_t* kSkinNames[] = {
+    L"翠绿", L"青碧", L"橙色", L"红色", L"金色", L"茶棕", L"玫粉",
+};
+
 // 取皮肤（越界回退 0）
 inline const SkinDef& UiSkin(uint32_t idx)
 {

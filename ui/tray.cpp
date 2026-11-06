@@ -143,6 +143,7 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
         AppendMenuW(menu, MF_STRING, 2020, L"打开备份文件夹");
         AppendMenuW(menu, MF_STRING, 2013, L"重新加载用户词典");
         AppendMenuW(menu, MF_STRING, 2023, L"词库管理（细胞词库）...");
+        AppendMenuW(menu, MF_STRING, 2024, L"皮肤管理（在线皮肤）...");
         AppendMenuW(menu, MF_STRING, 2018, L"屏蔽词管理...");
         AppendMenuW(menu, MF_STRING, 2021, L"剪贴板历史...（Ctrl+Alt+V）");
         AppendMenuW(menu, MF_STRING, 2014, L"打开数据文件夹");
@@ -215,6 +216,9 @@ void OnTrayCommand(HWND hwnd, LPARAM lParam)
             break;
         case 2023: // A 细胞词库管理窗（安装/启停/删除；导入走后台线程不阻塞 UI）
             ShowCellDictWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
+            break;
+        case 2024: // 在线皮肤管理窗（skinwnd.cpp；URL 导入后台线程同细胞窗模型）
+            ShowSkinWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE));
             break;
         case 2018: // R6 屏蔽词管理窗（blocked.txt 与用户词典同通道热载）
             ShowBlockedWindow((HINSTANCE)GetWindowLongPtrW(hwnd, GWLP_HINSTANCE), hwnd);

@@ -2,6 +2,7 @@
 #include "../common/log.h"
 #include "../common/settings.h"
 #include "uistyle.h"
+#include "skinstore.h" // UiCurrentSkin（在线肤解析单一口径）
 #include "symsearch.h"
 
 #include <windowsx.h>
@@ -714,7 +715,7 @@ LRESULT CALLBACK PanelWndProc(HWND h, UINT msg, WPARAM wp, LPARAM lp)
         HDC hdc = BeginPaint(h, &ps);
         RECT rc;
         GetClientRect(h, &rc);
-        const SkinDef& skin = UiSkin(LoadSettings().skinIndex);
+        const SkinDef skin = UiCurrentSkin(LoadSettings()); // 在线肤命中→下载肤
 
         // WinUI 浮层：白底 + 8px 圆角浅描边（RGN/DWM 负责裁圆角）
         HBRUSH white = (HBRUSH)GetStockObject(WHITE_BRUSH);

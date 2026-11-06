@@ -32,6 +32,7 @@
 #include "../common/log.h"
 #include "../common/settings.h"
 #include "uistyle.h"
+#include "skinstore.h" // UiCurrentSkin（在线肤解析单一口径）
 #include "uitheme.h"
 
 namespace lingxi {
@@ -258,7 +259,13 @@ void SaveFromControls()
     int orientSel = ComboBox_GetCurSel(g_hCmbOrient);
     if (orientSel >= 0 && orientSel <= 1) s.candOrientation = (uint32_t)orientSel;
     int skinSel = ComboBox_GetCurSel(g_hCmbSkin);
-    if (skinSel >= 0 && skinSel <= 6) s.skinIndex = (uint32_t)skinSel;
+    // 仅"实际改选"才换肤并放弃在线肤（清 skinId）——否则任意无关字段保存
+    // 都会把在线肤静默刷掉（下拉恒有选中项，无变化检测必误清）
+    if (skinSel >= 0 && skinSel <= 6 && (uint32_t)skinSel != s.skinIndex)
+    {
+        s.skinIndex = (uint32_t)skinSel;
+        s.skinId.clear();
+    }
     int fontSel = ComboBox_GetCurSel(g_hCmbUiFont);
     if (fontSel >= 0 && fontSel <= 3) s.uiFont = (uint32_t)fontSel;
     int sel = ComboBox_GetCurSel(g_hCmbDark);
@@ -435,7 +442,7 @@ void PaintSettings(HWND hwnd)
     DeleteObject(bg);
 
     int navW = Scaled(kNavW);
-    COLORREF accent = UiSkin(LoadSettings().skinIndex).accent;
+    COLORREF accent = UiCurrentSkin(LoadSettings()).accent;
     SetBkMode(hdc, TRANSPARENT);
     HGDIOBJ oldFont = SelectObject(hdc, g_hFontNav);
 
@@ -612,7 +619,7 @@ void DrawToggle(const DRAWITEMSTRUCT* dis)
     int py = rc.top + ((rc.bottom - rc.top) - pillH) / 2;
     RECT pr{ px, py, px + pillW, py + pillH };
     bool on = ToggleOn(dis->hwndItem); // 外置状态（BS_OWNERDRAW 无勾选态）
-    COLORREF accent = UiSkin(LoadSettings().skinIndex).accent;
+    COLORREF accent = UiCurrentSkin(LoadSettings()).accent;
 
     // GDI+ 抗锯齿药丸（GDI RoundRect 无 AA，真机边缘锯齿）
     if (on)
@@ -635,7 +642,7 @@ void DrawAccentBtn(const DRAWITEMSTRUCT* dis)
     HDC hdc = dis->hDC;
     RECT rc = dis->rcItem;
     bool pressed = (dis->itemState & ODS_SELECTED) != 0;
-    COLORREF accent = UiSkin(LoadSettings().skinIndex).accent;
+    COLORREF accent = UiCurrentSkin(LoadSettings()).accent;
     if (pressed)
         accent = RGB(GetRValue(accent) * 3 / 4, GetGValue(accent) * 3 / 4,
                      GetBValue(accent) * 3 / 4);

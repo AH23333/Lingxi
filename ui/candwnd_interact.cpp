@@ -9,6 +9,7 @@
 #include "../common/log.h"
 #include "../common/settings.h"
 #include "uistyle.h"
+#include "skinstore.h" // UiCurrentSkin（ApplySkin 入参构造）
 #include "style_logic.h" // 批15 透明度钳制单一口径（与候选窗 ApplyOpacity 同源）
 #include "settingsui.h"
 #include "blockedui.h" // 右键"屏蔽该词"（BlockWord/UnblockWord/IsWordBlocked）
@@ -578,10 +579,12 @@ LRESULT CandWindow::OnRButtonUp(HWND hwnd, LPARAM lParam)
         }
         if (btn == Btn::Settings)
         {
+            // 循环换肤=内置肤轮切：选内置即放弃在线肤（清 skinId）
             Settings st = LoadSettings();
             st.skinIndex = (st.skinIndex + 1) % kSkinCount;
+            st.skinId.clear();
             SaveSettingsDiff(st);
-            ApplySkin(st.skinIndex);
+            ApplySkin(st);
             InvalidateRect(hwnd, NULL, TRUE);
             LX_LOG(L"ui", L"右键设按钮换肤 skin=%u", st.skinIndex);
             return 0;
@@ -595,13 +598,12 @@ LRESULT CandWindow::OnRButtonUp(HWND hwnd, LPARAM lParam)
         if (pt.y >= rcClient.bottom - ToolbarHeight())
         {
             Settings st = LoadSettings();
-            static const wchar_t* kSkinNames[] = {
-                L"翠绿", L"青碧", L"橙色", L"红色", L"金色", L"茶棕", L"玫粉" };
             HMENU menu = CreatePopupMenu();
             for (int i = 0; i < (int)kSkinCount; i++)
                 AppendMenuW(menu,
-                            MF_STRING | (i == (int)st.skinIndex ? MF_CHECKED : 0),
-                            100 + i, kSkinNames[i]);
+                            MF_STRING | (i == (int)st.skinIndex && st.skinId.empty()
+                                             ? MF_CHECKED : 0),
+                            100 + i, kSkinNames[i]); // uistyle.h 共享名表
             POINT screen = pt;
             ClientToScreen(hwnd, &screen);
             int cmd = TrackPopupMenu(menu, TPM_RETURNCMD | TPM_NONOTIFY,
@@ -610,8 +612,9 @@ LRESULT CandWindow::OnRButtonUp(HWND hwnd, LPARAM lParam)
             if (cmd >= 100 && cmd < 100 + (int)kSkinCount)
             {
                 st.skinIndex = (uint32_t)(cmd - 100);
+                st.skinId.clear(); // 直选内置=放弃在线肤
                 SaveSettingsDiff(st);
-                ApplySkin(st.skinIndex);
+                ApplySkin(st);
                 InvalidateRect(hwnd, NULL, TRUE);
                 LX_LOG(L"ui", L"工具条右键换肤 skin=%u", st.skinIndex);
             }

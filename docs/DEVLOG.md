@@ -1340,3 +1340,11 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - 出网层复用 updater::DownloadToFile（GitHub 精确白名单+回环演练旁路，update_test T1/T2 原有覆盖）；下载器可注入，engine_test 假下载器零网络全管线钉。
 - UI：词库管理窗加在线源行（URL+SHA256 可空+URL 导入按钮，后台线程模型与本地导入一致）；覆盖确认重跑=重新下载校验（不复读旧 staging）。
 - 断言：CELLe-1..15 全绿；engine_test 545→560 FAIL=0。
+
+## 2026-11-06 · 皮肤在线主题（真缺栏销账②）
+
+- 包格式 .lxskin（skinformat_logic.h 纯逻辑）：LXSKIN 1 魔数 + name/id/accent 必填 + hover 可选（缺省按每通道 7/8 向白派生，≈内置肤 0.875 配比）+ accent 白字可读性闸（Rec.601 亮度 ≤160，内置最高 112）+ id 严闸（小写/数字/-，1..32，防路径注入）。
+- 管线与 CELLe 同型：URL 形闸（.lxskin）→ staging（%TEMP%，≤256KB）→ sha256 完整性锚（显式/侧车 fail-closed）→ 解析验证 → 规范化重写原子落盘 %APPDATA%\LingxiIme\skins\<id>.lxskin → 独立复核逐项比对。下载器可注入；出网层复用 updater::DownloadToFile 白名单。
+- 寻址裁决：settings.skinId（wstring，空=内置 skinIndex）——id 寻址与 cellDisabled 同先例，装/删其他皮肤不重排选择；渲染单入口 UiCurrentSkin：命中→下载肤，未命中（已删）→回退内置，越界→0（SK4 语义不变）。候选窗变化检测从 skinIndex 比对改为解析后双通道色值比对（在线 A↔B/删除回退不错检）。
+- UI：skinwnd.cpp 管理窗（新功能新文件，settingsui 只减不增）：列表/URL 导入（后台线程同细胞窗 N9 槽模型）/应用/用回内置/删除；托盘 2024 入口。设置页皮肤下拉仅实际改选时清 skinId（防无关保存静默刷掉在线肤）；候选窗右键换肤/直选清 skinId；内置肤名表两处重复合并进 uistyle.h kSkinNames。
+- 断言：SK8-1..20 全绿（解析/URL 形闸/假下载器管线/扫描/注册表/resolver/settings 沙盒）；engine_test 560→580 FAIL=0；deep_test 41/0（T22 在线）；update_test 188/0。

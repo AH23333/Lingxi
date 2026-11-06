@@ -71,6 +71,8 @@
     <ClCompile Include="fileio.cpp" />
     <ClCompile Include="cellimport.cpp" />
     <ClCompile Include="cellwnd.cpp" />
+    <ClCompile Include="skinstore.cpp" />
+    <ClCompile Include="skinwnd.cpp" />
     <ClCompile Include="helpwnd.cpp" />
     <ClCompile Include="statswnd.cpp" />
     <ClCompile Include="settingsbackup.cpp" />

@@ -31,6 +31,8 @@
 #include "../../ui/hotwords_logic.h" // 批2-① 常选词 TOP N 解析（header-only）
 #include "../../ui/sentence_async_logic.h" // 期二 AI 整句异步追加纯逻辑（header-only）
 #include "../../ui/cellfetch_logic.h"     // CELLe 在线下载形闸（header-only）
+#include "../../ui/skinformat_logic.h"    // SK8 在线皮肤包解析/形闸（header-only）
+#include "../../ui/skinstore.h"           // SK8 皮肤目录扫描/注册表/URL 导入管线
 #include "../../common/update_fetch.h"    // CELLe 哈希复核（Sha256File）
 
 #include <algorithm>
@@ -136,6 +138,25 @@ static bool FakeCellDownload(const std::wstring& url, const std::wstring& destPa
         return true;
     }
     if (!CellDlWriteBytes(destPath, g_cellPackBytes)) { *err = L"write fail"; return false; }
+    return true;
+}
+
+// SK8：在线皮肤假下载器（同 FakeCellDownload 模型；侧车/正件都写内存 fixture）
+static std::string g_skinPackBytes;
+static std::string g_skinSidecarUtf8;
+static int g_skinDlCalls = 0;
+static bool g_skinDlFailSidecar = false;
+static bool FakeSkinDownload(const std::wstring& url, const std::wstring& destPath,
+                             size_t, std::wstring* err)
+{
+    g_skinDlCalls++;
+    if (url.size() >= 7 && url.compare(url.size() - 7, 7, L".sha256") == 0)
+    {
+        if (g_skinDlFailSidecar) { *err = L"404"; return false; }
+        if (!CellDlWriteBytes(destPath, g_skinSidecarUtf8)) { *err = L"write fail"; return false; }
+        return true;
+    }
+    if (!CellDlWriteBytes(destPath, g_skinPackBytes)) { *err = L"write fail"; return false; }
     return true;
 }
 
@@ -3859,6 +3880,233 @@ int wmain(int argc, wchar_t** argv)
             Report(residue == 0, "CELLe-15 staging files fully cleaned");
         }
         DeleteFileW(target.c_str());
+    }
+
+    // ===== SK8. 在线皮肤（skinformat_logic 解析/形闸 + skinstore 扫描/注册表/管线）=====
+    // 覆盖：包解析纯逻辑 + URL 形闸 + 假下载器全管线（零网络）+ 目录扫描 +
+    // 运行时注册表 + UiCurrentSkin 读时解析 + settings.skinId 持久化。
+    {
+        // SK8-1 合法包解析（显式 hover 原样保留）
+        {
+            auto d = lingxi::ParseLxskin(
+                "LXSKIN 1\nname=Test\nid=abc-1\naccent=10,20,30\nhover=200,210,220\n");
+            Report(d.ok && d.id == L"abc-1" && d.name == L"Test" &&
+                   d.accent == RGB(10, 20, 30) && d.hover == RGB(200, 210, 220) &&
+                   !d.hoverDerived,
+                   "SK8-1 lxskin parse ok (explicit hover kept)");
+        }
+        // SK8-2 hover 缺省派生（每通道 7/8 向白，整数截断同式）
+        {
+            auto d = lingxi::ParseLxskin("LXSKIN 1\nname=T\nid=abc\naccent=90,60,20\n");
+            Report(d.ok && d.hoverDerived && d.hover == RGB(234, 230, 225),
+                   "SK8-2 hover derived 7/8 blend when absent");
+        }
+        // SK8-3 缺/错魔数拒
+        Report(!lingxi::ParseLxskin("name=T\nid=abc\naccent=1,2,3\n").ok &&
+               !lingxi::ParseLxskin("LXSKIN 2\nname=T\nid=abc\naccent=1,2,3\n").ok,
+               "SK8-3 missing/wrong magic rejected");
+        // SK8-4 缺必填 accent 拒
+        Report(!lingxi::ParseLxskin("LXSKIN 1\nname=T\nid=abc\n").ok,
+               "SK8-4 missing accent rejected");
+        // SK8-5 色通道越界/非数字/缺通道拒
+        Report(!lingxi::ParseLxskin("LXSKIN 1\nname=T\nid=abc\naccent=1,2,256\n").ok &&
+               !lingxi::ParseLxskin("LXSKIN 1\nname=T\nid=abc\naccent=1,2,x\n").ok &&
+               !lingxi::ParseLxskin("LXSKIN 1\nname=T\nid=abc\naccent=1,2\n").ok,
+               "SK8-5 color channel out-of-range/non-numeric/short rejected");
+        // SK8-6 亮度过高拒（白字不可读，闸 160）；闸下偏亮放行（内置最高 112）
+        Report(!lingxi::ParseLxskin("LXSKIN 1\nname=T\nid=abc\naccent=240,240,240\n").ok &&
+               lingxi::ParseLxskin("LXSKIN 1\nname=T\nid=abc\naccent=150,140,160\n").ok,
+               "SK8-6 too-bright accent rejected (readability gate)");
+        // SK8-7 id 闸（小写/数字/-，1..32，首尾非 -）
+        Report(lingxi::ValidateSkinId(L"moyu-01") &&
+               !lingxi::ValidateSkinId(L"") && !lingxi::ValidateSkinId(L"Moyu") &&
+               !lingxi::ValidateSkinId(L"mo yu") && !lingxi::ValidateSkinId(L"../x") &&
+               !lingxi::ValidateSkinId(L"-abc") && !lingxi::ValidateSkinId(L"abc-") &&
+               !lingxi::ValidateSkinId(std::wstring(33, L'a')),
+               "SK8-7 id gate strict");
+        // SK8-8 URL 形闸（同 CELLe 口径，.lxskin 后缀）
+        Report(lingxi::ValidateSkinUrl(L"https://github.com/o/r/releases/download/v1/s.lxskin") &&
+               !lingxi::ValidateSkinUrl(L"http://github.com/o/s.lxskin") &&
+               !lingxi::ValidateSkinUrl(L"https://github.com/o/s.lxcell") &&
+               !lingxi::ValidateSkinUrl(L"https://user@github.com/o/s.lxskin") &&
+               !lingxi::ValidateSkinUrl(L"https:///s.lxskin") &&
+               !lingxi::ValidateSkinUrl(L"https://github.com/o/s.lxskin?raw=1"),
+               "SK8-8 skin url shape gate");
+        // SK8-9 CJK 名 UTF-8 往返 + 规范化重写幂等（派生 hover 固化）
+        {
+            auto d = lingxi::ParseLxskin(
+                "LXSKIN 1\nname=\xE5\xA2\xA8\xE7\x8E\x89\nid=moyu\naccent=90,60,20\n");
+            std::string norm = lingxi::SerializeLxskin(d);
+            auto d2 = lingxi::ParseLxskin(norm);
+            Report(d.ok && d.name == L"墨玉" && d2.ok && d2.name == d.name &&
+                   d2.accent == d.accent && d2.hover == d.hover &&
+                   norm.find("hover=234,230,225") != std::string::npos,
+                   "SK8-9 CJK name utf8 roundtrip + serialize idempotent");
+        }
+
+        // 假下载器管线：fixture=合法 .lxskin（无 hover 行→派生后规范化固化）
+        g_skinPackBytes =
+            "LXSKIN 1\nname=\xE5\xA2\xA8\xE7\x8E\x89\nid=sket-moyu\naccent=90,60,20\n";
+        std::wstring fxPath = ExeDir() + L"\\sk8-fixture.lxskin";
+        CellDlWriteBytes(fxPath, g_skinPackBytes);
+        std::string hexS;
+        bool hexOkS = lingxi::updater::Sha256File(fxPath, &hexS, nullptr);
+        DeleteFileW(fxPath.c_str());
+        g_skinSidecarUtf8 = hexS + "  sket-moyu.lxskin\n";
+        std::wstring shaSW(hexS.begin(), hexS.end());
+        const std::wstring skinTarget = lingxi::SkinDirW() + L"\\sket-moyu.lxskin";
+        DeleteFileW(skinTarget.c_str());
+        // A：非法 URL 不出网（下载器从未被调用）
+        g_skinDlCalls = 0;
+        auto rA = lingxi::ImportSkinFromUrl(L"http://github.com/o/s.lxskin", L"",
+                                            &FakeSkinDownload);
+        Report(!rA.ok && g_skinDlCalls == 0, "SK8-10 invalid url: downloader never called");
+        // B：显式正确 sha → 成功落盘且内容规范化（派生 hover 已固化进文件）
+        auto rB = lingxi::ImportSkinFromUrl(L"https://github.com/o/s.lxskin", shaSW,
+                                            &FakeSkinDownload);
+        std::string installed;
+        {
+            HANDLE hf = CreateFileW(skinTarget.c_str(), GENERIC_READ, FILE_SHARE_READ,
+                                    NULL, OPEN_EXISTING, 0, NULL);
+            if (hf != INVALID_HANDLE_VALUE)
+            {
+                char b[4096]; DWORD g = 0;
+                ReadFile(hf, b, sizeof(b), &g, NULL);
+                installed.assign(b, g);
+                CloseHandle(hf);
+            }
+        }
+        Report(hexOkS && rB.ok && rB.id == L"sket-moyu" &&
+               installed.rfind("LXSKIN 1\n", 0) == 0 &&
+               installed.find("hover=234,230,225") != std::string::npos,
+               "SK8-11 explicit sha ok -> installed (normalized hover)");
+        // C：sha 不符 → 拒装且无落盘
+        DeleteFileW(skinTarget.c_str());
+        auto rC = lingxi::ImportSkinFromUrl(L"https://github.com/o/s.lxskin",
+                                            std::wstring(64, L'0'), &FakeSkinDownload);
+        Report(!rC.ok && rC.message.find(L"SHA256 不符") != std::wstring::npos &&
+               GetFileAttributesW(skinTarget.c_str()) == INVALID_FILE_ATTRIBUTES,
+               "SK8-12 sha mismatch: rejected, nothing installed");
+        // D：留空走侧车 → 成功
+        auto rD = lingxi::ImportSkinFromUrl(L"https://github.com/o/s.lxskin", L"",
+                                            &FakeSkinDownload);
+        Report(rD.ok && GetFileAttributesW(skinTarget.c_str()) != INVALID_FILE_ATTRIBUTES,
+               "SK8-13 sidecar anchor -> installed");
+        // E：侧车 404 → fail-closed 拒装
+        DeleteFileW(skinTarget.c_str());
+        g_skinDlFailSidecar = true;
+        auto rE = lingxi::ImportSkinFromUrl(L"https://github.com/o/s.lxskin", L"",
+                                            &FakeSkinDownload);
+        g_skinDlFailSidecar = false;
+        Report(!rE.ok && rE.message.find(L"完整性无锚") != std::wstring::npos &&
+               GetFileAttributesW(skinTarget.c_str()) == INVALID_FILE_ATTRIBUTES,
+               "SK8-14 sidecar 404: fail-closed");
+        // F：staging 全清（%TEMP% 无 lingxi-skin-dl-* 残留）
+        {
+            wchar_t tmp[MAX_PATH] = L"";
+            GetTempPathW(MAX_PATH, tmp);
+            WIN32_FIND_DATAW fd{};
+            HANDLE hf = FindFirstFileW((std::wstring(tmp) + L"lingxi-skin-dl-*").c_str(), &fd);
+            int residue = 0;
+            if (hf != INVALID_HANDLE_VALUE)
+            {
+                do { residue++; } while (FindNextFileW(hf, &fd));
+                FindClose(hf);
+            }
+            Report(residue == 0, "SK8-15 staging files fully cleaned");
+        }
+        // G：注册表换入 + byId 命中（装回 fixture）
+        auto rG = lingxi::ImportSkinFromUrl(L"https://github.com/o/s.lxskin", shaSW,
+                                            &FakeSkinDownload);
+        lingxi::UiReloadSkins();
+        lingxi::DlSkin got;
+        Report(rG.ok && lingxi::UiDlSkinById(L"sket-moyu", &got) &&
+               got.name == L"墨玉" && got.def.accent == RGB(90, 60, 20) &&
+               got.def.hoverLight == RGB(234, 230, 225),
+               "SK8-16 registry reload + byId hit");
+        // H：UiCurrentSkin——命中→下载肤；未命中（已删）→回退内置；skinIndex 越界→0
+        {
+            lingxi::Settings s; s.skinIndex = 2; s.skinId = L"sket-moyu";
+            lingxi::SkinDef hit = lingxi::UiCurrentSkin(s);
+            lingxi::Settings sGone; sGone.skinIndex = 2; sGone.skinId = L"sket-gone";
+            lingxi::SkinDef fb = lingxi::UiCurrentSkin(sGone);
+            lingxi::Settings sOob; sOob.skinIndex = 99;
+            lingxi::SkinDef oob = lingxi::UiCurrentSkin(sOob);
+            bool goneMarked =
+                lingxi::UiCurrentSkinName(sGone).find(L"已删除") != std::wstring::npos;
+            Report(hit.accent == RGB(90, 60, 20) &&
+                   fb.accent == lingxi::UiSkin(2).accent &&
+                   oob.accent == lingxi::UiSkin(0).accent && goneMarked,
+                   "SK8-17 UiCurrentSkin resolve: hit / deleted-fallback / oob");
+        }
+        // I：settings.skinId 持久化（独立沙盒键 skid，同 SK5-7 模式）
+        {
+            wchar_t prevNs[64] = L"";
+            GetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs, 64);
+            SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", L"skid");
+            RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_skid");
+            lingxi::Settings s; s.skinIndex = 3; s.skinId = L"sket-moyu";
+            lingxi::SaveSettings(s);
+            lingxi::Settings r = lingxi::LoadSettings();
+            bool rt = (r.skinIndex == 3 && r.skinId == L"sket-moyu");
+            lingxi::Settings d = lingxi::LoadSettings();
+            d.candidateOpacity = 80; // 无关字段 diff 不回刷 skinId
+            lingxi::SaveSettingsDiff(d);
+            lingxi::Settings r2 = lingxi::LoadSettings();
+            bool keep = (r2.skinId == L"sket-moyu" && r2.candidateOpacity == 80);
+            lingxi::Settings e = lingxi::LoadSettings(); e.skinId.clear();
+            lingxi::SaveSettingsDiff(e);
+            lingxi::Settings r3 = lingxi::LoadSettings();
+            bool clr = r3.skinId.empty() && r3.skinIndex == 3;
+            RegDeleteTreeW(HKEY_CURRENT_USER, L"Software\\LingxiIme_skid");
+            SetEnvironmentVariableW(L"LINGXI_SETTINGS_NS", prevNs[0] ? prevNs : L"");
+            Report(rt && keep && clr,
+                   "SK8-18 settings skinId roundtrip + diff preserve + clear");
+        }
+        // J：ScanSkinDir——坏件跳过、重复 id 文件名小者胜、id 升序
+        {
+            std::wstring td = ExeDir() + L"\\sk8-scan";
+            CreateDirectoryW(td.c_str(), NULL);
+            CellDlWriteBytes(td + L"\\b-two.lxskin",
+                             "LXSKIN 1\nname=Two\nid=bbb\naccent=10,20,30\n");
+            CellDlWriteBytes(td + L"\\a-one.lxskin",
+                             "LXSKIN 1\nname=One\nid=aaa\naccent=10,20,30\n");
+            CellDlWriteBytes(td + L"\\bad.lxskin", "not a skin");
+            CellDlWriteBytes(td + L"\\dup1.lxskin",
+                             "LXSKIN 1\nname=DupA\nid=aaa\naccent=1,1,1\n");
+            std::vector<lingxi::DlSkin> out;
+            size_t skipped = 99;
+            size_t n = lingxi::ScanSkinDir(td, &out, &skipped);
+            bool sorted = n == 2 && out.size() == 2 && out[0].id == L"aaa" &&
+                          out[0].name == L"One" && out[1].id == L"bbb";
+            DeleteFileW((td + L"\\b-two.lxskin").c_str());
+            DeleteFileW((td + L"\\a-one.lxskin").c_str());
+            DeleteFileW((td + L"\\bad.lxskin").c_str());
+            DeleteFileW((td + L"\\dup1.lxskin").c_str());
+            RemoveDirectoryW(td.c_str());
+            Report(sorted && skipped == 2,
+                   "SK8-19 ScanSkinDir: bad skipped, dup first-wins, id-sorted");
+        }
+        // K：同 id 重导=覆盖（新色生效；skin 无细胞包的覆盖确认歧义）
+        g_skinPackBytes =
+            "LXSKIN 1\nname=\xE5\xA2\xA8\xE7\x8E\x89\nid=sket-moyu\naccent=20,40,60\n";
+        {
+            std::wstring fx2 = ExeDir() + L"\\sk8-fixture2.lxskin";
+            CellDlWriteBytes(fx2, g_skinPackBytes);
+            std::string hexS2;
+            lingxi::updater::Sha256File(fx2, &hexS2, nullptr);
+            DeleteFileW(fx2.c_str());
+            std::wstring shaSW2(hexS2.begin(), hexS2.end());
+            auto rJ = lingxi::ImportSkinFromUrl(L"https://github.com/o/s.lxskin", shaSW2,
+                                                &FakeSkinDownload);
+            lingxi::UiReloadSkins();
+            lingxi::DlSkin got2;
+            bool cov = rJ.ok && lingxi::UiDlSkinById(L"sket-moyu", &got2) &&
+                       got2.def.accent == RGB(20, 40, 60);
+            DeleteFileW(skinTarget.c_str());
+            lingxi::UiReloadSkins(); // 测后环境还原：注册表不再持测试肤
+            Report(cov, "SK8-20 re-import same id overwrites colors");
+        }
     }
 
     // ===== C2. 管道帧层：往返/半帧+对端消失/写向已消失对端/超时取消(H1路径) =====

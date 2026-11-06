@@ -11,6 +11,7 @@
 namespace lingxi {
 
 struct ShowReq; // H4：跨线程状态变更封包（定义在 candwnd_core.cpp）
+struct Settings;  // common/settings.h（ApplySkin 入参，在线肤 id 寻址）
 
 class CandWindow
 {
@@ -69,8 +70,9 @@ private:
     void LayoutMetrics(int* itemH, int* pad);
     // 按字号（DPI 缩放）重建三支字体；先删旧字体，避免泄漏
     void RebuildFonts(uint32_t fontSize);
-    // 应用皮肤（强调色 + 浅色 hover 底色）；越界回退默认翠绿
-    void ApplySkin(uint32_t idx);
+    // 应用皮肤（强调色 + 浅色 hover 底色）：经 skinstore UiCurrentSkin 解析——
+    // 在线肤（skinId 命中）→下载肤，否则内置 skinIndex（越界回退默认翠绿）
+    void ApplySkin(const Settings& st);
     // 调用方持锁：返回当前页在全量列表中的起止 [begin,end)
     void CurrentPageRangeLocked(size_t* begin, size_t* end) const;
     // 底部工具条高（DPI 缩放）

@@ -235,6 +235,8 @@ Settings LoadSettings()
     if (GetDword(hKey, L"LlmRerank", v)) s.llmRerank = v != 0;
     if (GetDword(hKey, L"LlmMultiPath", v)) s.llmMultiPath = v != 0;
     if (GetDword(hKey, L"SkinIndex", v) && v <= 6) s.skinIndex = v;
+    GetString(hKey, L"SkinId", s.skinId); // 在线皮肤 id；缺键=空=内置。超长按空处理
+    if (s.skinId.size() > 32) s.skinId.clear(); // （注册表手改垃圾 id 查不到也只是回退内置）
     if (GetDword(hKey, L"UiFont", v) && v <= 3) s.uiFont = v;
     if (GetDword(hKey, L"CandidateOpacity", v) && v >= 70 && v <= 100) s.candidateOpacity = v;
     if (GetDword(hKey, L"AssocAfterPick", v)) s.assocAfterPick = (v != 0);  // 缺键=结构默认(true)
@@ -317,6 +319,7 @@ void SaveSettings(const Settings& s)
     SetDword(hKey, L"LlmRerank", s.llmRerank ? 1 : 0);
     SetDword(hKey, L"LlmMultiPath", s.llmMultiPath ? 1 : 0);
     SetDword(hKey, L"SkinIndex", s.skinIndex);
+    SetString(hKey, L"SkinId", s.skinId);
     SetDword(hKey, L"UiFont", s.uiFont);
     SetDword(hKey, L"CandidateOpacity", s.candidateOpacity);
     SetDword(hKey, L"AssocAfterPick", s.assocAfterPick ? 1u : 0u);
@@ -392,6 +395,7 @@ void SaveSettingsDiff(const Settings& s)
     PutDwordDiff(hKey, L"LlmRerank", s.llmRerank ? 1 : 0);
     PutDwordDiff(hKey, L"LlmMultiPath", s.llmMultiPath ? 1 : 0);
     PutDwordDiff(hKey, L"SkinIndex", s.skinIndex);
+    PutStringDiff(hKey, L"SkinId", s.skinId);
     PutDwordDiff(hKey, L"UiFont", s.uiFont);
     PutDwordDiff(hKey, L"CandidateOpacity", s.candidateOpacity);
     PutDwordDiff(hKey, L"AssocAfterPick", s.assocAfterPick ? 1u : 0u);

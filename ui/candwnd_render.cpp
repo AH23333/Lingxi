@@ -7,6 +7,7 @@
 #include "../common/log.h"
 #include "../common/settings.h"
 #include "uistyle.h"
+#include "skinstore.h" // UiCurrentSkin（在线肤解析单一口径）
 
 //
 // 候选窗绘制（P2 拆分自 window.cpp，2026-10-31）：皮肤/字体/度量、
@@ -62,14 +63,17 @@ void CandWindow::RebuildFonts(uint32_t fontSize)
                              CLEARTYPE_QUALITY, DEFAULT_PITCH | FF_DONTCARE, smallFace);
 }
 
-// 应用皮肤（共享 uistyle.h 皮肤表）；越界回退默认翠绿
-void CandWindow::ApplySkin(uint32_t idx)
+// 应用皮肤：UiCurrentSkin 单入口解析（在线肤命中→下载肤，否则内置，越界回退 0）。
+// _skinIndex 仅留日志语义；变化检测在 candwnd_core 用解析后双通道色值比对
+// （内置↔在线、在线 A↔B、删除回退全部正确触发）。
+void CandWindow::ApplySkin(const Settings& st)
 {
-    if (idx >= kSkinCount) idx = 0;
-    _skinIndex = idx;
-    _accent = UiSkin(idx).accent;
-    _hoverLight = UiSkin(idx).hoverLight;
-    LX_LOG(L"ui", L"ApplySkin skin=%u", idx);
+    SkinDef def = UiCurrentSkin(st);
+    _skinIndex = st.skinIndex < kSkinCount ? st.skinIndex : 0;
+    _accent = def.accent;
+    _hoverLight = def.hoverLight;
+    LX_LOG(L"ui", L"ApplySkin skin=%u id=%ls", _skinIndex,
+           st.skinId.empty() ? L"-" : st.skinId.c_str());
 }
 
 void CandWindow::LayoutMetrics(int* itemH, int* pad)
