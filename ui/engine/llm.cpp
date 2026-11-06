@@ -253,7 +253,7 @@ public:
         InflightGuard g(_inflight); // H3：析构等待在途推理（预热线程）收敛
         std::call_once(_initFlag, [this]() { LazyInit(); });
         if (!_ready || _broken) return {};
-        return Generate(context);
+        return Generate(context, kBudgetMs); // 输入路径预算恒 300ms（kBudgetMs 不动）
     }
 
     // ILlmReranker：指令式重排。与续写共用 _genMutex（CPU 推理算力串行）。
@@ -276,6 +276,18 @@ public:
     // 续写链经 Predict 的 _broken 检查自然落到词表引擎）。
     void MarkBroken() override { _broken.store(true); }
     bool Broken() const override { return _broken.load(); }
+
+    // ILlmReranker：AI 整句成句（期二异步追加）。与续写/重排共用 _genMutex
+    // 串行（同一块 CPU 推理算力）；超时整条丢弃返回空——残句不出候选。
+    std::wstring GenerateSentence(const std::wstring& committedCtx,
+                                  const std::wstring& pinyinSpaced,
+                                  uint64_t budgetMs) override
+    {
+        InflightGuard g(_inflight); // H3：同 Predict/Rerank
+        std::call_once(_initFlag, [this]() { LazyInit(); });
+        if (!_ready || _broken || pinyinSpaced.empty()) return {};
+        return DoGenerateSentence(committedCtx, pinyinSpaced, budgetMs);
+    }
 
     // H3：启动期预热——先计 _inflight 再 spawn，析构等待覆盖线程全生命周期
     //（原 CreatePredictorChain 裸 detach：线程起步→Predict 入口 guard 之间
@@ -414,7 +426,134 @@ private:
         LX_LOG(L"llm", L"LLM 引擎就绪: %ls", fd.cFileName);
     }
 
-    Prediction Generate(const std::wstring& context)
+    // 整序清除续写 KV（_ctx 的 seq 0 全段）并复位增量标记——decode 失败/分叉
+    // 删除失败/logits 空后的统一回退。整序删除永不失败（llama.h:760 注释）；
+    // 只清本 context 的序列，不跨 context 误伤（重排在 _rrCtx，物理缓存独立）。
+    void ResetGenKv(bool kvUsable)
+    {
+        _genKv.hasPrev = false;
+        if (!kvUsable) return;
+        llama_memory_t mem = _api.get_memory(_ctx);
+        if (mem && _api.memory_seq_rm) _api.memory_seq_rm(mem, 0, 0, -1);
+    }
+
+    // 贪心生成趟（续写 Generate 与整句 DoGenerateSentence 共用骨架）：
+    // tokenize → KV 增量复用（M4.5）→ 逐 token argmax → KV 状态保存。
+    // 预算为软预算（逐 token 边界检查，最多多跑一个 token）；超预算中断置
+    // timedOut=true——已产出部分照留（续写保留残段，整句由调用方整条丢弃）。
+    // 调用方须已持 _genMutex；g.n<=0 = tokenize 失败早退。
+    struct GreedyPassOut
+    {
+        std::string outUtf8;
+        std::vector<llama_token> tokens; // 截断后的 prompt tokens
+        int n = 0;
+        size_t common = 0;
+        bool kvUsable = false;
+        bool kvClean = true;
+        bool timedOut = false;
+        uint64_t t0 = 0;
+    };
+    void GreedyPass(const std::wstring& prompt, uint64_t budgetMs, GreedyPassOut& g)
+    {
+        std::string promptUtf8 = WideToUtf8(prompt);
+        g.tokens.assign(kPromptMaxTokens + 64, (llama_token)0);
+        int n = _api.tokenize(_vocab, promptUtf8.c_str(), (int)promptUtf8.size(),
+                              g.tokens.data(), (int)g.tokens.size(), false, true);
+        if (n <= 0) { g.n = n; return; }
+        if (n > (int)kPromptMaxTokens)
+        {
+            // 保留尾部（含模板尾部与最近上下文）
+            g.tokens.erase(g.tokens.begin(), g.tokens.begin() + (n - (int)kPromptMaxTokens));
+            n = (int)kPromptMaxTokens;
+        }
+        g.n = n;
+        g.tokens.resize((size_t)n);
+
+        // ---- M4.5 KV 增量复用 ----
+        // 打字是追加型操作：新 prompt 与上次通常共享长前缀。策略：
+        //   1) 先弃掉上次生成的尾部（KV 只留上次 prompt）；
+        //   2) 求公共前缀 common，截掉分叉部分；
+        //   3) 只 decode tokens[common..n)（位置由 llama_decode 自动跟踪）；
+        //   4) prompt 完全相同 → 缩 1 个 token 重算末位 logits。
+        // 数学上与全量重评估等价（greedy 输出不变），代价从全量 prefill 降到 delta。
+        // 任意一步不对劲 → 回退全量（hasPrev=false + 整序清除）。
+        g.kvUsable = _api.get_memory && _api.memory_seq_rm;
+        if (!_genKv.hasPrev || !g.kvUsable)
+        {
+            g.common = 0;
+        }
+        else
+        {
+            llama_memory_t mem = _api.get_memory(_ctx);
+            // 1) 弃掉上次生成尾部；seq_rm 返回 false=部分删除失败 → KV 不可信
+            if (!_api.memory_seq_rm(mem, 0, (llama_pos)_genKv.prompt.size(), -1))
+            {
+                ResetGenKv(g.kvUsable);
+            }
+            else
+            {
+                size_t common = 0;
+                while (common < _genKv.prompt.size() && common < (size_t)n &&
+                       _genKv.prompt[common] == g.tokens[common])
+                    common++;
+                if (common == (size_t)n && n > 0) common = n - 1; // 完全相同 → 重算末位
+                // 2) 截分叉；失败 → 全量重评估
+                if (common < _genKv.prompt.size() &&
+                    !_api.memory_seq_rm(mem, 0, (llama_pos)common, -1))
+                {
+                    ResetGenKv(g.kvUsable);
+                    common = 0;
+                }
+                g.common = common;
+            }
+        }
+
+        g.t0 = GetTickCount64();
+        // KV 一致性标记：仅当循环以标准形（KV=prompt+生成尾）收尾才允许按增量态保存。
+        // 异常中断（decode 失败/logits 空）后 KV 已整序清除——若仍保存 hasPrev=true，
+        // 下次入口对空 KV 的 seq_rm 空范围空转"成功"，delta 会从位置 0 错位放置，
+        // 静默产出垃圾续写（审计轮 6 修复 A/B）。
+        llama_batch batch = (g.common < (size_t)n)
+                                ? _api.batch_get_one(g.tokens.data() + g.common, n - (int)g.common)
+                                : _api.batch_get_one(g.tokens.data() + n - 1, 1);
+        for (int step = 0; step < kMaxGenTokens; step++)
+        {
+            int rcDecode = _api.decode(_ctx, batch);
+            if (rcDecode != 0)
+            {
+                // decode 失败（1=KV 槽不足，2=abort，<0/其他=错误）：KV 状态不可信，
+                // 彻底清空并标记下次全量重评估
+                LX_LOG(L"llm", L"decode 返回 %d，清空 KV", rcDecode);
+                ResetGenKv(g.kvUsable);
+                g.kvClean = false;
+                break;
+            }
+            float* logits = _api.get_logits_ith(_ctx, -1);
+            if (!logits) { ResetGenKv(g.kvUsable); g.kvClean = false; break; }
+            int32_t nv = _api.vocab_n_tokens(_vocab);
+            int best = 0;
+            for (int32_t v = 1; v < nv; v++)
+                if (logits[v] > logits[best]) best = v;
+            if (_api.vocab_is_eog(_vocab, best)) break;
+
+            char piece[64] = {};
+            int np = _api.detokenize(_vocab, (llama_token*)&best, 1, piece, sizeof(piece), false, true);
+            if (np > 0) g.outUtf8.append(piece, np);
+            if (GetTickCount64() - g.t0 > budgetMs) { g.timedOut = true; break; }
+            batch = _api.batch_get_one((llama_token*)&best, 1);
+        }
+
+        // 保存 prompt 状态供下次增量（生成尾部由下次入口统一弃掉）；
+        // kvClean=false 时跳过——KV 已整序清除、hasPrev 已被 ResetGenKv 置 false，
+        // 下次按空 KV 全量重评估，杜绝"记着 prompt 实际 KV 为空"的错位增量
+        if (n > 0 && g.kvClean)
+        {
+            _genKv.prompt.assign(g.tokens.begin(), g.tokens.begin() + n);
+            _genKv.hasPrev = true;
+        }
+    }
+
+    Prediction Generate(const std::wstring& context, uint64_t budgetMs)
     {
         // M4.5：KV cache 增量复用需串行化（预热线程与预测线程共用 _ctx）
         std::lock_guard<std::mutex> lock(_genMutex);
@@ -427,113 +566,12 @@ private:
             L"只输出续写部分，不要解释，不要重复原文。<|im_end|>\n"
             L"<|im_start|>user\n继续这段文本：" + tail + L"<|im_end|>\n"
             L"<|im_start|>assistant\n";
-        std::string promptUtf8 = WideToUtf8(prompt);
 
-        std::vector<llama_token> tokens(kPromptMaxTokens + 64);
-        int n = _api.tokenize(_vocab, promptUtf8.c_str(), (int)promptUtf8.size(),
-                              tokens.data(), (int)tokens.size(), false, true);
-        if (n <= 0) return pred;
-        if (n > (int)kPromptMaxTokens)
-        {
-            // 保留尾部（含模板尾部与最近上下文）
-            tokens.erase(tokens.begin(), tokens.begin() + (n - (int)kPromptMaxTokens));
-            n = (int)kPromptMaxTokens;
-        }
+        GreedyPassOut g;
+        GreedyPass(prompt, budgetMs, g);
+        if (g.n <= 0) return pred;
 
-        // ---- M4.5 KV 增量复用 ----
-        // 打字是追加型操作：新 prompt 与上次通常共享长前缀。策略：
-        //   1) 先弃掉上次生成的尾部（KV 只留上次 prompt）；
-        //   2) 求公共前缀 common，截掉分叉部分；
-        //   3) 只 decode tokens[common..n)（位置由 llama_decode 自动跟踪）；
-        //   4) prompt 完全相同 → 缩 1 个 token 重算末位 logits。
-        // 数学上与全量重评估等价（greedy 输出不变），代价从全量 prefill 降到 delta。
-        // 任意一步不对劲 → 回退全量（hasPrev=false + 整序清除）。
-        size_t common = 0;
-        bool kvUsable = _api.get_memory && _api.memory_seq_rm;
-        auto ResetKv = [&]() {
-            _genKv.hasPrev = false;
-            if (!kvUsable) return;
-            llama_memory_t mem = _api.get_memory(_ctx);
-            // 整序删除永不失败（llama.h:760 注释）；只清本 context 的序列，
-            // 不存在跨 context 误伤（重排在 _rrCtx 上，物理缓存独立）。
-            if (mem && _api.memory_seq_rm) _api.memory_seq_rm(mem, 0, 0, -1);
-        };
-
-        if (!_genKv.hasPrev || !kvUsable)
-        {
-            common = 0;
-        }
-        else
-        {
-            llama_memory_t mem = _api.get_memory(_ctx);
-            // 1) 弃掉上次生成尾部；seq_rm 返回 false=部分删除失败 → KV 不可信
-            if (!_api.memory_seq_rm(mem, 0, (llama_pos)_genKv.prompt.size(), -1))
-            {
-                ResetKv();
-            }
-            else
-            {
-                while (common < _genKv.prompt.size() && common < (size_t)n &&
-                       _genKv.prompt[common] == tokens[common])
-                    common++;
-                if (common == (size_t)n && n > 0) common = n - 1; // 完全相同 → 重算末位
-                // 2) 截分叉；失败 → 全量重评估
-                if (common < _genKv.prompt.size() &&
-                    !_api.memory_seq_rm(mem, 0, (llama_pos)common, -1))
-                {
-                    ResetKv();
-                    common = 0;
-                }
-            }
-        }
-
-        std::string outUtf8;
-        uint64_t t0 = GetTickCount64();
-        // KV 一致性标记：仅当循环以标准形（KV=prompt+生成尾）收尾才允许按增量态保存。
-        // 异常中断（decode 失败/logits 空）后 KV 已整序清除——若仍保存 hasPrev=true，
-        // 下次入口对空 KV 的 seq_rm 空范围空转"成功"，delta 会从位置 0 错位放置，
-        // 静默产出垃圾续写（审计轮 6 修复 A/B）。
-        bool kvClean = true;
-        llama_batch batch = (common < (size_t)n)
-                                ? _api.batch_get_one(tokens.data() + common, n - (int)common)
-                                : _api.batch_get_one(tokens.data() + n - 1, 1);
-        for (int step = 0; step < kMaxGenTokens; step++)
-        {
-            int rcDecode = _api.decode(_ctx, batch);
-            if (rcDecode != 0)
-            {
-                // decode 失败（1=KV 槽不足，2=abort，<0/其他=错误）：KV 状态不可信，
-                // 彻底清空并标记下次全量重评估
-                LX_LOG(L"llm", L"decode 返回 %d，清空 KV", rcDecode);
-                ResetKv();
-                kvClean = false;
-                break;
-            }
-            float* logits = _api.get_logits_ith(_ctx, -1);
-            if (!logits) { ResetKv(); kvClean = false; break; }
-            int32_t nv = _api.vocab_n_tokens(_vocab);
-            int best = 0;
-            for (int32_t v = 1; v < nv; v++)
-                if (logits[v] > logits[best]) best = v;
-            if (_api.vocab_is_eog(_vocab, best)) break;
-
-            char piece[64] = {};
-            int np = _api.detokenize(_vocab, (llama_token*)&best, 1, piece, sizeof(piece), false, true);
-            if (np > 0) outUtf8.append(piece, np);
-            if (GetTickCount64() - t0 > kBudgetMs) break;
-            batch = _api.batch_get_one((llama_token*)&best, 1);
-        }
-
-        // 保存 prompt 状态供下次增量（生成尾部由下次入口统一弃掉）；
-        // kvClean=false 时跳过——KV 已整序清除、hasPrev 已被 ResetKv 置 false，
-        // 下次按空 KV 全量重评估，杜绝"记着 prompt 实际 KV 为空"的错位增量
-        if (n > 0 && kvClean)
-        {
-            _genKv.prompt.assign(tokens.begin(), tokens.begin() + n);
-            _genKv.hasPrev = true;
-        }
-
-        std::wstring cont = Utf8ToWide(outUtf8.data(), (int)outUtf8.size());
+        std::wstring cont = Utf8ToWide(g.outUtf8.data(), (int)g.outUtf8.size());
         cont = StripContinuationEcho(cont, tail);
         pred.cands = SplitContinuation(cont);
 
@@ -543,16 +581,16 @@ private:
         // fork：seq_rm 到 prompt 末位前一格 → 重 decode 末位拿新鲜 logits →
         // 采样循环。采样尾留在 KV 也安全（下次入口 seq_rm(prompt.size(),-1) 弃掉）。
         Settings st = LoadSettings();
-        if (st.llmMultiPath && kvClean && _samplerOk && kvUsable &&
-            common * 10 >= (size_t)n * 9 && GetTickCount64() - t0 <= 60)
+        if (st.llmMultiPath && g.kvClean && _samplerOk && g.kvUsable &&
+            g.common * 10 >= (size_t)g.n * 9 && GetTickCount64() - g.t0 <= 60)
         {
             llama_memory_t mem = _api.get_memory(_ctx);
-            if (mem && _api.memory_seq_rm(mem, 0, (llama_pos)n - 1, -1))
+            if (mem && _api.memory_seq_rm(mem, 0, (llama_pos)g.n - 1, -1))
             {
-                llama_sampler* smpl = MakeSampler(HashTokens(tokens, (size_t)n));
+                llama_sampler* smpl = MakeSampler(HashTokens(g.tokens, (size_t)g.n));
                 if (smpl)
                 {
-                    llama_token lastTok = tokens[(size_t)n - 1];
+                    llama_token lastTok = g.tokens[(size_t)g.n - 1];
                     llama_batch lb = _api.batch_get_one(&lastTok, 1);
                     if (_api.decode(_ctx, lb) == 0)
                     {
@@ -566,9 +604,9 @@ private:
                             char piece[64] = {};
                             int np = _api.detokenize(_vocab, &t, 1, piece, sizeof(piece), false, true);
                             if (np > 0) outUtf8B.append(piece, np);
-                            if (GetTickCount64() - t0 > kBudgetMs) break; // 与贪心共享总预算
+                            if (GetTickCount64() - g.t0 > budgetMs) break; // 与贪心共享总预算
                             llama_batch nb = _api.batch_get_one(&t, 1);
-                            if (_api.decode(_ctx, nb) != 0) { ResetKv(); break; }
+                            if (_api.decode(_ctx, nb) != 0) { ResetGenKv(g.kvUsable); break; }
                         }
                         std::wstring contB = Utf8ToWide(outUtf8B.c_str(), (int)outUtf8B.size());
                         contB = StripContinuationEcho(contB, tail);
@@ -586,7 +624,7 @@ private:
                     }
                     else
                     {
-                        ResetKv();
+                        ResetGenKv(g.kvUsable);
                     }
                     _api.sampler_free(smpl);
                 }
@@ -596,6 +634,48 @@ private:
         // 另一半的加标点/加尾巴版，模型还会整段复读上文（--probe-typing 取证）
         pred.cands = DedupCompletions(pred.cands, tail);
         return pred;
+    }
+
+    // AI 整句成句（期二）：拼音音节序列 → 整句文本。与续写共用 _ctx/_genKv
+    // （模板不同→切换时全量 prefill 一次；同模板连打共享前缀，KV 增量仍生效）。
+    // 超时（软预算被截断或总耗时超 budgetMs）整条丢弃返回空，残句不出候选；
+    // 不做续写那套回显剥离/多路采样/去重——输入是拼音不是上文，无回显可复读。
+    std::wstring DoGenerateSentence(const std::wstring& committedCtx,
+                                    const std::wstring& pinyinSpaced,
+                                    uint64_t budgetMs)
+    {
+        std::lock_guard<std::mutex> lock(_genMutex);
+        uint64_t t0 = GetTickCount64();
+        // 上文取尾 100 字（整句只需要近端语境，远上文对拼音转写无增益还涨 prefill）
+        std::wstring tail = committedCtx.size() > 100
+                                ? committedCtx.substr(committedCtx.size() - 100)
+                                : committedCtx;
+        std::wstring prompt =
+            L"<|im_start|>system\n你是输入法整句引擎。根据用户输入的拼音音节序列输出对应的"
+            L"中文句子，只输出句子本身，不要解释，不要输出拼音。<|im_end|>\n"
+            L"<|im_start|>user\n";
+        if (!tail.empty()) prompt += L"上文：" + tail + L"\n";
+        prompt += L"拼音：" + pinyinSpaced + L"<|im_end|>\n<|im_start|>assistant\n";
+
+        GreedyPassOut g;
+        GreedyPass(prompt, budgetMs, g);
+        if (g.n <= 0) return {};
+        uint64_t elapsed = GetTickCount64() - t0;
+        if (g.timedOut || elapsed > budgetMs)
+        {
+            LX_LOG(L"llm", L"整句生成超时丢弃 elapsed=%llums budget=%llums",
+                   (unsigned long long)elapsed, (unsigned long long)budgetMs);
+            return {};
+        }
+        std::wstring sent = Utf8ToWide(g.outUtf8.data(), (int)g.outUtf8.size());
+        // 剥首尾空白/换行（模型偶发裹空格）；剥空=丢弃
+        size_t b = sent.find_first_not_of(L" \t\r\n");
+        size_t epos = sent.find_last_not_of(L" \t\r\n");
+        if (b == std::wstring::npos) return {};
+        sent = sent.substr(b, epos - b + 1);
+        LX_LOG(L"llm", L"整句生成耗时=%llums chars=%u", (unsigned long long)elapsed,
+               (uint32_t)sent.size());
+        return sent;
     }
 
     // 指令式重排：构造 prompt → 生成数字序 → 白名单校验。

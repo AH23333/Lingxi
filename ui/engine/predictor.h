@@ -127,6 +127,13 @@ public:
     // （不重启不重试），续写链自然落到词表引擎。默认空实现（非 LLM 实现无所谓）。
     virtual void MarkBroken() {}
     virtual bool Broken() const { return false; }
+    // AI 整句成句（期二异步追加）：committedCtx=已上屏上文（可空）；
+    // pinyinSpaced=空格分隔的音节序列（如 "jin tian tian qi"）；
+    // budgetMs=单次软预算上限——超时须返回空（整条丢弃，残句不出候选）。
+    // 实现内部与续写/重排串行（共用推理互斥）。默认空实现=不支持。
+    virtual std::wstring GenerateSentence(const std::wstring& /*committedCtx*/,
+                                          const std::wstring& /*pinyinSpaced*/,
+                                          uint64_t /*budgetMs*/) { return {}; }
 };
 
 // 装配降级链：LLM（若可用）→ 词表。返回值所有权归调用方。
