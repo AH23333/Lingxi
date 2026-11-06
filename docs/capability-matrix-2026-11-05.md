@@ -2,7 +2,8 @@
 
 > 本文档取代 `gap-ledger-2026-11-05.md`（旧台账三次证伪，根因是从旧文档摘结论）。
 > 规则：**凡"已有"必须带断言名或文件:行号作证；凡"真缺"以代码扫描无实现为准**。
-> 断言计数口径：engine_test Release 单实例 PASS=519 FAIL=0（2026-11-05 17:53 读数）。
+> 断言计数口径：engine_test Release 单实例 PASS=545 FAIL=0（2026-11-05 20:05 读数，
+> 含 P10j AI 整句 26 条）。
 
 ## 一、已有能力（带证据）
 
@@ -11,6 +12,7 @@
 |---|---|
 | 全拼逐词+整句候选 | 断言 `sentence top is contextually correct`（14+ 句）、`pinyin: jintianqi -> 今*` |
 | 整句开关 SentenceMode（缺省开） | 断言 `sentenceMode: *`×4；settings.cpp `SentenceMode` Load/Save/Diff |
+| AI 整句异步追加（缺省开，停顿限流） | 断言 `sent: *`×26（P10j：切分/触发门/陈旧/迟到/追加/繁忙延迟）；llm.cpp GenerateSentence（独立 1200ms 预算）、pipeserver.cpp StartAsyncSentence（200ms 停顿窗+ver/gen/sentSeq 三重闸）；deep_test `T22`（Enter 后迟到帧不污染正文，红绿闭环）；settings.cpp `AiSentence` |
 | 简拼/首字母 | 断言 `learn: abbreviated 'mm' -> '喵喵'`、`P15 zm/zn/mm` 系列 |
 | 混拼残段（尾部 PARTIAL 幸存） | 断言 `pinyin: jintianq (partial tail) non-empty`、`R4 rescue: partial-syllable typo` |
 | 双拼 9 方案+方案切换 | 断言 `pinyin: shuangpin jbtm/vjlt`、`scheme1/2 end-to-end == quanpin ling` |
@@ -61,6 +63,7 @@
 | 全角字母数字 | 断言 `FW1/FW2` |
 | 统计窗（计数+常选词 TOP10） | 断言 `hotwords: *`×3；ui/usagestats.cpp |
 | 自动更新（清单哈希锚+回滚+自验） | update_test PASS=188（台架）；common/update_apply.cpp |
+| 迟到候选帧版本作废（Enter/Esc 终结点） | deep_test `T22 Enter 后迟到候选帧不污染正文`（探针注入红绿闭环）；service.cpp ClearCandidates `++_verSent`、candwnd_core.cpp Hide `_ver=0` |
 
 ### UI 面
 设置页（含模糊音 8 组/纠错/整句/页宽/皮肤透明度勾选，settingsui.cpp:1179+）、符号面板、统计窗、用户词/细胞词管理窗（MG10a-c 槽位断言）。
@@ -76,7 +79,6 @@
 | 跨进程/跨机剪贴板同步 | clipboardui 仅本机 | 低/中 |
 | 笔画查字（u+笔画序） | **用户裁决不做（2026-11-05）** | — |
 | per-monitor DPI | GetDpiForSystem（ui/render 单源），**真机 blocked** | 中/中 |
-| AI 长句改写/续写 | 仅候选重排级 LLM，无成句生成 | 低/高 |
 
 ## 三、本台账生成纪律
 
