@@ -29,9 +29,12 @@
 #include "../../ui/combo_logic.h" // 审查缺陷⑤ combo 域内非选项值保留口径（header-only）
 #include "../../common/caret_edit.h" // M5 组合内光标编辑纯逻辑（header-only）
 #include "../../ui/hotwords_logic.h" // 批2-① 常选词 TOP N 解析（header-only）
+#include "../../ui/sentence_async_logic.h" // 期二 AI 整句异步追加纯逻辑（header-only）
 
 #include <algorithm>
 #include <chrono>
+#include <atomic>
+#include <thread>
 
 // 批8：ui/fileio.cpp 直链——UI 侧词典文件读写与失败路径实证（ROB 块）共用同一实现
 namespace lingxi {
@@ -1910,6 +1913,143 @@ int wmain(int argc, wchar_t** argv)
                 wchar_t capDet[160];
                 _snwprintf_s(capDet, _TRUNCATE, L"median=%.3fms cap=%.1fms", worstMed, cap);
                 Report(worstMed < cap, "long-sentence latency within measured cap", capDet);
+            }
+
+            // P10j. AI 整句异步追加（期二）纯逻辑层断言（sentence_async_logic.h）：
+            // 触发门 / 陈旧判定 / 迟到丢弃 / 追加塑形 / 合成繁忙下键入延迟
+            {
+                std::vector<std::string> sv;
+                py->GetSyllableSet(sv);
+                std::unordered_set<std::string> sylls(sv.begin(), sv.end());
+                // 音节切分：全覆盖取最小音节数（自然读法）；非法/空/非 ASCII → 空
+                {
+                    auto seg4 = lingxi::SegmentSyllables(L"jintiantianqi", sylls);
+                    Report(seg4.size() == 4, "sent: segment jintiantianqi -> 4 syllables", L"");
+                    auto seg8 = lingxi::SegmentSyllables(L"womenjintianxiangqugongyuan", sylls);
+                    Report(seg8.size() == 8, "sent: segment 8-syllable chain", L"");
+                    Report(lingxi::SegmentSyllables(L"zhx1", sylls).empty(),
+                           "sent: illegal tail -> no segment", L"");
+                    Report(lingxi::SegmentSyllables(L"", sylls).empty(),
+                           "sent: empty -> no segment", L"");
+                    Report(lingxi::SegmentSyllables(L"jintian中", sylls).empty(),
+                           "sent: non-ascii -> no segment", L"");
+                }
+                // 触发门（必做断言①④的判定核：任一条件破坏即不生成；停顿窗由
+                // worker Sleep+复查实现，不在纯逻辑层）
+                {
+                    Report(lingxi::ShouldTriggerSentence(true, true, 6, true, false, false),
+                           "sent: trigger all-green", L"");
+                    Report(!lingxi::ShouldTriggerSentence(true, true, 5, true, false, false),
+                           "sent: 5 syllables denied (rate-limit core)", L"");
+                    Report(!lingxi::ShouldTriggerSentence(true, false, 6, true, false, false),
+                           "sent: no candidates yet -> denied", L"");
+                    Report(!lingxi::ShouldTriggerSentence(true, true, 6, false, false, false),
+                           "sent: AI off -> no trigger (cands vector untouched)", L"");
+                    Report(!lingxi::ShouldTriggerSentence(true, true, 6, true, true, false),
+                           "sent: shuangpin denied", L"");
+                    Report(!lingxi::ShouldTriggerSentence(true, true, 6, true, false, true),
+                           "sent: calc/radical denied", L"");
+                    Report(!lingxi::ShouldTriggerSentence(false, true, 6, true, false, false),
+                           "sent: non-pinyin frame denied", L"");
+                }
+                // 陈旧判定（必做断言②的判定核：生成中继续键入/选词/翻页/新触发 → 丢）
+                {
+                    Report(lingxi::SentenceStillCurrent(true, true, 7, 7, 9, 9, 3, 3),
+                           "sent: current all-match", L"");
+                    Report(!lingxi::SentenceStillCurrent(true, true, 8, 7, 9, 9, 3, 3),
+                           "sent: stale on new keystroke (ver bumped)", L"");
+                    Report(!lingxi::SentenceStillCurrent(true, true, 7, 7, 10, 9, 3, 3),
+                           "sent: stale on pick/page (gen bumped)", L"");
+                    Report(!lingxi::SentenceStillCurrent(true, true, 7, 7, 9, 9, 4, 3),
+                           "sent: stale on newer trigger (sentSeq bumped)", L"");
+                    Report(!lingxi::SentenceStillCurrent(false, true, 7, 7, 9, 9, 3, 3),
+                           "sent: stale on disconnect", L"");
+                    Report(!lingxi::SentenceStillCurrent(true, false, 7, 7, 9, 9, 3, 3),
+                           "sent: stale on deactivate", L"");
+                }
+                // 迟到丢弃（必做断言③的判定核：模拟 3s 返回 → 丢；800ms → 收）
+                {
+                    Report(lingxi::ShouldDropLate(3000, lingxi::kSentenceBudgetMs),
+                           "sent: late 3000ms result dropped", L"");
+                    Report(!lingxi::ShouldDropLate(800, lingxi::kSentenceBudgetMs),
+                           "sent: 800ms result kept", L"");
+                }
+                // 追加塑形（必做断言⑤：末尾追加、前 5 位不动、满员腾位、
+                // 重复/空不追加、(AI) 标记与 cover 平行）
+                {
+                    lingxi::Prediction base;
+                    base.cands = { L"一", L"二", L"三", L"四", L"五", L"六" };
+                    base.cover = { 1, 1, 1, 1, 1, 1 };
+                    base.anno = { L"a", L"b", L"c", L"d", L"e", L"f" };
+                    bool ok = lingxi::AppendSentence(base, L"整句候选", 12, 60);
+                    Report(ok && base.cands.size() == 7 && base.cands[6] == L"整句候选" &&
+                           base.cands[0] == L"一" && base.cands[4] == L"五" &&
+                           base.cover.size() == 7 && base.cover[6] == 12 &&
+                           base.anno.size() == 7 && base.anno[6] == L"AI",
+                           "sent: append at tail keeps first-5 order", L"");
+                    lingxi::Prediction dup;
+                    dup.cands = { L"整句候选", L"x" };
+                    Report(!lingxi::AppendSentence(dup, L"整句候选", 2, 60) &&
+                           dup.cands.size() == 2,
+                           "sent: duplicate not appended", L"");
+                    lingxi::Prediction emp;
+                    emp.cands = { L"x" };
+                    Report(!lingxi::AppendSentence(emp, L"", 1, 60) && emp.cands.size() == 1,
+                           "sent: empty not appended", L"");
+                    lingxi::Prediction full;
+                    full.cands.assign(60, L"w");
+                    Report(lingxi::AppendSentence(full, L"整句", 3, 60) &&
+                           full.cands.size() == 60 && full.cands[59] == L"整句" &&
+                           full.cands[0] == L"w" && full.cands[4] == L"w",
+                           "sent: full list makes room at tail", L"");
+                    lingxi::Prediction nc;
+                    nc.cands = { L"a", L"b" }; // 无 cover/anno（不平行）
+                    Report(lingxi::AppendSentence(nc, L"句", 5, 60) &&
+                           nc.cover.empty() && nc.anno.empty(),
+                           "sent: non-parallel stays no-cover/no-anno", L"");
+                }
+                // 生成期间键入延迟（生成不占输入预算的实证：cores-1 个自旋线程
+                // 模拟 llama 满载——与引擎 n_threads=cores-1 同构；拼音 Predict
+                // 不碰 _genMutex，延迟只来自 CPU 争用，必须远低于 300ms 输入帽）
+                {
+                    std::vector<double> idleTs;
+                    for (int i = 0; i < 21; i++)
+                    {
+                        auto t0 = std::chrono::steady_clock::now();
+                        lingxi::Prediction r = py->Predict(L"jintian"); (void)r;
+                        idleTs.push_back(std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - t0).count());
+                    }
+                    std::sort(idleTs.begin(), idleTs.end());
+                    double idleMed = idleTs[idleTs.size() / 2];
+                    std::atomic<bool> spin{ true };
+                    std::vector<std::thread> pool;
+                    unsigned nT = (std::max)(1u, std::thread::hardware_concurrency() - 1);
+                    for (unsigned i = 0; i < nT; i++)
+                        pool.emplace_back([&spin]() {
+                            volatile uint64_t x = 0;
+                            while (spin.load()) x++;
+                        });
+                    Sleep(50); // 自旋线程吃满核
+                    std::vector<double> busyTs;
+                    for (int i = 0; i < 21; i++)
+                    {
+                        auto t0 = std::chrono::steady_clock::now();
+                        lingxi::Prediction r = py->Predict(L"jintian"); (void)r;
+                        busyTs.push_back(std::chrono::duration<double, std::milli>(
+                            std::chrono::steady_clock::now() - t0).count());
+                    }
+                    spin.store(false);
+                    for (auto& t : pool) t.join();
+                    std::sort(busyTs.begin(), busyTs.end());
+                    double busyMed = busyTs[busyTs.size() / 2];
+                    wchar_t det[160];
+                    _snwprintf_s(det, _TRUNCATE,
+                                 L"idle=%.3fms busy=%.3fms (cap 50ms, 输入帽 300ms)",
+                                 idleMed, busyMed);
+                    Report(busyMed < 50.0 && busyMed < idleMed * 100 + 10.0,
+                           "sent: pinyin latency under synthetic LLM-scale load", det);
+                }
             }
 
             // P11. R3 日期时间直出：rq/sj/xq/rqsj 整串触发注入置顶

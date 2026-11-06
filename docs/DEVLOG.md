@@ -1316,3 +1316,13 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 **剩余长尾**：U 模式拆字（待用户定部件数据源：手工策展 vs 外部数据）→ 用户实测拼音与词典管理。
 
 
+
+
+## 2026-11-05 · AI 整句异步追加（期二，工作区未提交）
+
+- 触发限流三重门：音节>=6（SegmentSyllables 自然读法最小切分）+ 候选已出 + worker 停顿窗 200ms；任一破坏不生成。
+- 呈现：整句追加在"当前所示列表"末尾（lastSent 基准），anno 补 (AI) 标记；不参与前 5 排序、不自动选中、不改 preedit；cover=raw 全长（选中清全串）；点选整句按 raw 全串学习。
+- 陈旧丢弃：ver/gen/sentSeq 三重闸 + lastSentVer 核对；单次预算 1.2s，超时/迟到整条丢；丢弃带连续计数日志。
+- 预算隔离：llm.cpp Generate 预算参数化（输入路径 kBudgetMs=300 不动），整句走 GreedyPass 1200ms；detached worker 与重排共用 _rerankActive/_genMutex 串行；投递时 bump rrSeq 防在途重排覆盖。
+- 开关 aiSentence 缺省开（注册表 AiSentence），设置页"智能"页勾选行带耗电说明。
+- 断言：engine_test P10j 新增 26 条（切分/触发门/陈旧/迟到/追加塑形/合成满载拼音延迟 idle 0.449ms→busy 0.543ms），总读数 519→545 全绿。
