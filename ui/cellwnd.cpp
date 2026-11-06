@@ -37,12 +37,18 @@ enum
     IDC_CELL_DELETE,
     IDC_CELL_CLOSE,
     IDC_CELL_SEARCH, // 批14：搜索过滤框（包名/id 子串实时过滤）
+    IDC_CELL_URLEDIT,  // 在线源：包 URL（https，.lxcell）
+    IDC_CELL_SHAEDIT,  // 在线源：SHA256（可空=侧车）
+    IDC_CELL_URLFETCH, // 在线源：从 URL 导入按钮
 };
 
 HWND g_hCellWnd = NULL;
 HWND g_hCellSearch = NULL; // 批14 搜索框
 bool g_cellImporting = false; // 安装进行中防重入
 std::wstring g_lastImportSrc; // "已存在→确认覆盖"重跑用（源路径在结果回调时已不可得）
+bool g_lastImportIsUrl = false;  // 在线源重跑标记（覆盖重跑须重新下载而非复读旧件）
+std::wstring g_lastImportSha;    // 在线源 SHA256（可空=侧车）
+HWND g_hCellUrlEdit = NULL, g_hCellShaEdit = NULL;
 
 std::wstring Utf8ToW(const std::string& s)
 {
@@ -167,7 +173,7 @@ void RefreshCellList()
     }
 }
 
-struct CellImportJob { HWND hwnd; std::wstring src; bool overwrite; };
+struct CellImportJob { HWND hwnd; std::wstring src; bool overwrite; bool isUrl; std::wstring sha; };
 
 // N9：导入结果所有权槽（至多一个在途——g_cellImporting 防重入保证）。
 // 投递前登记，窗口处理/销毁领取；投递失败仅当领回自己的指针才回收。
@@ -180,7 +186,8 @@ DWORD WINAPI CellImportThread(LPVOID p)
     if (g_hooks.getSyllables) g_hooks.getSyllables(syls);
     std::unordered_set<std::string> set(syls.begin(), syls.end());
     CellImportResult* res = new CellImportResult(
-        ImportCellPackSync(job->src, set, job->overwrite));
+        job->isUrl ? ImportCellPackFromUrl(job->src, job->sha, set, job->overwrite)
+                   : ImportCellPackSync(job->src, set, job->overwrite));
     if (!IsWindow(job->hwnd))
     {
         delete res; // 窗已灭：直接释放（导入件本身已落盘，下次开窗可见）
@@ -202,16 +209,43 @@ void StartImport(HWND hwnd, const std::wstring& src, bool overwrite)
 {
     g_cellImporting = true;
     g_lastImportSrc = src;
+    g_lastImportIsUrl = false;
+    g_lastImportSha.clear();
     EnableWindow(GetDlgItem(hwnd, IDC_CELL_INSTALL), FALSE);
+    EnableWindow(GetDlgItem(hwnd, IDC_CELL_URLFETCH), FALSE);
     SetDlgItemTextW(hwnd, IDC_CELL_STATIC,
                     L"正在后台导入（不阻塞输入与界面）……完成后此处报告结果");
-    CellImportJob* job = new CellImportJob{ hwnd, src, overwrite };
+    CellImportJob* job = new CellImportJob{ hwnd, src, overwrite, false, L"" };
     HANDLE h = CreateThread(NULL, 0, CellImportThread, job, 0, NULL);
     if (h) CloseHandle(h);
     else
     {
         g_cellImporting = false;
         EnableWindow(GetDlgItem(hwnd, IDC_CELL_INSTALL), TRUE);
+        EnableWindow(GetDlgItem(hwnd, IDC_CELL_URLFETCH), TRUE);
+        SetDlgItemTextW(hwnd, IDC_CELL_STATIC, L"无法创建导入线程");
+    }
+}
+
+// 在线源导入：下载→SHA256 锚校验→与本地同管安装（后台线程，模型一致）
+void StartUrlImport(HWND hwnd, const std::wstring& url, const std::wstring& sha, bool overwrite)
+{
+    g_cellImporting = true;
+    g_lastImportSrc = url;
+    g_lastImportIsUrl = true;
+    g_lastImportSha = sha;
+    EnableWindow(GetDlgItem(hwnd, IDC_CELL_INSTALL), FALSE);
+    EnableWindow(GetDlgItem(hwnd, IDC_CELL_URLFETCH), FALSE);
+    SetDlgItemTextW(hwnd, IDC_CELL_STATIC,
+                    L"正在后台下载并校验（不阻塞输入与界面）……完成后此处报告结果");
+    CellImportJob* job = new CellImportJob{ hwnd, url, overwrite, true, sha };
+    HANDLE h = CreateThread(NULL, 0, CellImportThread, job, 0, NULL);
+    if (h) CloseHandle(h);
+    else
+    {
+        g_cellImporting = false;
+        EnableWindow(GetDlgItem(hwnd, IDC_CELL_INSTALL), TRUE);
+        EnableWindow(GetDlgItem(hwnd, IDC_CELL_URLFETCH), TRUE);
         SetDlgItemTextW(hwnd, IDC_CELL_STATIC, L"无法创建导入线程");
     }
 }
@@ -229,6 +263,31 @@ void DoInstall(HWND hwnd)
     ofn.Flags = OFN_FILEMUSTEXIST | OFN_PATHMUSTEXIST | OFN_HIDEREADONLY;
     if (!GetOpenFileNameW(&ofn)) return;
     StartImport(hwnd, file, false);
+}
+
+void DoUrlFetch(HWND hwnd)
+{
+    if (g_cellImporting) return;
+    wchar_t url[2048] = L"", sha[80] = L"";
+    GetWindowTextW(g_hCellUrlEdit, url, 2047);
+    GetWindowTextW(g_hCellShaEdit, sha, 79);
+    auto trim = [](wchar_t* s) {
+        wchar_t* b = s;
+        while (*b == L' ' || *b == L'\t') b++;
+        wchar_t* e = b + wcslen(b);
+        while (e > b && (e[-1] == L' ' || e[-1] == L'\t' || e[-1] == L'\r' || e[-1] == L'\n')) --e;
+        *e = 0;
+        if (b != s) memmove(s, b, (e - b + 1) * sizeof(wchar_t));
+    };
+    trim(url);
+    trim(sha);
+    if (!url[0])
+    {
+        SetDlgItemTextW(hwnd, IDC_CELL_STATIC,
+                        L"请先粘贴词库包 URL（https，.lxcell 结尾；出网域名白名单为 GitHub）");
+        return;
+    }
+    StartUrlImport(hwnd, url, sha, false);
 }
 
 void DoToggle(HWND hwnd, bool dis)
@@ -306,6 +365,7 @@ LRESULT CALLBACK CellWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         switch (LOWORD(wParam))
         {
         case IDC_CELL_INSTALL: DoInstall(hwnd); return 0;
+        case IDC_CELL_URLFETCH: DoUrlFetch(hwnd); return 0;
         case IDC_CELL_ENABLE: DoToggle(hwnd, false); return 0;
         case IDC_CELL_DISABLE: DoToggle(hwnd, true); return 0;
         case IDC_CELL_DELETE: DoDelete(hwnd); return 0;
@@ -323,6 +383,7 @@ LRESULT CALLBACK CellWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
         if (!res) return 0;
         g_cellImporting = false;
         EnableWindow(GetDlgItem(hwnd, IDC_CELL_INSTALL), TRUE);
+        EnableWindow(GetDlgItem(hwnd, IDC_CELL_URLFETCH), TRUE);
         SetDlgItemTextW(hwnd, IDC_CELL_STATIC, res->message.c_str());
         if (res->ok && g_hooks.reloadCellPacks) g_hooks.reloadCellPacks();
         else if (!res->ok && res->message.find(L"已存在") != std::wstring::npos)
@@ -336,7 +397,9 @@ LRESULT CALLBACK CellWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
             {
                 RefreshCellList();
                 delete res;
-                StartImport(hwnd, g_lastImportSrc, true);
+                // 在线源覆盖=重新下载校验（不复读旧 staging，防"已确认件被调包"）
+                if (g_lastImportIsUrl) StartUrlImport(hwnd, g_lastImportSrc, g_lastImportSha, true);
+                else                   StartImport(hwnd, g_lastImportSrc, true);
                 return 0;
             }
         }
@@ -423,10 +486,31 @@ void ShowCellDictWindow(HINSTANCE hInst)
 
     int rowBtnY = H - btnH - pad;
     int listTop = pad + btnH * 2 + 10;
+    // 在线源行（按钮行上方）：URL + SHA256（可空=侧车）+ 导入按钮
+    int urlRowY = rowBtnY - btnH - 6;
+    int urlW = (W - pad * 2) * 52 / 100;
+    int shaW = (W - pad * 2) * 30 / 100;
+    int fetchW = W - pad * 2 - urlW - shaW - 10;
+    g_hCellUrlEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                     pad, urlRowY, urlW, btnH, g_hCellWnd,
+                                     (HMENU)(INT_PTR)IDC_CELL_URLEDIT, hInst, NULL);
+    SendMessageW(g_hCellUrlEdit, 0x1501 /*EM_SETCUEBANNERW*/, TRUE,
+                 (LPARAM)L"在线包 URL（https://…/*.lxcell，GitHub 白名单）");
+    g_hCellShaEdit = CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"",
+                                     WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                                     pad + urlW + 5, urlRowY, shaW, btnH, g_hCellWnd,
+                                     (HMENU)(INT_PTR)IDC_CELL_SHAEDIT, hInst, NULL);
+    SendMessageW(g_hCellShaEdit, 0x1501 /*EM_SETCUEBANNERW*/, TRUE,
+                 (LPARAM)L"SHA256（可空=自动取侧车 .sha256）");
+    CreateWindowExW(0, L"BUTTON", L"URL 导入",
+                    WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                    pad + urlW + shaW + 10, urlRowY, fetchW, btnH, g_hCellWnd,
+                    (HMENU)(INT_PTR)IDC_CELL_URLFETCH, hInst, NULL);
     CreateWindowExW(WS_EX_CLIENTEDGE, L"LISTBOX", L"",
                     WS_CHILD | WS_VISIBLE | WS_VSCROLL | LBS_NOINTEGRALHEIGHT |
                     LBS_EXTENDEDSEL, // 批14：批量启停/删除（Ctrl/Shift 点选）
-                    pad, listTop, W - pad * 2, rowBtnY - listTop - 8, g_hCellWnd,
+                    pad, listTop, W - pad * 2, urlRowY - listTop - 6, g_hCellWnd,
                     (HMENU)(INT_PTR)IDC_CELL_LIST, hInst, NULL);
 
     struct Btn { const wchar_t* text; int id; };
@@ -445,7 +529,8 @@ void ShowCellDictWindow(HINSTANCE hInst)
     if (g_hFont)
     {
         SendMessageW(g_hCellWnd, WM_SETFONT, (WPARAM)g_hFont, TRUE);
-        for (int id : { IDC_CELL_STATIC, IDC_CELL_LIST, IDC_CELL_SEARCH, IDC_CELL_INSTALL, IDC_CELL_ENABLE,
+        for (int id : { IDC_CELL_STATIC, IDC_CELL_LIST, IDC_CELL_SEARCH, IDC_CELL_URLEDIT,
+                        IDC_CELL_SHAEDIT, IDC_CELL_URLFETCH, IDC_CELL_INSTALL, IDC_CELL_ENABLE,
                         IDC_CELL_DISABLE, IDC_CELL_DELETE, IDC_CELL_CLOSE })
             SendMessageW(GetDlgItem(g_hCellWnd, id), WM_SETFONT, (WPARAM)g_hFont, TRUE);
     }

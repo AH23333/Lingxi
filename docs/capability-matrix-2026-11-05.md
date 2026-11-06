@@ -34,6 +34,7 @@
 | 用户词管理（增删改合并） | 断言 `UD-C1..C6`、`MG3 ud line parse` |
 | 无痕模式 | 断言 `incognito: *`×4 |
 | 细胞词库（.lxcell 导入/启停/配额隔离） | 断言 `CELLa-0..12`/`CELLb-1..5`/`CELLc-1..6`/`CELLd`；ui/cellimport.cpp |
+| 细胞词库在线下载（https+sha256 锚+侧车） | 断言 `CELLe-1..15`（形闸/假下载器全管线/fail-closed/staging 清理）；ui/cellimport.cpp ImportCellPackFromUrl、ui/cellfetch_logic.h、cellwnd 在线源行；出网层复用 updater::DownloadToFile（update_test T1/T2 已覆盖白名单） |
 | 自定义短语（触发+导入导出+冲突三分支） | 断言 `R2 phrase`×5、`PH1/PH2/PH3` |
 | 屏蔽词 | 断言 `R6 blocked word filtered`、`blocked hot-unload restores` |
 
@@ -73,7 +74,6 @@
 | 缺项 | 判定依据 | 感知/成本 |
 |---|---|---|
 | 云词库/账号同步 | 全仓网络调用仅 update 链（GitHub releases 白名单），无同步协议 | 高感知/高成本 |
-| 细胞词库在线下载 | cellimport 仅本地文件导入（CELLc 系列断言均本地路径） | 中/高 |
 | 皮肤在线主题 | 仅内置皮肤（SK4 越界回退到 skin 0，无下载路径） | 中/高 |
 | 语音/手写/截图输入 | 无对应模块（ui/ 下无相关文件） | 中/极高 |
 | 跨进程/跨机剪贴板同步 | clipboardui 仅本机 | 低/中 |

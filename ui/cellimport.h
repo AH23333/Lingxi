@@ -46,4 +46,22 @@ size_t CleanupCellDelResidue(size_t* failed);
 //（含 CJK 字节、大小写、首尾剥离）时追加 stem 的 FNV-1a 哈希后缀去重——
 // 纯 CJK 文件名不再全部归一成 "pack" 互相顶包。engine_test CELLc-7 钉口径。
 std::string MakeIdFromStem(const std::string& stem);
+
+// ---- 在线下载导入（细胞词库在线源，2026-11-06）----
+// 管线：URL 形闸（cellfetch_logic.h：https/.lxcell/无 userinfo）→ 下载到
+// %TEMP% staging（≤8MB）→ 完整性锚（显式 64-hex，或留空走同 origin 侧车
+// <url>.sha256；两者皆无=拒绝安装，fail-closed）→ 复核通过走与本地导入
+// 完全一致的 ImportCellPackSync（解析/原子落盘/独立复核，不新增攻击面）。
+// 域名白名单由下载层二次把关（updater::DownloadToFile → IsUrlAllowed：
+// GitHub 精确匹配；回环仅演练钩子 LINGXI_UPDATE_TEST_BASE 放行）。
+// 线程模型同 ImportCellPackSync（可在后台线程调用；hooks 通知在主线程）。
+// downloader 默认空 = updater::DownloadToFile 实网；测试注入假实现（零网络）。
+// 任何失败 staging 两件（.lxcell/.sha256）全清。
+typedef bool (*CellDownloadFn)(const std::wstring& url, const std::wstring& destPath,
+                               size_t maxBytes, std::wstring* err);
+CellImportResult ImportCellPackFromUrl(const std::wstring& url,
+                                       const std::wstring& sha256HexOrEmpty,
+                                       const std::unordered_set<std::string>& validSylls,
+                                       bool overwrite,
+                                       CellDownloadFn downloader = nullptr);
 } // namespace lingxi

@@ -1333,3 +1333,10 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - 修复：DLL 侧 ClearCandidates 连同 ++_verSent 作废旧版本（一行，全部终结点同口径覆盖）；窗口侧 Hide 置 _ver=0（迟到 PostShow 不再复活候选窗）。
 - 验证（红绿闭环）：pipeserver 加文件门探针（%TEMP% 旗标+"probeprobe" 文本门，600ms 同 ver 迟到帧注入），deep_test T22——无修复 3 轮必红（enter='probeprobe' afterDigit='probeprobe探针迟到'），修复后 41/0 全绿。PITFALLS #98（env 门不可继承改文件门）。
 - regress 四套件：engine_test 545/0、fix_readings --check PASS、deep_test 41/0（含 T22）；e2e 环境性搁浅（direct/pinyin mode settle，#19 前台竞态）——A/B 换回昨晚基线二进制同点同数失败，证非本批引入。
+
+## 2026-11-06 · 细胞词库在线下载（真缺栏销账①）
+
+- 管线：URL 形闸（cellfetch_logic.h：https/.lxcell/无 userinfo）→ staging（%TEMP%，≤8MB）→ 完整性锚（显式 64-hex 或同 origin 侧车 .sha256；皆无=fail-closed 拒装）→ 与本地导入同管（ImportCellPackSync 解析/原子落盘/独立复核，零新增攻击面）。
+- 出网层复用 updater::DownloadToFile（GitHub 精确白名单+回环演练旁路，update_test T1/T2 原有覆盖）；下载器可注入，engine_test 假下载器零网络全管线钉。
+- UI：词库管理窗加在线源行（URL+SHA256 可空+URL 导入按钮，后台线程模型与本地导入一致）；覆盖确认重跑=重新下载校验（不复读旧 staging）。
+- 断言：CELLe-1..15 全绿；engine_test 545→560 FAIL=0。

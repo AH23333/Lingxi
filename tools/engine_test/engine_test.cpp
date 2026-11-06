@@ -30,6 +30,8 @@
 #include "../../common/caret_edit.h" // M5 组合内光标编辑纯逻辑（header-only）
 #include "../../ui/hotwords_logic.h" // 批2-① 常选词 TOP N 解析（header-only）
 #include "../../ui/sentence_async_logic.h" // 期二 AI 整句异步追加纯逻辑（header-only）
+#include "../../ui/cellfetch_logic.h"     // CELLe 在线下载形闸（header-only）
+#include "../../common/update_fetch.h"    // CELLe 哈希复核（Sha256File）
 
 #include <algorithm>
 #include <chrono>
@@ -107,6 +109,35 @@ struct LatencyStats
     double medianMs = 0.0; // 中位数：对后台进程偶发抢占比平均值鲁棒
     double maxMs = 0.0;
 };
+
+// ---- CELLe 假下载器（零网络）：.sha256 结尾 URL 写侧车文本，否则写包字节 ----
+static std::string g_cellPackBytes;
+static std::string g_cellSidecarUtf8;
+static int g_cellDlCalls = 0;
+static bool g_cellDlFailSidecar = false;
+static bool CellDlWriteBytes(const std::wstring& path, const std::string& data)
+{
+    HANDLE h = CreateFileW(path.c_str(), GENERIC_WRITE, 0, NULL, CREATE_ALWAYS,
+                           FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return false;
+    DWORD w = 0;
+    bool ok = WriteFile(h, data.data(), (DWORD)data.size(), &w, NULL) && w == (DWORD)data.size();
+    CloseHandle(h);
+    return ok;
+}
+static bool FakeCellDownload(const std::wstring& url, const std::wstring& destPath,
+                             size_t, std::wstring* err)
+{
+    g_cellDlCalls++;
+    if (url.size() >= 7 && url.compare(url.size() - 7, 7, L".sha256") == 0)
+    {
+        if (g_cellDlFailSidecar) { *err = L"404"; return false; }
+        if (!CellDlWriteBytes(destPath, g_cellSidecarUtf8)) { *err = L"write fail"; return false; }
+        return true;
+    }
+    if (!CellDlWriteBytes(destPath, g_cellPackBytes)) { *err = L"write fail"; return false; }
+    return true;
+}
 
 // 共享机器上后台进程（其他代理/视频/IDE）会偶发抢占，单次测量可能被拉高。
 // 这里：多次预热 → 逐次记录 → 断言用中位数（p50），平均值/最大值仅作参考。
@@ -3740,6 +3771,94 @@ int wmain(int argc, wchar_t** argv)
         }
         lingxi::IPredictor* resetCi = lingxi::CreatePinyinPredictor();
         if (resetCi) delete resetCi; // 复位沙盒：cell 目录已空
+    }
+
+    // ===== CELLe. 在线下载导入（cellfetch_logic 形闸 + ImportCellPackFromUrl 编排）=====
+    // 覆盖：URL/哈希/侧车纯逻辑 + 假下载器全管线（零网络）——出网层本身由
+    // update_test 的 T1/T2 假服务器链路覆盖，此处钉新增编排的失败语义。
+    {
+        Report(lingxi::ValidateCellUrl(L"https://github.com/o/r/releases/download/v1/x.lxcell"),
+               "CELLe-1 https .lxcell url ok");
+        Report(!lingxi::ValidateCellUrl(L"http://github.com/o/x.lxcell"), "CELLe-2 http rejected");
+        Report(!lingxi::ValidateCellUrl(L"https://github.com/o/x.txt"), "CELLe-3 non-.lxcell rejected");
+        Report(!lingxi::ValidateCellUrl(L"https://user@github.com/o/x.lxcell"), "CELLe-4 userinfo rejected");
+        Report(!lingxi::ValidateCellUrl(L"https:///x.lxcell"), "CELLe-5 empty host rejected");
+        Report(!lingxi::ValidateCellUrl(L"https://github.com/o/x.lxcell?raw=1"), "CELLe-6 query tail rejected");
+        const std::wstring kShaOk(64, L'a');
+        Report(lingxi::ValidateSha256Hex(L"") && lingxi::ValidateSha256Hex(kShaOk) &&
+               !lingxi::ValidateSha256Hex(kShaOk.substr(0, 63)) &&
+               !lingxi::ValidateSha256Hex(std::wstring(64, L'z')),
+               "CELLe-7 sha256 hex gate (empty=sidecar)");
+        Report(lingxi::SidecarUrl(L"https://h/x.lxcell") == L"https://h/x.lxcell.sha256",
+               "CELLe-8 sidecar url");
+        Report(lingxi::ExtractSha256FromSidecar(L"  " + kShaOk + L"  x.lxcell\r\n") == kShaOk &&
+               lingxi::ExtractSha256FromSidecar(L"not-a-hash").empty(),
+               "CELLe-9 sidecar extract / garbage empty");
+
+        // 假下载器管线：fixture=合法 .lxcell（测包\tce bao，音节取自本块假集）
+        std::unordered_set<std::string> sy = { "ce", "bao" };
+        g_cellPackBytes =
+            "LXCELL 1\nname=online\nid=celonline\n\n\xE6\xB5\x8B\xE5\x8C\x85\tce bao\n";
+        // 侧车哈希=CNG 实算 fixture（真锚，不写死）
+        std::wstring fxPath = ExeDir() + L"\\celle-fixture.lxcell";
+        CellDlWriteBytes(fxPath, g_cellPackBytes);
+        std::string hexA;
+        bool hexOk = lingxi::updater::Sha256File(fxPath, &hexA, nullptr);
+        DeleteFileW(fxPath.c_str());
+        g_cellSidecarUtf8 = hexA + "  celonline.lxcell\n";
+        std::wstring shaW(hexA.begin(), hexA.end());
+        std::wstring cellDirE = lingxi::CellPackDirW();
+        std::wstring target = cellDirE + L"\\celonline.lxcell";
+        DeleteFileW(target.c_str());
+        auto msgHas = [](const lingxi::CellImportResult& r, const wchar_t* sub) {
+            return r.message.find(sub) != std::wstring::npos;
+        };
+        // A：非法 URL 不出网（下载器从未被调用）
+        g_cellDlCalls = 0;
+        auto rA = lingxi::ImportCellPackFromUrl(L"http://github.com/o/x.lxcell", L"", sy,
+                                                false, &FakeCellDownload);
+        Report(!rA.ok && g_cellDlCalls == 0, "CELLe-10 invalid url: downloader never called");
+        // B：显式正确 sha → 成功落盘
+        auto rB = lingxi::ImportCellPackFromUrl(L"https://github.com/o/x.lxcell", shaW, sy,
+                                                false, &FakeCellDownload);
+        Report(hexOk && rB.ok && GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES,
+               "CELLe-11 explicit sha ok -> installed");
+        // C：sha 不符 → 拒装且无落盘
+        DeleteFileW(target.c_str());
+        auto rC = lingxi::ImportCellPackFromUrl(L"https://github.com/o/x.lxcell",
+                                                std::wstring(64, L'0'), sy, false, &FakeCellDownload);
+        Report(!rC.ok && msgHas(rC, L"SHA256 不符") &&
+               GetFileAttributesW(target.c_str()) == INVALID_FILE_ATTRIBUTES,
+               "CELLe-12 sha mismatch: rejected, nothing installed");
+        // D：留空走侧车 → 成功
+        auto rD = lingxi::ImportCellPackFromUrl(L"https://github.com/o/x.lxcell", L"", sy,
+                                                false, &FakeCellDownload);
+        Report(rD.ok && GetFileAttributesW(target.c_str()) != INVALID_FILE_ATTRIBUTES,
+               "CELLe-13 sidecar anchor -> installed");
+        // E：侧车 404 → fail-closed 拒装
+        DeleteFileW(target.c_str());
+        g_cellDlFailSidecar = true;
+        auto rE = lingxi::ImportCellPackFromUrl(L"https://github.com/o/x.lxcell", L"", sy,
+                                                false, &FakeCellDownload);
+        g_cellDlFailSidecar = false;
+        Report(!rE.ok && msgHas(rE, L"完整性无锚") &&
+               GetFileAttributesW(target.c_str()) == INVALID_FILE_ATTRIBUTES,
+               "CELLe-14 sidecar 404: fail-closed");
+        // F：staging 全清（%TEMP% 无 lingxi-cell-dl-* 残留）
+        {
+            wchar_t tmp[MAX_PATH] = L"";
+            GetTempPathW(MAX_PATH, tmp);
+            WIN32_FIND_DATAW fd{};
+            HANDLE hf = FindFirstFileW((std::wstring(tmp) + L"lingxi-cell-dl-*").c_str(), &fd);
+            int residue = 0;
+            if (hf != INVALID_HANDLE_VALUE)
+            {
+                do { residue++; } while (FindNextFileW(hf, &fd));
+                FindClose(hf);
+            }
+            Report(residue == 0, "CELLe-15 staging files fully cleaned");
+        }
+        DeleteFileW(target.c_str());
     }
 
     // ===== C2. 管道帧层：往返/半帧+对端消失/写向已消失对端/超时取消(H1路径) =====

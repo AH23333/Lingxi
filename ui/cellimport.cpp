@@ -1,5 +1,7 @@
 // cellimport.cpp - A 细胞词库导入适配层（接口与线程约束见 cellimport.h）
 #include "cellimport.h"
+#include "cellfetch_logic.h"     // 在线下载：URL/哈希/侧车纯逻辑闸
+#include "../common/update_fetch.h" // DownloadToFile / Sha256File（更新链同套安全件）
 #include "engine/predictor.h" // ParseLxcell / LxcellParseResult
 
 #include <windows.h>
@@ -415,6 +417,109 @@ CellImportResult ImportCellPackSync(const std::wstring& srcPath,
             res.message += L"（注意：启用合计超 500000 条上限，本包暂不生效——"
                            L"停用或删除其他包后下一次输入自动生效）";
     }
+    return res;
+}
+
+namespace {
+
+// 在线下载：单包上限（文本词库，远大于常规包；下载层另受 kMaxDownloadBytes 兜底）
+constexpr size_t kMaxCellDownloadBytes = 8ull * 1024 * 1024;
+constexpr size_t kMaxSidecarBytes = 4096; // 侧车 .sha256 只有一行哈希
+
+bool RealCellDownload(const std::wstring& url, const std::wstring& destPath,
+                      size_t maxBytes, std::wstring* err)
+{
+    return updater::DownloadToFile(url, destPath, maxBytes, nullptr, nullptr, nullptr, err);
+}
+
+std::wstring CellDlStaging(const wchar_t* suffix)
+{
+    wchar_t tmp[MAX_PATH] = L"";
+    GetTempPathW(MAX_PATH, tmp);
+    wchar_t name[MAX_PATH];
+    _snwprintf_s(name, _TRUNCATE, L"%lslingxi-cell-dl-%lu-%llu%ls", tmp,
+                 (unsigned long)GetCurrentProcessId(),
+                 (unsigned long long)GetTickCount64(), suffix);
+    return name;
+}
+
+} // namespace
+
+// 在线下载导入（声明见 cellimport.h）：形闸 → staging → 完整性锚 → 本地同管导入
+CellImportResult ImportCellPackFromUrl(const std::wstring& url,
+                                       const std::wstring& sha256HexOrEmpty,
+                                       const std::unordered_set<std::string>& validSylls,
+                                       bool overwrite,
+                                       CellDownloadFn downloader)
+{
+    CellImportResult res;
+    if (!ValidateCellUrl(url))
+    {
+        res.message = L"URL 不合格：须 https 且以 .lxcell 结尾、不含 @（域名白名单另由下载层把关）";
+        return res;
+    }
+    if (!ValidateSha256Hex(sha256HexOrEmpty))
+    {
+        res.message = L"SHA256 须为 64 位十六进制（或留空自动取侧车 .sha256）";
+        return res;
+    }
+    CellDownloadFn dl = downloader ? downloader : &RealCellDownload;
+    const std::wstring staging = CellDlStaging(L".lxcell");
+    std::wstring err;
+    auto cleanup = [&]() {
+        DeleteFileW(staging.c_str());
+        DeleteFileW((staging + L".sha256").c_str());
+    };
+    if (!dl(url, staging, kMaxCellDownloadBytes, &err))
+    {
+        cleanup();
+        res.message = L"下载失败：" + err;
+        return res;
+    }
+    // 完整性锚：显式 hex 优先；缺省走同 origin 侧车（fail-closed）
+    std::wstring expected = sha256HexOrEmpty;
+    for (auto& ch : expected) if (ch >= L'A' && ch <= L'F') ch += 32;
+    if (expected.empty())
+    {
+        const std::wstring scPath = staging + L".sha256";
+        if (!dl(SidecarUrl(url), scPath, kMaxSidecarBytes, &err))
+        {
+            cleanup();
+            res.message = L"未给 SHA256 且侧车 .sha256 取不到（" + err +
+                          L"）：拒绝安装——完整性无锚";
+            return res;
+        }
+        std::string sc;
+        if (!ReadAllW(scPath, sc))
+        {
+            cleanup();
+            res.message = L"侧车读取失败：拒绝安装";
+            return res;
+        }
+        expected = ExtractSha256FromSidecar(ToWide(sc));
+        if (expected.empty())
+        {
+            cleanup();
+            res.message = L"侧车 .sha256 内容不合格：拒绝安装";
+            return res;
+        }
+    }
+    std::string actual;
+    if (!updater::Sha256File(staging, &actual, &err))
+    {
+        cleanup();
+        res.message = L"哈希计算失败：" + err;
+        return res;
+    }
+    if (ToWide(actual) != expected)
+    {
+        cleanup();
+        res.message = L"SHA256 不符：下载件与锚不一致，已整包丢弃";
+        return res;
+    }
+    res = ImportCellPackSync(staging, validSylls, overwrite);
+    if (res.ok) res.message = L"在线导入：" + res.message;
+    cleanup();
     return res;
 }
 
