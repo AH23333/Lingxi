@@ -36,6 +36,10 @@ struct Settings
     bool sentenceMode = true;     // 整句模式：多词链整句候选（"wojintian…"→"我今天想去…"）。
                                   // 关=只出逐词候选（词数>1 的候选剔除），逐词集合与开态
                                   // 完全一致（顺序不动）。默认开=现状零变化。
+    bool aiSentence = true;       // AI 整句候选（期二异步追加）：拼音长输入（音节≥6）
+                                  // 停顿≥200ms 时本地小模型生成整句，追加在候选末尾
+                                  // （不参与前 5 排序/不自动选中/不改 preedit）。关=整条
+                                  // 通路不触发，候选与逐字输入一致。默认开（限流已压频率）。
     uint32_t toggleMode = 1;      // 中英切换键（B5 草案②）：0 无 1 Shift 2 Shift 或
                                   // Ctrl 3 CapsLock（KeyDown 即吞，不翻转大小写）
                                   // 4 仅 Ctrl。

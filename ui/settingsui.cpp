@@ -130,6 +130,7 @@ constexpr int IDC_CMB_SPSCH = 134;      // 双拼方案：0 小鹤 1 自然码 2
 constexpr int IDC_CMB_PGSIZE = 145;     // 每页候选数：3/5/6/9（批3 收编 kPageSize）
 constexpr int IDC_CHK_TYPO = 146;       // 智能纠错（R4 泛化救援）开关
 constexpr int IDC_CHK_SENTMODE = 147;   // 整句模式开关（期一收口）
+constexpr int IDC_CHK_AISENT = 148;     // AI 整句候选开关（期二异步追加）
 constexpr int IDC_EDT_UPDREPO = 140;    // 更新：仓库 owner/repo 输入框（批次 5）
 constexpr int IDC_CHK_UPDAUTO = 141;    // 更新：自动检查开关（默认关）
 constexpr int IDC_BTN_UPDCHECK = 142;   // 更新：手动检查按钮
@@ -146,6 +147,7 @@ HWND g_hChkPinyin = nullptr, g_hChkEn = nullptr, g_hEdtCount = nullptr,
 HWND g_hChkFz[8] = {}; // 模糊音组细分开关（8 组）
 HWND g_hChkTypo = nullptr; // 智能纠错（R4 泛化救援）开关
 HWND g_hChkSentMode = nullptr; // 整句模式开关（期一收口）
+HWND g_hChkAiSent = nullptr;   // AI 整句候选开关（期二异步追加）
 HWND g_hCmbOpacity = nullptr;
 HWND g_hCmbUiFont = nullptr; // 界面字体族下拉
 HWND g_hCmbPgSize = nullptr; // 每页候选数下拉（批3 可配页宽）
@@ -186,6 +188,7 @@ void LoadToControls()
     for (int fz = 0; fz < 8; fz++) SetToggle(g_hChkFz[fz], (s.fuzzyGroups >> fz) & 1u);
     SetToggle(g_hChkTypo, s.typoCorrection);
     SetToggle(g_hChkSentMode, s.sentenceMode);
+    SetToggle(g_hChkAiSent, s.aiSentence);
     ComboBox_SetCurSel(g_hCmbToggleMode, (int)(s.toggleMode <= 4 ? s.toggleMode : 1));
     SetToggle(g_hChkShuangpin, s.shuangpin);
     ComboBox_SetCurSel(g_hCmbSpSch, s.shuangpinScheme <= 2 ? (int)s.shuangpinScheme : 0);
@@ -227,6 +230,7 @@ void SaveFromControls()
     s.fuzzyPinyin = ToggleOn(g_hChkFuzzy);
     s.typoCorrection = ToggleOn(g_hChkTypo);
     s.sentenceMode = ToggleOn(g_hChkSentMode);
+    s.aiSentence = ToggleOn(g_hChkAiSent);
     { unsigned grp = 0; for (int fz = 0; fz < 8; fz++) if (ToggleOn(g_hChkFz[fz])) grp |= 1u << fz;
       s.fuzzyGroups = grp ? grp : 0xFF; } // 一组未勾=退回全组（总开关才是关闭入口，避免"全关静默失聪"）
     int tsel = ComboBox_GetCurSel(g_hCmbToggleMode);
@@ -667,6 +671,7 @@ LRESULT CALLBACK SettingsWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lPar
         case IDC_CHK_LLMRERANK:
         case IDC_CMB_OPACITY:
         case IDC_CHK_LLMMULTIPATH:
+        case IDC_CHK_AISENT:
             // owner-draw 无自动勾选：先翻外置状态再回写（翻转即失效重绘药丸）
             if (HIWORD(wParam) == BN_CLICKED)
             {
@@ -1314,6 +1319,9 @@ void CreateSettingsWindow(HINSTANCE hInst)
     g_hChkAssocPick = mkToggle(IDC_CHK_ASSOCPICK);
     mkRow(L"选词联想", L"中文上屏后自动弹出联想候选，可点选或空格连续输出；其他按键即撤销",
           g_hChkAssocPick, CK_TOGGLE, 44);
+    g_hChkAiSent = mkToggle(IDC_CHK_AISENT);
+    mkRow(L"AI 整句候选", L"长拼音（≥6 音节）停顿 0.2 秒时本地小模型生成整句，带 (AI) 标记追加在候选末尾，不参与排序、需手动选；开启后长输入停顿时会多耗约半秒 CPU",
+          g_hChkAiSent, CK_TOGGLE, 44);
 
     // ---- 页 6：更新（批次 5；状态机/线程全在 updateui.cpp，这里只建行、交句柄、转按钮）----
     addPage(L"更新");
