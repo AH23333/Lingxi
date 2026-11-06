@@ -7,6 +7,7 @@
 #include "usagestats.h"
 #include "uitheme.h"
 #include "autobackup.h"
+#include "sentence_async_logic.h" // 期二 AI 整句：纯逻辑层（触发门/陈旧判定/追加塑形）
 #include "engine/calcnum.h"
 #include "engine/uradical.h"
 
@@ -71,6 +72,27 @@ void PredictBody(void* a)
 bool PredictSeh(PredictArgs* a)
 {
     __try { PredictBody(a); }
+    __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
+    return true;
+}
+
+// AI 整句生成（期二）：同 Rerank 的 SEH 外壳规则
+struct SentenceArgs
+{
+    ILlmReranker* r;
+    const std::wstring* ctx;
+    const std::wstring* pinyin;
+    uint64_t budgetMs;
+    std::wstring* out;
+};
+void SentenceBody(void* a)
+{
+    auto* p = (SentenceArgs*)a;
+    *p->out = p->r->GenerateSentence(*p->ctx, *p->pinyin, p->budgetMs);
+}
+bool SentenceSeh(SentenceArgs* a)
+{
+    __try { SentenceBody(a); }
     __except (EXCEPTION_EXECUTE_HANDLER) { return false; }
     return true;
 }
@@ -628,6 +650,37 @@ void PipeServer::PredictProc()
             StartAsyncRerank(e.c, e.ver, pred.cands, pred.cover, pred.anno, dark, e.caret,
                              e.text, e.ctx, myGen, mySeq); // B2：composing 穿透（pinyin 分支必真）
         }
+
+        // 期二 AI 整句（异步追加档）：音节≥6 + 候选已出 + worker 停顿窗 200ms 三重
+        // 限流齐备才生成。生成在 detached worker（与重排同模式，共用 _rerankActive
+        // 计数与引擎 _genMutex 串行），独立预算 1200ms，不占输入路径 300ms 预算。
+        // 本块只读 gen 不占代：陈旧失效由 ver（新键入）/gen（选词·翻页·重排占代）
+        // /sentSeq（新整句触发合并）三重闸在 worker 内复查。
+        if (e.pinyin && _pinyinEngine && _reranker && !_reranker->Broken())
+        {
+            if (!_syllInit)
+            {
+                std::vector<std::string> sv;
+                _pinyinEngine->GetSyllableSet(sv); // 构造后只读，拷贝安全（单线程惰性）
+                _syllSet.insert(sv.begin(), sv.end());
+                _syllInit = true;
+            }
+            bool calcOrRad = IsCalcQuery(e.text) || (!st.shuangpin && IsRadicalQuery(e.text));
+            std::vector<std::string> seg = SegmentSyllables(e.text, _syllSet);
+            if (ShouldTriggerSentence(true, !pred.cands.empty(), seg.size(),
+                                      st.aiSentence, st.shuangpin, calcOrRad))
+            {
+                std::wstring spaced;
+                for (size_t i = 0; i < seg.size(); i++)
+                {
+                    if (i) spaced += L' ';
+                    spaced += std::wstring(seg[i].begin(), seg[i].end());
+                }
+                uint32_t sSeq = e.c->sentSeq.fetch_add(1) + 1; // 新触发合并旧 worker
+                StartAsyncSentence(e.c, e.ver, e.text, spaced, dark, e.caret, e.ctx,
+                                   e.c->gen.load(), sSeq);
+            }
+        }
     }
 }
 
@@ -636,6 +689,16 @@ bool PipeServer::RerankStillCurrent(ClientCtx* c, uint32_t ver, uint32_t gen, ui
     EnterCriticalSection(&_cs);
     bool ok = c->alive && _active.get() == c && c->lastLearn.ver == ver &&
               c->gen.load() == gen && c->rrSeq.load() == seq;
+    LeaveCriticalSection(&_cs);
+    return ok;
+}
+
+bool PipeServer::SentenceCur(ClientCtx* c, uint32_t ver, uint32_t gen, uint32_t seq)
+{
+    EnterCriticalSection(&_cs);
+    bool ok = lingxi::SentenceStillCurrent(c->alive.load(), _active.get() == c,
+                                           c->lastLearn.ver, ver,
+                                           c->gen.load(), gen, c->sentSeq.load(), seq);
     LeaveCriticalSection(&_cs);
     return ok;
 }
@@ -714,6 +777,94 @@ void PipeServer::StartAsyncRerank(const ClientPtr& c, uint32_t ver,
     }).detach();
 }
 
+// 期二 AI 整句 worker：停顿窗 → 三重闸 → 1.2s 预算生成 → 复查 → 追加式重发。
+// 逐条对应用户裁决：停顿未到开枪=停顿窗后第一闸拦下；生成中继续键入/选词/翻页
+// =生成后复查拦下；超时/迟到=引擎内 timedOut + ShouldDropLate 双判；每次丢弃
+// 带连续计数进日志（频率可观测）。
+void PipeServer::StartAsyncSentence(const ClientPtr& c, uint32_t ver,
+                                    const std::wstring& raw,
+                                    const std::wstring& pinyinSpaced,
+                                    bool dark, const RECT& caret,
+                                    const std::wstring& ctx, uint32_t gen, uint32_t seq)
+{
+    // 按值捕获全部上下文（同重排）；c 为 shared_ptr 引用防悬垂。
+    _rerankActive.fetch_add(1); // H3：先计数后 spawn（与重排共用同一计数与 Stop 收敛）
+    std::thread([this, c, ver, raw, pinyinSpaced, dark, caret, ctx, gen, seq]() {
+        ActiveCount ac(_rerankActive); // H3：Stop 有界等归零再拆 _cs
+        auto drop = [&](const wchar_t* reason) {
+            int streak = _sentDropStreak.fetch_add(1) + 1;
+            LX_LOG(L"pipe", L"整句候选丢弃 ver=%u 原因=%ls 连续=%d", ver, reason, streak);
+        };
+        // 停顿观察窗：期间用户继续敲键 → 新 ver 覆盖（lastLearn.ver 变）→ 下方闸丢
+        Sleep(kSentenceSettleMs);
+        if (WaitForSingleObject(_hStop, 0) != WAIT_TIMEOUT) return;
+        if (!c->alive || c->sentSeq.load() != seq) { drop(L"停顿窗内被新触发合并"); return; }
+        if (!SentenceCur(c.get(), ver, gen, seq)) { drop(L"停顿窗内已过期"); return; }
+
+        // 独立预算 1200ms（与输入路径 kBudgetMs=300 无关）；SEH 外壳防 llama AV
+        uint64_t t0 = GetTickCount64();
+        std::wstring sent;
+        SentenceArgs sa{ _reranker, &ctx, &pinyinSpaced, (uint64_t)kSentenceBudgetMs, &sent };
+        if (!SentenceSeh(&sa))
+        {
+            _reranker->MarkBroken(); // llama 内部 AV：本会话熔断
+            LX_LOG(L"pipe", L"整句引擎异常，LLM 已熔断");
+            drop(L"引擎异常");
+            return;
+        }
+        uint64_t elapsed = GetTickCount64() - t0;
+        if (sent.empty()) { drop(L"生成空/超时"); return; } // 引擎内超时已返空并记日志
+        if (ShouldDropLate(elapsed, kSentenceBudgetMs)) { drop(L"迟到超预算"); return; }
+        // 生成期间用户继续键入（新 ver）/已选词或翻页（gen 变）→ 整条丢弃
+        if (!SentenceCur(c.get(), ver, gen, seq)) { drop(L"生成期间已过期"); return; }
+
+        // 追加在"当前所示列表"之后（重排可能已先落地——lastSent 恒为最新已发列表）
+        Prediction base;
+        {
+            EnterCriticalSection(&_cs);
+            bool cur = c->alive && _active.get() == c.get() && c->lastSentVer == ver &&
+                       c->lastLearn.ver == ver && c->gen.load() == gen &&
+                       c->sentSeq.load() == seq;
+            if (cur)
+            {
+                base.cands = c->lastSentCands;
+                base.cover = c->lastSentCover;
+                base.anno = c->lastSentAnno;
+            }
+            LeaveCriticalSection(&_cs);
+            if (!cur) { drop(L"投递前列表已换"); return; }
+        }
+        if (!AppendSentence(base, sent, (uint32_t)raw.size(), (size_t)kMaxCandidates))
+        {
+            drop(L"空句或与现有候选重复");
+            return;
+        }
+        // 防在途重排用旧列表覆盖追加结果（同 ver 后写者胜，先作废旧重排）
+        c->rrSeq.fetch_add(1);
+        // 投递前最后一闸 + 学习映射同步（点选整句按 raw 全串学习；ver/raw 不变）
+        {
+            EnterCriticalSection(&_cs);
+            bool cur = c->alive && _active.get() == c.get() && c->lastSentVer == ver &&
+                       c->lastLearn.ver == ver && c->gen.load() == gen &&
+                       c->sentSeq.load() == seq;
+            if (cur)
+            {
+                c->lastLearn.cands = base.cands;
+                c->lastLearn.cover = base.cover;
+            }
+            LeaveCriticalSection(&_cs);
+            if (!cur) { drop(L"投递前状态已变"); return; }
+        }
+        _sentDropStreak.store(0);
+        // H4：经 PostShow 封包投递 UI 线程（stale ver 在 UI 线程丢弃）；
+        // MSG_CANDS 同 ver 全量重发——DLL 侧选择映射一致，陈旧帧按 ver 丢弃
+        _wnd->PostShow(caret, base.cands, dark, ver, raw, base.anno);
+        SendCandidates(c.get(), ver, base);
+        LX_LOG(L"pipe", L"整句候选已追加 ver=%u idx=%u 耗时=%llums",
+               ver, (uint32_t)base.cands.size() - 1, (unsigned long long)elapsed);
+    }).detach();
+}
+
 void PipeServer::SendCandidates(ClientCtx* c, uint32_t ver, const Prediction& pred)
 {
     std::vector<uint8_t> bodyOut;
@@ -733,6 +884,16 @@ void PipeServer::SendCandidates(ClientCtx* c, uint32_t ver, const Prediction& pr
             uint16_t v = (uint16_t)min(cv, 0xFFFFu);
             AppendPod(bodyOut, v);
         }
+    }
+    // 记账"当前所示列表"（期二整句追加的基准）：首帧/重排/整句追加三类发送
+    // 统一在此更新；整句 worker 投递前按 lastSentVer==ver 核对取用（_cs 保护）。
+    {
+        EnterCriticalSection(&_cs);
+        c->lastSentVer = ver;
+        c->lastSentCands = pred.cands;
+        c->lastSentCover = pred.cover;
+        c->lastSentAnno = pred.anno;
+        LeaveCriticalSection(&_cs);
     }
     // H2：整帧持锁写——与重排线程/选词/符号插入的并发写帧串行化
     std::lock_guard<std::mutex> lk(c->sendMtx);

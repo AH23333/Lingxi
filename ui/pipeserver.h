@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <unordered_set>
 #include <vector>
 
 #include "window.h"
@@ -55,6 +56,13 @@ private:
         std::mutex sendMtx;
         std::atomic<uint32_t> gen{ 0 };   // 交互代：新预测/翻页/选词递增，重排据此放弃过期结果
         std::atomic<uint32_t> rrSeq{ 0 }; // 重排序号：新触发使旧线程立即退出（合并防堆积）
+        std::atomic<uint32_t> sentSeq{ 0 }; // 整句触发序号（期二）：新触发使旧 worker 退出
+        // 最近一帧已发候选快照（SendCandidates 统一记账，_cs 保护）：AI 整句追加在
+        // "当前所示列表"之后——首帧/重排/追加三类发送都更新它，追加前按 ver 核对。
+        uint32_t lastSentVer = 0;
+        std::vector<std::wstring> lastSentCands;
+        std::vector<uint32_t> lastSentCover;
+        std::vector<std::wstring> lastSentAnno;
         bool active = false;
         bool dark = false;
         DWORD pid = 0;   // 宿主应用进程 PID（MSG_HELLO 上报；前台进程定位用）
@@ -96,6 +104,13 @@ private:
                           const std::vector<std::wstring>& anno,
                           bool dark, const RECT& caret, const std::wstring& composing,
                           const std::wstring& ctx, uint32_t gen, uint32_t seq);
+    // AI 整句（期二异步追加）：停顿窗 200ms + 三重陈旧闸 + 1.2s 独立预算生成，
+    // 追加在"当前所示列表"末尾重发同 ver 候选帧。线程模型与重排一致（detached
+    // worker + _rerankActive 在途计数 + SEH 外壳）。
+    void StartAsyncSentence(const ClientPtr& c, uint32_t ver, const std::wstring& raw,
+                            const std::wstring& pinyinSpaced,
+                            bool dark, const RECT& caret, const std::wstring& ctx,
+                            uint32_t gen, uint32_t seq);
     void ApplyLearn(ClientCtx* c, uint32_t ver, uint32_t index); // 选字反馈→自学习
     void Activate(const ClientPtr& c);
     void Deactivate(const ClientPtr& c);
@@ -105,6 +120,8 @@ private:
     ClientPtr PickTargetClient();
     // 判定本客户端是否仍是该 (ver,gen,seq) 重排的合法接收者（_cs 内）
     bool RerankStillCurrent(ClientCtx* c, uint32_t ver, uint32_t gen, uint32_t seq);
+    // 整句版陈旧判定（_cs 内）：ver/gen/sentSeq 三重 + alive/active
+    bool SentenceCur(ClientCtx* c, uint32_t ver, uint32_t gen, uint32_t seq);
 
     CandWindow* _wnd = nullptr;
     IPredictor* _engine = nullptr;
@@ -119,10 +136,15 @@ private:
     ClientPtr _active;
     std::vector<ClientPtr> _clients; // 在连客户端注册表（_cs 保护）：前台定位遍历用
     std::deque<PendingPredict> _queue;
-    // H3：detached 线程在途计数（重排/客户端读线程）——Stop 有界等归零
+    // H3：detached 线程在途计数（重排/整句/客户端读线程）——Stop 有界等归零
     // 再拆 _cs（线程尾部仍要进 _cs / 触引擎与窗口），防 delete 后 UAF
-    std::atomic<int> _rerankActive{ 0 };
+    std::atomic<int> _rerankActive{ 0 }; // 重排与整句 worker 共用（同一代 detached 模式）
     std::atomic<int> _clientActive{ 0 };
+    // 整句触发用的音节表快照（_pinyinEngine->GetSyllableSet 惰性取一次；
+    // 仅 PredictProc 单线程访问，无需锁）
+    std::unordered_set<std::string> _syllSet;
+    bool _syllInit = false;
+    std::atomic<int> _sentDropStreak{ 0 }; // 整句连续丢弃计数（日志可观测丢弃频率）
 };
 
 } // namespace lingxi
