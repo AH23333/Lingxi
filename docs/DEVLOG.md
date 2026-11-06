@@ -1326,3 +1326,10 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - 预算隔离：llm.cpp Generate 预算参数化（输入路径 kBudgetMs=300 不动），整句走 GreedyPass 1200ms；detached worker 与重排共用 _rerankActive/_genMutex 串行；投递时 bump rrSeq 防在途重排覆盖。
 - 开关 aiSentence 缺省开（注册表 AiSentence），设置页"智能"页勾选行带耗电说明。
 - 断言：engine_test P10j 新增 26 条（切分/触发门/陈旧/迟到/追加塑形/合成满载拼音延迟 idle 0.449ms→busy 0.543ms），总读数 519→545 全绿。
+
+## 2026-11-06 · 期二复审：Enter 直拼迟到帧竞态根治
+
+- 缺口：Enter 原文上屏/Esc 取消不发新 CTX，_verSent 停旧值——在途迟到候选帧（重排/AI 整句 worker）同 ver 被 OnCandidates 照收复活候选缓存，下一击 Tab/数字在空组合选词道把陈旧候选插进正文。重排时代就有，整句 worker 把窗口拉宽到 ~1.4s。
+- 修复：DLL 侧 ClearCandidates 连同 ++_verSent 作废旧版本（一行，全部终结点同口径覆盖）；窗口侧 Hide 置 _ver=0（迟到 PostShow 不再复活候选窗）。
+- 验证（红绿闭环）：pipeserver 加文件门探针（%TEMP% 旗标+"probeprobe" 文本门，600ms 同 ver 迟到帧注入），deep_test T22——无修复 3 轮必红（enter='probeprobe' afterDigit='probeprobe探针迟到'），修复后 41/0 全绿。PITFALLS #98（env 门不可继承改文件门）。
+- regress 四套件：engine_test 545/0、fix_readings --check PASS、deep_test 41/0（含 T22）；e2e 环境性搁浅（direct/pinyin mode settle，#19 前台竞态）——A/B 换回昨晚基线二进制同点同数失败，证非本批引入。

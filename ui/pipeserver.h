@@ -145,6 +145,12 @@ private:
     std::unordered_set<std::string> _syllSet;
     bool _syllInit = false;
     std::atomic<int> _sentDropStreak{ 0 }; // 整句连续丢弃计数（日志可观测丢弃频率）
+    // 测试探针（非产品路径，deep_test T22 用）：%TEMP%\lingxi-probe-late-cands.flag
+    // 存在时对 "probeprobe" 组合在 600ms 后以同 ver 重发迟到候选帧——注入 worker
+    // 竞态。文件门而非 env 门：LingxiUI 会被任意宿主进程的 pipeclient 抢拉
+    // （PITFALLS #66），env 不保证继承；旗标文件全进程可见，deep_test 开场建、
+    // 收尾删。仅 Start 时查一次；生产常态无旗标恒 false。
+    bool _probeLateCands = false;
 };
 
 } // namespace lingxi

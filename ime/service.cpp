@@ -491,6 +491,12 @@ void CTextService::ClearCandidates()
     _verCands = 0;
     _replaceLen = 0;
     _pageStart = 0;
+    // 期二复审竞态根治：候选作废=版本作废。Enter 原文上屏/Esc 取消等终结点
+    // 不发新 CTX，_verSent 停在旧值——在途迟到帧（重排/AI 整句 worker，同 ver）
+    // 会被 OnCandidates 照收复活 _cands，下一击空格/数字在 !PinyinActive() 分支
+    // 把陈旧候选插进正文（deep_test T22 注入实证）。本地递增版本号（不发帧）
+    // 令迟到帧失配即弃；下一次 SendCtx 照常 ++ 续号（ver 只是相等性令牌）。
+    ++_verSent;
     LeaveCriticalSection(&_cs);
 }
 

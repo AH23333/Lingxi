@@ -791,6 +791,20 @@ int wmain()
         sandk += nsv;
         RegDeleteTreeW(HKEY_CURRENT_USER, sandk.c_str());
     }
+    // T22 竞态注入探针：旗标文件门（非 env——LingxiUI 会被任意宿主进程抢拉，
+    // env 不保证继承，PITFALLS #66）。开场建、收尾删；探针另有 "probeprobe"
+    // 精确文本门，其他用例不触发。
+    wchar_t g_probeFlag[MAX_PATH] = L"";
+    {
+        wchar_t tmpDir[MAX_PATH] = L"";
+        if (GetTempPathW(MAX_PATH, tmpDir))
+        {
+            _snwprintf_s(g_probeFlag, _TRUNCATE, L"%lslingxi-probe-late-cands.flag", tmpDir);
+            HANDLE hf = CreateFileW(g_probeFlag, GENERIC_WRITE, 0, NULL,
+                                    CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+            if (hf != INVALID_HANDLE_VALUE) CloseHandle(hf);
+        }
+    }
     AddVectoredExceptionHandler(1, DeepCrashHandler);
 
     // 清掉旧崩溃记录与残留 LingxiUI
@@ -1902,6 +1916,39 @@ int wmain()
             }
         }
 
+        // ---- T22 迟到候选帧竞态（期二复审：Enter 原文上屏后，worker 迟到回包不得
+        //      把候选插进已上屏正文）。注入：LingxiUI 探针（%TEMP% 旗标文件，
+        //      main 头部建）对 "probeprobe" 组合在 600ms 后以同 ver 重发候选帧
+        //      （带"探针迟到"标记），扮演漏网的异步 worker——worker 侧三重闸不覆盖
+        //      Enter 终结点（不发新 CTX），验的是 DLL 侧版本作废闸。
+        //      触发键用数字键而非空格：空组合态空格不在 IsSelectionKey 内（防误伤
+        //      英文 ghost 补全），永不走选词道；数字 1 在候选可见时必被认领。
+        //      期望：Enter 时 ClearCandidates 连同 ++_verSent 作废旧版本，迟到帧被
+        //      OnCandidates 拒收；之后按 1 候选为空放行（fake 宿主不代打字符），
+        //      文本恒等于已上屏原文。
+        //      反向自证：摘掉 service.cpp ClearCandidates 里的 ++_verSent，本例必红
+        //      （afterDigit 多出"探针迟到"）。 ----
+        {
+            EnsurePinyinMode(pKm);
+            ClearFocusedText(pTm);
+            TypeLetters(pKm, L"probeprobe"); // 非合法拼音 → 引擎 0 候选（探针帧才带候选）
+            PumpMessages();
+            Sleep(200);                      // CTX 已发、探针已排程（600ms 后回包）
+            TypeKey(pKm, VK_RETURN);         // 原文上屏（竞态起点）
+            PumpMessages();
+            std::wstring tEnter = ReadFocusedText(pTm);
+            Sleep(1000);                     // 探针迟到帧落地窗（600ms + 余量）
+            PumpMessages();
+            TypeKey(pKm, (WPARAM)L'1');      // 帧若被误收：候选可见 → '1' 被认领选词
+            PumpMessages();
+            Sleep(200);
+            std::wstring t = ReadFocusedText(pTm);
+            wchar_t d[256];
+            _snwprintf_s(d, _TRUNCATE, L"enter='%ls' afterDigit='%ls'", tEnter.c_str(), t.c_str());
+            Report(tEnter == L"probeprobe" && t == L"probeprobe",
+                   L"T22 Enter 后迟到候选帧不污染正文", d);
+        }
+
     } while (false);
 
     // ---- 会话状态还原（对应开场 CaptureOrigProfile；防收尾劫持用户 IME） ----
@@ -1919,10 +1966,11 @@ int wmain()
     LONG avs = g_avCount - avAtStart;
     wprintf(L"=== attempt %d: PASS=%d FAIL=%d AV=%ld ===\n", attempt, g_pass, g_fail, avs);
     fflush(stdout);
-    if (g_fail == 0) return 0;
+    if (g_fail == 0) { if (g_probeFlag[0]) DeleteFileW(g_probeFlag); return 0; }
     wprintf(L"[WARN] attempt %d failed, retrying\n", attempt);
     }
 
     wprintf(L"=== 深度测试 3 轮全败（SMOKE 行为实际行为记录，详见上） ===\n");
+    if (g_probeFlag[0]) DeleteFileW(g_probeFlag);
     return 1;
 }

@@ -123,6 +123,18 @@ bool PipeServer::Start(CandWindow* wnd, IPredictor* engine, IPredictor* pinyinEn
 
     _hThread = CreateThread(NULL, 0, s_AcceptProc, this, 0, NULL);
     _hPredictThread = CreateThread(NULL, 0, s_PredictProc, this, 0, NULL);
+    // 测试探针（非产品路径）：deep_test T22 迟到帧注入开关，仅启动时查一次
+    // %TEMP% 旗标文件（文件门：绕开 PITFALLS #66 的 env 不继承问题）
+    {
+        wchar_t tmpDir[MAX_PATH] = L"";
+        if (GetTempPathW(MAX_PATH, tmpDir))
+        {
+            wchar_t flag[MAX_PATH];
+            _snwprintf_s(flag, _TRUNCATE, L"%lslingxi-probe-late-cands.flag", tmpDir);
+            _probeLateCands = GetFileAttributesW(flag) != INVALID_FILE_ATTRIBUTES;
+        }
+    }
+    if (_probeLateCands) LX_LOG(L"pipe", L"探针已激活：late-cands flag");
     return _hThread != NULL && _hPredictThread != NULL;
 }
 
@@ -680,6 +692,29 @@ void PipeServer::PredictProc()
                 StartAsyncSentence(e.c, e.ver, e.text, spaced, dark, e.caret, e.ctx,
                                    e.c->gen.load(), sSeq);
             }
+        }
+
+        // [测试探针·非产品路径] deep_test T22 竞态注入：对 "probeprobe" 组合在
+        // 600ms 后以同 ver 重发迟到候选帧（末尾带"探针迟到"标记）——扮演漏网的
+        // 异步 worker，绕过全部 worker 闸（注入点就是要验闸的下游）。
+        // 双门：_probeLateCands（env，启动读一次）+ 精确文本匹配（防误伤其他用例）。
+        if (_probeLateCands && e.pinyin && e.text == L"probeprobe")
+        {
+            ClientPtr c0 = e.c;
+            uint32_t ver0 = e.ver;
+            std::vector<std::wstring> base = pred.cands;
+            _rerankActive.fetch_add(1); // H3：同重排/整句计数，Stop 等归零
+            std::thread([this, c0, ver0, base]() {
+                ActiveCount ac(_rerankActive);
+                Sleep(600); // 迟到窗：落在 deep_test Enter 之后
+                if (WaitForSingleObject(_hStop, 0) != WAIT_TIMEOUT) return;
+                if (!c0->alive) return;
+                Prediction late;
+                late.cands = base;
+                late.cands.push_back(L"探针迟到");
+                LX_LOG(L"pipe", L"探针迟到帧发出 ver=%u", ver0);
+                SendCandidates(c0.get(), ver0, late);
+            }).detach();
         }
     }
 }

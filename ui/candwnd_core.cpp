@@ -463,6 +463,10 @@ void CandWindow::Hide()
     _cands.clear();
     _composing.clear();
     _pageStart = 0;
+    // 期二复审：隐藏=作废旧版本——同 ver 的迟到 PostShow（重排/AI 整句 worker）
+    // 不得把窗口复活（DLL 侧已同口径作废 _verSent，文本污染由 DLL 闸拦截；
+    // 本行负责窗口残影侧）。ver 自 1 起增，0 是安全"无版本"哨兵。
+    _ver = 0;
     LeaveCriticalSection(&_cs);
 }
 

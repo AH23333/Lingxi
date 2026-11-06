@@ -586,3 +586,12 @@
 - **定性**：不是缺陷，是开发形态的固有风险；**仅限开发机自用，禁止当正式分发形态**。
 - **正式分发出路**：安装器把 `ImeCore.dll`（x64+x86）与 `LingxiUI.exe` 复制到 `Program Files\LingxiIme\`（管理员写权、用户只读）后再注册；更新链相应改为替换 ACL 受保护的二进制。本仓库当前不做此安装器。
 - **关联**：docs/review-2026-11-04-system-integration.md P2-1；同批 P1-2 已修（staging 清单信任锚，update-design T13）。
+
+
+## 期二复审（2026-11-06）
+
+### 98. 给 LingxiUI 注测试探针不能用环境变量——文件门才可靠（#66 的具体化）
+- **现象**：deep_test 设 SetEnvironmentVariableW 后 taskkill+等重拉，LingxiUI 里读不到该 env——taskkill 后抢着重连并发拉起 UI 的是**任意一个加载了 TIP 的宿主进程**（ctfmon 等），不一定是测试进程；env 继承因而落空（日志/探针全哑）。
+- **正确做法**：探针开关用 %TEMP% 旗标文件（全机进程可见），测试开场建、收尾删；UI 侧 Start 时查一次 GetFileAttributesW。探针本体再叠加精确输入文本门（如 "probeprobe"），双门防误伤其他用例。
+- **实证**：env 门版探针全程静默（UI 日志无激活行）；改文件门后注入即中（deep_test T22 红绿对转）。
+- **关联**：#66（UI 重生不归发起方管）；AGENTS.md「勿依赖进程环境变量注入的日志」。
