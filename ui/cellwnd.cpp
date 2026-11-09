@@ -393,7 +393,7 @@ LRESULT CALLBACK CellWndProc(HWND hwnd, UINT msg, WPARAM wParam, LPARAM lParam)
                 (std::wstring(L"该包 id 已存在：") + Utf8ToW(res->id) +
                  L"\n\n用新文件覆盖旧包？").c_str(),
                 L"覆盖确认", MB_YESNO | MB_ICONQUESTION);
-            if (ans == IDOK)
+            if (ans == IDYES) // MB_YESNO 只回 IDYES/IDNO——判 IDOK 恒假，"是"永远无法覆盖
             {
                 RefreshCellList();
                 delete res;
