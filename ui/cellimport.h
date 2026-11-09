@@ -34,9 +34,14 @@ struct CellImportResult
 //  4) 规范化重写为 .lxcell 标准头+词条（tmp+rename 原子落盘）；
 //  5) 独立复核（A6，9e3f5dc 教训）：重读落盘件再解析，id 与词条数逐项比对，
 //     不一致 → 删新件、恢复 aside、报"导入未确认"——禁止只看写盘返回值报成功。
+// fallbackStem：深蓝纯文本回退解析时的显示名/id 来源 stem（UTF-8 转换前的
+// 宽字符原样传入；空=沿用 srcPath 文件名）。在线导入的 staging 文件名是
+// "lingxi-cell-dl-<pid>-<tick>"无意义占位——调用方应传 URL 基名，
+// 否则在线导入的纯文本词库会以临时名落盘（2026-11-09 审查修正）。
 CellImportResult ImportCellPackSync(const std::wstring& srcPath,
                                     const std::unordered_set<std::string>& validSylls,
-                                    bool overwrite);
+                                    bool overwrite,
+                                    const std::wstring& fallbackStem = L"");
 
 // N7：清理 cell 目录下 rename-aside 残留的 *.del（删除时被占用改名让位的死件）。
 // 返回成功删除数；failed 非空时回填失败数（仍被占用等——调用方须记日志不静默）。

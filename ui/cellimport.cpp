@@ -295,7 +295,8 @@ std::wstring CellPackDirW()
 
 CellImportResult ImportCellPackSync(const std::wstring& srcPath,
                                     const std::unordered_set<std::string>& validSylls,
-                                    bool overwrite)
+                                    bool overwrite,
+                                    const std::wstring& fallbackStem)
 {
     CellImportResult res;
     std::string raw;
@@ -312,9 +313,12 @@ CellImportResult ImportCellPackSync(const std::wstring& srcPath,
         LxcellParseResult q;
         if (ParsePlainDict(raw, validSylls, kMaxImportEntries, q))
         {
-            std::string stem = StemOf(srcPath);
-            q.name = stem;                    // 显示名=文件名（UTF-8 原样）
-            q.id = MakeIdFromStem(stem);      // id=文件名净化（小写/数字/-）
+            // 显示名/id 来源：调用方给的 stem 优先（在线导入=URL 基名），
+            // 空则沿用源文件名——staging 临时名（lingxi-cell-dl-*）不外泄。
+            std::wstring nameStem = fallbackStem.empty() ? srcPath : fallbackStem;
+            std::string stem = ToUtf8(nameStem);
+            q.name = stem;                    // 显示名=stem（UTF-8 原样）
+            q.id = MakeIdFromStem(stem);      // id=stem 净化（小写/数字/-）
             p = std::move(q);
             converted = true;
         }
@@ -458,6 +462,19 @@ CellImportResult ImportCellPackFromUrl(const std::wstring& url,
         res.message = L"URL 不合格：须 https 且以 .lxcell 结尾、不含 @（域名白名单另由下载层把关）";
         return res;
     }
+    // 深蓝纯文本回退的显示名/id 来源：URL 末段基名（形闸保证路径以 .lxcell 结尾、
+    // 无查询/片段）。仅作显示名与 id 派生输入，不落盘为文件名；非 id 字符由
+    // MakeIdFromStem 净化，%xx 类 URL 编码保持原样（可读即可）。
+    // 边界：无路径形态（"https://x.lxcell"，host 即基名）find_last_of 只命中
+    // scheme 的斜杠——末段若含 "://" 则整体不是基名，退回 "online-pack"。
+    std::wstring urlBase;
+    {
+        size_t slash = url.find_last_of(L'/');
+        std::wstring cand = (slash == std::wstring::npos) ? L"" : url.substr(slash + 1);
+        if (cand.find(L"://") == std::wstring::npos && !cand.empty()) urlBase = cand;
+        if (urlBase.empty()) urlBase = L"online-pack";
+    }
+    if (urlBase.size() > 96) urlBase = urlBase.substr(0, 96);
     if (!ValidateSha256Hex(sha256HexOrEmpty))
     {
         res.message = L"SHA256 须为 64 位十六进制（或留空自动取侧车 .sha256）";
@@ -517,7 +534,7 @@ CellImportResult ImportCellPackFromUrl(const std::wstring& url,
         res.message = L"SHA256 不符：下载件与锚不一致，已整包丢弃";
         return res;
     }
-    res = ImportCellPackSync(staging, validSylls, overwrite);
+    res = ImportCellPackSync(staging, validSylls, overwrite, urlBase);
     if (res.ok) res.message = L"在线导入：" + res.message;
     cleanup();
     return res;
