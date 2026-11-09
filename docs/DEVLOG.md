@@ -1348,3 +1348,14 @@ GAP-VS-MSFT §8 R6 的管理界面留白项：引擎热载（`7a5077b` P14）早
 - 寻址裁决：settings.skinId（wstring，空=内置 skinIndex）——id 寻址与 cellDisabled 同先例，装/删其他皮肤不重排选择；渲染单入口 UiCurrentSkin：命中→下载肤，未命中（已删）→回退内置，越界→0（SK4 语义不变）。候选窗变化检测从 skinIndex 比对改为解析后双通道色值比对（在线 A↔B/删除回退不错检）。
 - UI：skinwnd.cpp 管理窗（新功能新文件，settingsui 只减不增）：列表/URL 导入（后台线程同细胞窗 N9 槽模型）/应用/用回内置/删除；托盘 2024 入口。设置页皮肤下拉仅实际改选时清 skinId（防无关保存静默刷掉在线肤）；候选窗右键换肤/直选清 skinId；内置肤名表两处重复合并进 uistyle.h kSkinNames。
 - 断言：SK8-1..20 全绿（解析/URL 形闸/假下载器管线/扫描/注册表/resolver/settings 沙盒）；engine_test 560→580 FAIL=0；deep_test 41/0（T22 在线）；update_test 188/0。
+
+## 2026-11-09 · 深度审查轮（全量覆盖，4 缺陷修复，门禁待跑）
+
+- 用户指令：深度审查→修复→按开发规范小步提交/深度测试/同步文档/随时交接。构建与四套件门禁在本机被安全钩子硬拦（cmd.exe/MSBuild.exe 判 LOLBin，沙箱豁免不放行）——本批验证状态：静态审查/对码/既有断言锚点核对全过，**build+regress 由用户手动执行**（命令见 cur/HANDOFF-2026-11-09.md）。
+- 覆盖面（4 轮，逐行）：IPC 双侧（pipeserver/pipeclient/pipe_util）、组合层 composition 全文、service.cpp 全文、pinyin.cpp 全文（3110 行）、llm.cpp、三条安全链（更新 fetch/apply、细胞在线下载、皮肤在线主题）、settings 缓存、candwnd 三件套全文、全部管理窗（skin/cell/userdict/phrase/hotphrase/blocked/clipboard/stats/help/symbolpanel/symsearch）、纯逻辑头（caret_edit/mgmt/hotwords/punct/shuangpin/style/combo/cand_text）、接口头契约层。tools/ 测试工装与静态数据表不在生产面。
+- **修 P1**（历史 26 条审查未覆盖的真缺陷）：`_pinyinTail` 跨组合重建不复位——PinyinStart 两分支与无组合部分提交 `_pinyin = rest` 只靠 ClampTail 惰性收敛，但 ClampTail 只限幅不纠位，残留 tail≥1 时 TailInsert 把字母插进串中且永不自愈（"nihao"错序"ihaon"）。修=三处显式归零 + caret_edit.h/service.h 注释写明不变量边界（PITFALLS #99）。真机复现路径：拼音组合按 ← → Esc → 重打。
+- **修 P2**：cellwnd 覆盖确认 `MB_YESNO` 判 `IDOK` 恒假——点"是"永远无法覆盖已存在包 id（本地/在线同坏）。改判 IDYES。全库排查仅此一处失配。
+- **修 P3**：在线导入深蓝纯文本词库以 %TEMP% staging 文件名（lingxi-cell-dl-*）作显示名/id。修=ImportCellPackSync 加默认参 `fallbackStem`（17 处既有调用零改动），在线路径传 URL 末段基名；CELLe-15 钉 staging 名模式故不动 staging 路径。
+- **修 P4**：--probe-llm 在 deps/llama 缺失时 CreateLlmPredictor 返 nullptr 直接解引用。加空守卫。
+- 分析后不改三项（记录防重查）：CommitChinesePunct 部分提交后插标点——TSF range end-exclusive 落组合外，行为正确；重排/整句 worker µs 级末帧窗口——末帧一致性成立；pipeclient 3s 超时窄窗=台账 §八-6 已登记接受项。
+- 门禁状态：静态=过（改动点既有断言锚点核对：P10d 纯函数断言不受成员归零影响、CELLe-15 staging 名不动、CELLc 默认参数向后兼容）；动态=**待跑** build+regress（改动面：DLL 侧行为修复 + 纯逻辑参数扩展，engine_test 580 断言预期全绿，无需 smoke 双套件）。
