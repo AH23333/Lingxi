@@ -405,6 +405,7 @@ void CTextService::PinyinStart(wchar_t ch)
     {
         _pinyin.clear();
         _pinyin += ch;
+        _pinyinTail = 0; // 新组合光标恒在串尾：上个组合的 ← 偏移不得跨组合残留（否则字母错序插入）
         LX_LOG(L"key", L"Start(no-inline) ch=%lc", (wint_t)ch);
         ClearCandidates();
         SendPinyinCtx();
@@ -416,6 +417,7 @@ void CTextService::PinyinStart(wchar_t ch)
 
     _pinyin.clear();
     _pinyin += ch;
+    _pinyinTail = 0; // 同上：组合重建（含部分提交重启/取消后重开）必须归位串尾
 
     _fSelfInsert = TRUE; // 组合编辑引发的 OnEndEdit 全部抑制（我们自己发 SendPinyinCtx）
     ITfContext* pCtxSession = pCtx;
@@ -693,6 +695,7 @@ void CTextService::PinyinCommitHanzi(const std::wstring& hanzi, uint32_t cover)
         {
             // 部分提交：剩余拼音继续组合（用户长串选短词不再"白打"）
             _pinyin = rest;
+            _pinyinTail = 0; // 剩余串从尾继续输入：旧光标偏移对新串无意义
             ClearCandidates();
             SendPinyinCtx();
             return;

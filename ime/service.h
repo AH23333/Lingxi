@@ -237,7 +237,9 @@ private:
     int _modeRetryLeft = 8; // 激活过渡窗口有限次延迟重检计数（见 DetectPinyinMode 自愈）
     bool _modeSlowRetry = false; // 快速重检耗尽后已降级慢速自愈（降级日志只打一次）
     std::wstring _pinyin;         // 当前拼音字母串
-    size_t _pinyinTail = 0;       // 光标距串尾偏移（caret_edit.h；0=串尾，清零路径惰性收敛）
+    size_t _pinyinTail = 0;       // 光标距串尾偏移（caret_edit.h；0=串尾）。PinyinStart/
+                                  // 部分提交重建串时必须归零（ClampTail 只限幅不纠位，
+                                  // 跨组合残留 tail≥1 会让字母错序插入，2026-11-09 审查）
     ITfComposition* _pComposition = nullptr;
     ITfRange* _compRange = nullptr;
     // 内联组合（把拼音字母写入宿主 composition）。Chromium 对组合的写操作/销毁

@@ -3,6 +3,10 @@
 // 如此）；左移增大、右移减小。采用距尾偏移而非绝对位置的原因：拼音串任何
 // 清零/重置路径（commit/cancel/重开组合共十余处）都无需挂钩——偏移在使用点
 // 经 ClampTail 惰性收敛即自动合法。
+// ⚠️ 边界（2026-11-09 审查修正）：ClampTail 只保证"不越界"，不保证"位置正确"
+// ——跨组合残留的 tail≥1 会让 TailInsert 把字母插进串中且永不自愈（"nihao"
+// 错序成 "ihaon"）。因此 PinyinStart / 部分提交 `_pinyin = rest` 两处重建串时
+// 必须显式归零 _pinyinTail（同组合内的清零才适用惰性收敛）。
 #pragma once
 #include <string>
 
