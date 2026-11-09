@@ -115,6 +115,12 @@ static int ProbeLlm()
     uint64_t t0 = GetTickCount64();
     LX_LOG(L"llm", L"probe: 开始");
     lingxi::IPredictor* llm = lingxi::CreateLlmPredictor();
+    if (!llm)
+    {
+        // deps/llama 缺失时编译为空实现返回 nullptr——直接解引用是空指针崩溃
+        LX_LOG(L"llm", L"probe: LLM 引擎不可用（deps/llama 未就绪），探针退出");
+        return 1;
+    }
     lingxi::Prediction pred = llm->Predict(L"今天天气");
     LX_LOG(L"llm", L"probe: %u 候选, 耗时 %llu ms",
            (uint32_t)pred.cands.size(), (unsigned long long)(GetTickCount64() - t0));
